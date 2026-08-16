@@ -4,8 +4,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import katex from "katex";
 import { denseNodes, layerShard, sparseNodes, visionNodes, type Node, type Weight } from "./model-data";
 
-type Tab = "io" | "formula" | "code" | "weights";
+type Tab = "io" | "formula" | "code";
 type OpKind = "io" | "norm" | "linear" | "split" | "rope" | "matmul" | "scale" | "mask" | "softmax" | "activation" | "route" | "cache" | "add";
+type BindingKind = "upstream" | "external" | "weight";
+type IoBinding = { kind: BindingKind; label: string; shape: string; from: string; note?: string };
 type CodeSection = { stage: string; title: string; location: string; code: string; url?: string };
 type CodeSymbol = { symbol: string; resolvesTo: string; meaning: string };
 type CodeDetail = { sections: CodeSection[]; symbols: CodeSymbol[] };
@@ -177,6 +179,39 @@ for(const id of ["d-gateup","d-swiglu","d-down","s-shared"]) CODE_BY_ID[id]={sec
 for(const id of ["d-qkv","d-split","d-qnorm","d-knorm","d-ropeq","d-ropek","d-cache","d-qk","d-scale","d-mask","d-softmax","d-pv","d-oproj","s-packed","s-split","s-mainnorm","s-rope","s-cache","s-select","s-qk","s-scale","s-mask","s-softmax","s-pv","s-oproj"]) CODE_BY_ID[id]={sections:ATTENTION_SECTIONS,symbols:ATTENTION_SYMBOLS};
 for(const id of ["s-router","s-experts","s-shared","s-sum"]) CODE_BY_ID[id]={sections:id==="s-shared"?[...MOE_SECTIONS,...MLP_SECTIONS]:MOE_SECTIONS,symbols:id==="s-shared"?[...MOE_SYMBOLS,...MLP_SYMBOLS]:MOE_SYMBOLS};
 
+const INPUT_OVERRIDES: Record<string, IoBinding[]> = {
+  "d-input":[{kind:"external",label:"Xₗ · hidden_states",shape:"[B,S,6144]",from:"上一 decoder layer；L0 时来自 embedding fusion"}],
+  "s-input":[{kind:"external",label:"Xₗ · hidden_states",shape:"[B,S,6144]",from:"上一 decoder layer 输出"}],
+  "d-position":[{kind:"external",label:"num_computed_tokens + query offsets",shape:"[B] + [Nq]",from:"vLLM GPUModelRunner 请求调度状态"}],
+  "s-position":[{kind:"external",label:"num_computed_tokens + query offsets",shape:"[B] + [Nq]",from:"vLLM GPUModelRunner 请求调度状态"}],
+  "d-attnmeta":[{kind:"external",label:"query_start_loc · seq_lens · causal",shape:"[B+1] + [B] + bool",from:"vLLM CommonAttentionMetadata"}],
+  "s-attnmeta":[{kind:"external",label:"query_start_loc · seq_lens · causal",shape:"[B+1] + [B] + bool",from:"vLLM CommonAttentionMetadata"}],
+  "d-slots":[{kind:"external",label:"positions + block_table",shape:"[Nq] + [B,Nblocks]",from:"runner positions 与 KV cache manager"}],
+  "s-slots":[{kind:"external",label:"positions + block_table",shape:"[Nq] + [B,Nblocks]",from:"runner positions 与 KV cache manager"}],
+  "d-ropeq":[{kind:"upstream",label:"Q̃",shape:"[B,64,S,128]",from:"Q RMSNorm 输出"},{kind:"external",label:"positions",shape:"[Nq]",from:"Build Position IDs 输出"}],
+  "d-ropek":[{kind:"upstream",label:"K̃",shape:"[B,4,S,128]",from:"K RMSNorm 输出"},{kind:"external",label:"positions",shape:"[Nq]",from:"Build Position IDs 输出"}],
+  "d-cache":[{kind:"upstream",label:"Kᵣ",shape:"[B,4,S,128]",from:"Partial RoPE (K) 输出"},{kind:"upstream",label:"V",shape:"[B,4,S,128]",from:"Split Q / K / V 输出"},{kind:"external",label:"slot_mapping + block_table",shape:"[Nq] + [B,Nblocks]",from:"Resolve KV Slots 输出"}],
+  "d-qk":[{kind:"upstream",label:"Qᵣ",shape:"[B,64,S,128]",from:"Partial RoPE (Q) 输出"},{kind:"upstream",label:"visible K",shape:"[B,4,T,128]",from:"Paged KV Cache 输出"}],
+  "d-mask":[{kind:"upstream",label:"scaled scores",shape:"[B,64,S,T]",from:"Scale 1/√128 输出"},{kind:"external",label:"causal / padding bounds",shape:"runtime metadata",from:"Build Attention Metadata 输出"}],
+  "d-pv":[{kind:"upstream",label:"attention probability P",shape:"[B,64,S,T]",from:"Softmax 输出"},{kind:"upstream",label:"visible V",shape:"[B,4,T,128]",from:"Paged KV Cache 输出"}],
+  "s-rope":[{kind:"upstream",label:"Q̃ · K̃",shape:"Q/K unchanged",from:"Main Q/K Norm 输出"},{kind:"external",label:"positions",shape:"[Nq]",from:"Build Position IDs 输出"}],
+  "s-cache":[{kind:"upstream",label:"Kᵣ · V",shape:"KV pages",from:"Partial RoPE 与 Split 5 outputs"},{kind:"external",label:"slot_mapping + block_table",shape:"[Nq] + [B,Nblocks]",from:"Resolve KV Slots 输出"}],
+  "s-topk":[{kind:"upstream",label:"block scores",shape:"[B,4,S,Nblocks]",from:"Block Max 输出"},{kind:"external",label:"local / init priority",shape:"logical block flags",from:"Indexer 配置：local_blocks=1, init_blocks=0"}],
+  "s-select":[{kind:"upstream",label:"logical block ids",shape:"[B,S,4,16]",from:"Top-16 Blocks 输出"},{kind:"upstream",label:"paged K · V",shape:"KV pages",from:"Paged KV Cache 输出"},{kind:"external",label:"block_table",shape:"[B,Nblocks]",from:"KV cache manager"}],
+  "s-qk":[{kind:"upstream",label:"Qᵣ",shape:"[B,64,S,128]",from:"Partial RoPE 输出"},{kind:"upstream",label:"selected K",shape:"≤16 pages/group",from:"Select KV Pages 输出"}],
+  "s-mask":[{kind:"upstream",label:"scaled selected scores",shape:"[B,64,S,Ksel]",from:"Scale 1/√128 输出"},{kind:"external",label:"causal / padding bounds",shape:"runtime metadata",from:"Build Attention Metadata 输出"}],
+  "s-pv":[{kind:"upstream",label:"selected attention P",shape:"[B,64,S,Ksel]",from:"Softmax 输出"},{kind:"upstream",label:"selected V",shape:"≤16 pages/group",from:"Select KV Pages 输出"}],
+  "s-router":[{kind:"upstream",label:"post-attn hidden U",shape:"[B,S,6144]",from:"Attention Residual 输出"}],
+  "s-experts":[{kind:"upstream",label:"hidden_states + router_logits",shape:"[B,S,6144] + [B,S,128]",from:"Attention Residual 与 FP32 Router 输出"}],
+  "s-shared":[{kind:"upstream",label:"all hidden tokens U",shape:"[B,S,6144]",from:"Attention Residual 输出；不经过 Top-K"}],
+  "s-sum":[{kind:"upstream",label:"4 routed outputs",shape:"4 × [B,S,6144]",from:"Routed Experts ×4 输出"},{kind:"upstream",label:"shared output",shape:"[B,S,6144]",from:"Shared Expert ×1 输出"}],
+};
+
+const NEXT_BY_ID: Record<string,string> = {
+  "d-input":"RMSNorm","d-position":"Partial RoPE (Q/K)","d-attnmeta":"Apply Causal / Pad Bounds","d-slots":"Paged KV Cache","d-norm":"QKV Projection","d-qkv":"Split Q / K / V","d-split":"Q RMSNorm · K RMSNorm · Paged KV Cache","d-qnorm":"Partial RoPE (Q)","d-knorm":"Partial RoPE (K)","d-ropeq":"Q × Kᵀ","d-ropek":"Paged KV Cache","d-cache":"Q × Kᵀ · P × V","d-qk":"Scale 1/√128","d-scale":"Apply Causal / Pad Bounds","d-mask":"Softmax","d-softmax":"P × V","d-pv":"O Projection","d-oproj":"Attention Residual","d-add1":"Post-attn RMSNorm","d-postnorm":"Gate + Up Projection","d-gateup":"SwiGLU-OAI","d-swiglu":"Down Projection","d-down":"MLP Residual","d-add2":"下一 decoder layer / Final Norm",
+  "s-input":"RMSNorm","s-position":"Partial RoPE","s-attnmeta":"Indexer 与 Sparse Attention mask","s-slots":"Paged KV Cache","s-norm":"QKV + Index Projection","s-packed":"Split 5 outputs","s-split":"Index Q/K Norm · Main Q/K Norm · Paged KV Cache","s-idxnorm":"Index Q × Kᵀ","s-idxscore":"Block Max","s-blockmax":"Top-16 Blocks","s-topk":"Select KV Pages","s-mainnorm":"Partial RoPE","s-rope":"Paged KV Cache · Q × selected Kᵀ","s-cache":"Select KV Pages","s-select":"Q × selected Kᵀ · P × selected V","s-qk":"Scale 1/√128","s-scale":"Apply Causal / Pad Bounds","s-mask":"Softmax","s-softmax":"P × selected V","s-pv":"O Projection","s-oproj":"Attention Residual","s-addattn":"FP32 Router · Routed Experts · Shared Expert","s-router":"Routed Experts ×4","s-experts":"Weighted Sum","s-shared":"Weighted Sum","s-sum":"MoE Residual","s-addout":"下一 decoder layer / Final Norm",
+};
+
 const cloneOp = (base: Node, values: Partial<OpNode> & { id: string; kind: OpKind; title: string }): OpNode => {
   const detail=CODE_BY_ID[values.id];
   return { ...base, ...values, latex:values.latex??LATEX_BY_ID[values.id], codeSections:values.codeSections??detail?.sections, codeSymbols:values.codeSymbols??detail?.symbols };
@@ -317,6 +352,18 @@ function LatexFormula({node}:{node:OpNode}){
   return <div className="latex-render" aria-label={`${node.title} 完整计算公式`} dangerouslySetInnerHTML={{__html:html}}/>;
 }
 
+function bindingsFor(node:OpNode):IoBinding[]{
+  const dataInputs=INPUT_OVERRIDES[node.id]??[{kind:node.kind==="io"?"external":"upstream",label:node.input,shape:node.inputShape,from:node.kind==="io"?"模型调用方 / runtime":"图中紧邻的上游模块输出"}];
+  const weightInputs=node.weights.map(weight=>({kind:"weight" as const,label:weight.key,shape:`${weight.dtype} · ${weight.shape}`,from:weight.runtime?`checkpoint → ${weight.runtime}`:`checkpoint · ${weight.shard}`,note:weight.params?`${weight.params} parameters`:undefined}));
+  return [...dataInputs,...weightInputs];
+}
+
+function IoView({node}:{node:OpNode}){
+  const bindings=bindingsFor(node);
+  const labels:Record<BindingKind,string>={upstream:"上游张量",external:"外部输入",weight:"权重输入"};
+  return <div className="io-binding-view"><section className="binding-list"><header><span>INPUT BINDINGS</span><b>{bindings.length} 路输入</b></header>{bindings.map((binding,index)=><article className={`binding binding-${binding.kind}`} key={`${binding.kind}-${binding.label}-${index}`}><div><span>{labels[binding.kind]}</span><code>{binding.shape}</code></div><b>{binding.label}</b><p><i>来自</i>{binding.from}</p>{binding.note&&<small>{binding.note}</small>}</article>)}</section><div className={`io-operator op-${node.kind}`}><span>CURRENT OPERATOR</span><b>{node.title}</b><code>{node.runtime}</code></div><section className="output-binding"><header><span>OUTPUT BINDING</span><b>1 路产物</b></header><article><div><span>计算产物</span><code>{node.outputShape}</code></div><b>{node.output}</b><p><i>送往</i>{NEXT_BY_ID[node.id]??"图中下游模块"}</p></article></section></div>;
+}
+
 function CodeView({node}:{node:OpNode}){
   const sections=node.codeSections??[{stage:"SOURCE",title:"当前模块摘录",location:node.source,code:node.code,url:pinSource(node.sourceUrl)}];
   return <div className="code-view">
@@ -327,15 +374,13 @@ function CodeView({node}:{node:OpNode}){
 }
 
 function DetailPanel({node,tab,setTab}:{node:OpNode;tab:Tab;setTab:(t:Tab)=>void}){
-  const tabs:[Tab,string][]=[["io","I/O"],["formula","公式"],["code","代码"],["weights","权重"]];
+  const tabs:[Tab,string][]=[["io","I/O + 权重"],["formula","公式"],["code","代码"]];
   return <aside className="detail-panel"><header className="detail-header"><div><span>{node.kicker}</span><h2>{node.title}</h2></div><i className={`kind-dot op-${node.kind}`}/><p>{node.summary}</p><code>{node.runtime}</code></header><div className="detail-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div><div className="detail-content">
-    {tab==="io"&&<div className="shape-view"><article><span>INPUT</span><b>{node.input}</b><code>{node.inputShape}</code></article><i>→</i><article><span>OUTPUT</span><b>{node.output}</b><code>{node.outputShape}</code></article></div>}
+    {tab==="io"&&<IoView node={node}/>}
     {tab==="formula"&&<div className="formula-view"><span>LATEX · FULL COMPUTE</span><LatexFormula node={node}/><div className="formula-implementation"><b>实现摘要</b><code>{node.formula}</code></div><p>{node.formulaNote}</p></div>}
     {tab==="code"&&<CodeView node={node}/>}
-    {tab==="weights"&&<WeightView weights={node.weights}/>}</div><footer>vLLM @ {VLLM_COMMIT.slice(0,7)} · official safetensors</footer></aside>;
+    </div><footer>vLLM @ {VLLM_COMMIT.slice(0,7)} · official safetensors</footer></aside>;
 }
-
-function WeightView({weights}:{weights:Weight[]}){return weights.length?<div className="weight-view">{weights.map(w=><article key={w.key}><code>{w.key}</code><div><b>{w.dtype}</b><span>{w.shape}</span>{w.params&&<em>{w.params}</em>}</div><small>{w.shard}</small>{w.runtime&&<small>→ {w.runtime}</small>}</article>)}</div>:<div className="empty-weight"><b>无可训练权重</b><p>这是 shape、mask、缓存、路由选择或逐元素计算。</p></div>}
 
 function HelpModal({onClose}:{onClose:()=>void}){
   return <div className="modal-backdrop" onMouseDown={onClose}><section className="help-modal" onMouseDown={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label="参数、符号与映射说明"><header><div><span>REFERENCE</span><h2>参数、符号与运行时映射</h2></div><button onClick={onClose} aria-label="关闭">×</button></header><div className="help-grid"><section><h3>Shape 符号</h3><table><tbody><tr><th>B</th><td>batch size</td><th>S</th><td>当前 query token 数</td></tr><tr><th>Nq</th><td>本轮所有 query tokens</td><th>T</th><td>含历史 cache 的 KV 长度</td></tr><tr><th>d</th><td>head dim = 128</td><th>V</th><td>vocab = 200064</td></tr><tr><th>E</th><td>routed experts = 128</td><th>K</th><td>Top-K experts = 4</td></tr></tbody></table></section><section><h3>节点与底色</h3><div className="node-rule"><i className="input-swatch"/><b>输入</b><span>→</span><i className="operator-swatch"/><b>计算算子</b><span>→</span><i className="tensor-swatch"/><b>中间张量</b><span>→</span><i className="output-swatch"/><b>输出</b></div><p className="node-rule-note">Attention 的 mask 在 vLLM 中不是显式 [S,T] 张量：runner 生成 query_start_loc、seq_lens、causal=True、block_table 与 slot_mapping，后端内核直接据此限制可见 token。</p><div className="color-legend">{[["norm","Norm"],["linear","Linear"],["matmul","MatMul"],["rope","RoPE"],["scale","Scale"],["mask","Mask / Bounds"],["activation","Activation"],["route","Runtime / Routing"],["cache","Cache"],["add","Residual Add"]].map(([kind,label])=><span key={kind}><i className={`op-${kind}`}/>{label}</span>)}</div></section><section className="mapping-section"><h3>Checkpoint → vLLM runtime</h3><div className="mapping-table"><div><code>q_proj · k_proj · v_proj</code><span>→</span><b>QKVParallelLinear.qkv_proj</b></div><div><code>q/k/v + index_q/index_k</code><span>→</span><b>MinimaxM3QKV…WithIndexer</b></div><div><code>gate_proj · up_proj</code><span>→</span><b>gate_up_proj</b></div><div><code>experts.*.w1 · w3 · w2</code><span>→</span><b>FusedMoE w13 · w2</b></div></div></section></div></section></div>;

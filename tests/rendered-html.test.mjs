@@ -99,6 +99,15 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /对象解析/);
   assert.match(source, /CALL CHAIN/);
   assert.match(source, /MergedColumnParallelLinear/);
+  assert.match(source, /I\/O \+ 权重/);
+  assert.match(source, /INPUT BINDINGS/);
+  assert.match(source, /上游张量/);
+  assert.match(source, /外部输入/);
+  assert.match(source, /权重输入/);
+  assert.match(source, /checkpoint →/);
+  assert.match(source, /Build Position IDs 输出/);
+  assert.match(source, /NEXT_BY_ID/);
+  assert.doesNotMatch(source, /\["weights","权重"\]/);
   assert.match(source, /type="range"/);
   assert.match(source, /MODEL_REGISTRY/);
   assert.match(css, /height:100svh/);
@@ -113,6 +122,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.code-symbols/);
   assert.match(css, /\.code-call-chain/);
   assert.match(css, /\.code-section/);
+  assert.match(css, /\.io-binding-view/);
+  assert.match(css, /\.binding-weight/);
+  assert.match(css, /\.binding-external/);
   assert.doesNotMatch(css, /\.op-node\{[^}]*border-left/);
 });
 
