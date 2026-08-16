@@ -30,13 +30,19 @@ test("server-renders the MiniMax-M3 architecture workbench", async () => {
 
   const html = await response.text();
   assert.match(html, /MiniMax-M3/);
-  assert.match(html, /一屏看完整结构/);
-  assert.match(html, /COMPLETE FORWARD MAP/);
-  assert.match(html, /60 layers/);
-  assert.match(html, /MSA \+ Top-4 MoE/);
-  assert.match(html, /hover 预览 · click 固定/);
+  assert.match(html, /模型结构概览/);
+  assert.match(html, /CODE ↗/);
+  assert.match(html, /WEIGHTS ↗/);
+  assert.match(html, /vLLM @/);
+  assert.match(html, /edd4c81/);
+  assert.match(html, /模型总参数量/);
+  assert.match(html, /每 token 激活参数/);
+  assert.match(html, /MiniMax Sparse Attention \+ MoE/);
+  assert.match(html, /QKV \+ Index Projection/);
   assert.match(html, /model-00003-of-00059\.safetensors/);
-  assert.match(html, /og-one-screen\.png/);
+  assert.match(html, /查看参数和符号说明/);
+  assert.match(html, /og-operator-map\.png/);
+  assert.doesNotMatch(html, /一屏看完整结构|ARCHITECTURE × CODE × WEIGHTS|hover 预览 · click 固定/);
   assert.doesNotMatch(html, /Building your site|SkeletonPreview|codex-preview/);
 });
 
@@ -54,6 +60,12 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /inputShape/);
   assert.match(source, /formula/);
   assert.match(source, /weights/);
+  assert.match(source, /type OpKind/);
+  assert.match(source, /Top-16 Blocks/);
+  assert.match(source, /Checkpoint → vLLM runtime/);
+  assert.match(source, /type="range"/);
+  assert.match(source, /MODEL_REGISTRY/);
   assert.match(css, /height:100svh/);
   assert.match(css, /overflow:hidden/);
+  assert.doesNotMatch(css, /border-left/);
 });
