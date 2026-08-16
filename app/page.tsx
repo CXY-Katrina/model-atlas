@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import katex from "katex";
-import { denseNodes, layerShard, sparseNodes, visionNodes, type Node, type Weight } from "./model-data";
+import { denseNodes, layerShard, sparseNodes, type Node, type Weight } from "./model-data";
 
 type Tab = "io" | "formula" | "code";
 type OpKind = "io" | "norm" | "linear" | "split" | "rope" | "matmul" | "scale" | "mask" | "softmax" | "activation" | "route" | "cache" | "add";
@@ -12,6 +12,8 @@ type CodeSection = { stage: string; title: string; location: string; code: strin
 type CodeSymbol = { symbol: string; resolvesTo: string; meaning: string };
 type CodeDetail = { sections: CodeSection[]; symbols: CodeSymbol[] };
 type OpNode = Node & { kind: OpKind; latex?: string; codeSections?: CodeSection[]; codeSymbols?: CodeSymbol[] };
+type LayerType = "dense" | "sparse";
+type ExpandedStage = "attention" | "ffn" | null;
 
 const VLLM_COMMIT = "edd4c8176cfd98ece8a29beda574378c42971967";
 const CODE_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/models/minimax_m3/nvidia/model.py`;
@@ -25,6 +27,32 @@ const MODEL_REGISTRY = [
   { id: "deepseek-v4", name: "DeepSeek V4 · 待添加", enabled: false },
   { id: "step-3.7", name: "Step 3.7 · 待添加", enabled: false },
 ];
+
+const CONFIG_GROUPS = [
+  {title:"顶层多模态配置",rows:[
+    ["architectures","MiniMaxM3SparseForConditionalGeneration"],["auto_map.AutoConfig","configuration_minimax_m3_vl.MiniMaxM3VLConfig"],["model_type","minimax_m3_vl"],["torch_dtype","bfloat16"],["transformers_version","4.52.4"],["image_seq_length","576"],["image_token_index","200025"],["video_token_index","200026"],["multimodal_projector_bias","true"],["num_reward_heads","0"],["process_image_mode","dynamic_res"],["projector_hidden_act","gelu"],["projector_hidden_size","6144"],["vision_feature_layer","−1"],["vision_feature_select_strategy","full"],["image_grid_pinpoints","336…2016（步长 336）的 6×6 全组合"],
+  ]},
+  {title:"text_config",rows:[
+    ["architectures","MiniMaxM3SparseForCausalLM"],["hidden_size","6144"],["intermediate_size","3072"],["dense_intermediate_size","12288"],["shared_intermediate_size","3072"],["num_hidden_layers","60"],["num_attention_heads","64"],["num_key_value_heads","4"],["head_dim","128"],["vocab_size","200064"],["max_position_embeddings","1048576"],["rms_norm_eps","1e−6"],["use_gemma_norm","true"],["attention_output_gate","false"],["rope_theta","5000000"],["rotary_dim","64"],["partial_rotary_factor","0.5"],["hidden_act","swigluoai"],["use_qk_norm","true"],["qk_norm_type","per_head"],["tie_word_embeddings","false"],["num_local_experts","128"],["num_experts_per_tok","4"],["n_shared_experts","1"],["scoring_func","sigmoid"],["use_routing_bias","true"],["moe_layer_freq","L0–2: 0 · L3–59: 1"],["num_mtp_modules","7"],["num_nextn_predict_layers","1"],["swiglu_alpha","1.702"],["swiglu_limit","7.0"],["routed_scaling_factor","2.0"],
+  ]},
+  {title:"text_config.sparse_attention_config",rows:[
+    ["use_sparse_attention","true"],["sparse_index_dim","128"],["sparse_num_index_heads","4"],["sparse_topk_blocks","16"],["sparse_block_size","128"],["sparse_disable_index_value","L0–2: 0 · L3–59: 1"],["sparse_score_type","max"],["sparse_init_block","0"],["sparse_local_block","1"],["sparse_attention_freq","L0–2: 0 · L3–59: 1"],
+  ]},
+  {title:"vision_config",rows:[
+    ["model_type","clip_vision_model"],["hidden_size","1280"],["num_attention_heads","16"],["num_hidden_layers","32"],["intermediate_size","5120"],["patch_size","14"],["image_size","2016"],["projection_dim","6144"],["position_embedding_type","rope"],["rope_mode","3d"],["rope_theta","10000.0"],["attention_dropout","0.0"],["hidden_act","gelu"],["initializer_factor","1.0"],["initializer_range","0.02"],["layer_norm_eps","1e−5"],["num_channels","3"],["vocab_size","32000"],["vision_segment_max_frames","4"],
+  ]},
+  {title:"图像 token 压缩（顶层与 vision_config 内相同）",rows:[
+    ["image_token_compression_method","patch_merge"],["spatial_merge_size","2"],["temporal_patch_size","2"],
+  ]},
+] as const;
+
+const SIMPLE_FORMULA: Partial<Record<OpKind,string>> = {
+  norm:String.raw`y=\operatorname{Norm}(x)`,linear:String.raw`y=xW^{\mathsf T}`,split:String.raw`(a,b,\ldots)=\operatorname{Split}(x)`,rope:String.raw`q'=\operatorname{RoPE}(q,\mathrm{position})`,matmul:String.raw`y=a\,b^{\mathsf T}`,scale:String.raw`y=x/\sqrt{d_h}`,mask:String.raw`y=x+\mathrm{mask}`,softmax:String.raw`p=\operatorname{softmax}(x)`,activation:String.raw`y=g\,\sigma(1.702g)\,(u+1)`,route:String.raw`I=\operatorname{TopK}(\mathrm{score}(x))`,cache:String.raw`\mathrm{KV}[\mathrm{slot}]\leftarrow(K,V)`,add:String.raw`y=x+f(x)`,io:String.raw`y=x`,
+};
+
+const FORMULA_NOTE: Partial<Record<OpKind,string>> = {
+  norm:"把每个 token 的向量缩放到稳定范围；shape 不变。",linear:"W 是当前模块绑定的权重；最后一维由 W 的输出维决定。",split:"只切分最后一维，不做数值计算，也没有权重。",rope:"position 决定旋转角度；这里只旋转每个 head 的前 64 维。",matmul:"沿共同的 head_dim 相乘并求和。",scale:"dₕ=128；缩放避免 score 随维度增大。",mask:"不可见位置加 −∞，softmax 后概率变为 0。",softmax:"把每行 score 转为和为 1 的概率。",activation:"g 是 gate，u 是 up；实际实现还包含 limit=7 的截断。",route:"只选择去哪里计算；Top-K 本身不生成 expert 输出。",cache:"slot 与 block table 由 runtime 提供，权重不参与。",add:"残差支路与计算支路逐元素相加，shape 必须一致。",io:"这是数据入口或运行时元数据，不执行可训练计算。",
+};
 
 const LATEX_BY_ID: Record<string,string> = {
   "d-position":String.raw`\begin{aligned}q_b&=\mathrm{num\_scheduled\_tokens}[b]\\p_{b,i}&=\mathrm{num\_computed\_tokens}[b]+i,\quad 0\le i<q_b\\\mathbf p&=\operatorname{concat}_{b=1}^{B}(p_{b,0},\ldots,p_{b,q_b-1})\in\mathbb Z^{N_q}\end{aligned}`,
@@ -79,26 +107,6 @@ const LATEX_BY_ID: Record<string,string> = {
 };
 
 const MLP_SECTIONS: CodeSection[] = [
-  {stage:"1 · DEFINE",title:"MiniMaxM3MLP.__init__：成员真实类型",location:"nvidia/model.py · L136–163",url:`${CODE_URL}#L136-L163`,code:`self.gate_up_proj = MergedColumnParallelLinear(
-    config.hidden_size,
-    [intermediate_size] * 2,
-    bias=False,
-    quant_config=quant_config,
-    prefix=f"{prefix}.gate_up_proj",
-)
-self.down_proj = RowParallelLinear(
-    intermediate_size,
-    config.hidden_size,
-    bias=False,
-    quant_config=quant_config,
-    reduce_results=reduce_results,
-    prefix=f"{prefix}.down_proj",
-)
-self.act_fn = SiluAndMulWithClamp(
-    swiglu_limit=config.swiglu_limit,  # 7.0
-    alpha=config.swiglu_alpha,        # 1.702
-    beta=config.swiglu_beta,          # 1.0
-)`},
   {stage:"2 · CALL",title:"MiniMaxM3MLP.forward：调用顺序",location:"nvidia/model.py · L165–171",url:`${CODE_URL}#L165-L171`,code:`def forward(self, x):
     gate_up, _ = self.gate_up_proj(x)
     x = self.act_fn(gate_up)
@@ -113,14 +121,6 @@ self.act_fn = SiluAndMulWithClamp(
         max=self.swiglu_limit,
     )
     return gate * torch.sigmoid(self.alpha * gate) * (up + self.beta)`},
-  {stage:"4 · KERNEL",title:"CUDA 路径：同一语义的自定义算子",location:"activation.py · L219–224",url:`${ACTIVATION_URL}#L219-L224`,code:`def forward_cuda(self, x: torch.Tensor) -> torch.Tensor:
-    d = x.shape[-1] // 2
-    output_shape = x.shape[:-1] + (d,)
-    out = torch.empty(output_shape, dtype=x.dtype, device=x.device)
-    self.op(out, x, self.swiglu_limit, self.alpha, self.beta)
-    return out
-
-# self.op = torch.ops._C.silu_and_mul_with_clamp`},
 ];
 
 const MLP_SYMBOLS: CodeSymbol[] = [
@@ -307,6 +307,8 @@ function RuntimeIORail({N}:{N:({id}:{id:string})=>ReactNode}){
 }
 
 /* eslint-disable react-hooks/static-components -- local alias only shortens a large, stateless operator graph */
+// Legacy full graph kept as a source-level reference while progressive disclosure is active.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function DenseDiagram({g,active,onHover,onLeave,onSelect}:{g:Record<string,OpNode>;active:string;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void}){
   const p={active:false,onHover,onLeave,onSelect}; const N=({id}:{id:string})=><Op node={g[id]} {...p} active={active===g[id].id}/>;
   return <div className="operator-diagram dense-diagram">
@@ -323,6 +325,7 @@ function DenseDiagram({g,active,onHover,onLeave,onSelect}:{g:Record<string,OpNod
   </div>;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function SparseDiagram({g,active,onHover,onLeave,onSelect}:{g:Record<string,OpNode>;active:string;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void}){
   const p={active:false,onHover,onLeave,onSelect}; const N=({id}:{id:string})=><Op node={g[id]} {...p} active={active===g[id].id}/>;
   return <div className="operator-diagram sparse-diagram">
@@ -340,16 +343,50 @@ function SparseDiagram({g,active,onHover,onLeave,onSelect}:{g:Record<string,OpNo
 }
 /* eslint-enable react-hooks/static-components */
 
-function LayerNavigator({layer,onChange}:{layer:number;onChange:(n:number)=>void}){
-  const ticksRef=useRef<HTMLDivElement>(null);
-  useEffect(()=>{ticksRef.current?.querySelector(".active")?.scrollIntoView({behavior:"smooth",block:"nearest",inline:"center"})},[layer]);
-  return <div className="layer-nav"><div className="layer-nav-head"><div><span>DECODER LAYER</span><b>L{layer}</b><small>{layer<3?"Dense GQA + Dense MLP":"MSA + Top-4 MoE"}</small></div><div className="layer-type-legend"><span><i className="dense"/>Dense · L0–2</span><span><i className="sparse"/>MSA+MoE · L3–59</span></div></div><div className="layer-ticks" ref={ticksRef}>{Array.from({length:60},(_,i)=><button key={i} className={`${i<3?"dense":"sparse"} ${i===layer?"active":""}`} onClick={()=>onChange(i)} title={`L${i} · ${i<3?"Dense":"MSA+MoE"}`}>{i}</button>)}</div><div className="layer-slider"><span>L0</span><input type="range" min="0" max="59" value={layer} onChange={e=>onChange(Number(e.target.value))}/><span>L59</span></div></div>;
+/* eslint-disable react-hooks/static-components -- local N aliases keep the dependency diagrams legible */
+function StageZoom({type,stage,g,active,onHover,onLeave,onSelect,onClose}:{type:LayerType;stage:Exclude<ExpandedStage,null>;g:Record<string,OpNode>;active:string;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;onClose:()=>void}){
+  const p={active:false,onHover,onLeave,onSelect};
+  const N=({id}:{id:string})=><Op node={g[id]} {...p} active={active===g[id].id}/>;
+  if(stage==="ffn"&&type==="dense")return <section className="stage-zoom"><header><div><span>DENSE MLP · L0–2</span><b>每个输入、产物与权重分别进入算子</b></div><button onClick={onClose}>收起 ×</button></header><div className="zoom-linear vertical-zoom"><Tensor name="U" shape="[B,S,H]" role="input"/><span className="flow-down"/><N id="postnorm"/><span className="flow-down"/><Tensor name="Û" shape="[B,S,H]"/><span className="flow-down"/><N id="gateup"/><div className="split-products"><Tensor name="gate" shape="[B,S,H_dense]"/><Tensor name="up" shape="[B,S,H_dense]"/></div><span className="flow-down"/><N id="swiglu"/><span className="flow-down"/><Tensor name="activated" shape="[B,S,H_dense]"/><span className="flow-down"/><N id="down"/><span className="flow-down"/><Tensor name="Yffn" shape="[B,S,H]" role="output"/></div></section>;
+  if(stage==="ffn")return <section className="stage-zoom"><header><div><span>TOP-4 MOE · L3–59</span><b>Router lane 与 Shared lane 同时读取 U</b></div><button onClick={onClose}>收起 ×</button></header><div className="moe-dependency"><Tensor name="U · hidden_states" shape="[B,S,H]" role="input"/><div className="fork-label">同时分发到两条支路 ↓</div><div className="parallel-experts"><section><header>ROUTED LANE · 选择 4 / 128</header><Tensor name="U" shape="[B,S,H]"/><span className="flow-down"/><N id="router"/><span className="flow-down"/><Tensor name="expert ids" shape="[B,S,K]"/><Tensor name="router weights" shape="[B,S,K]"/><div className="two-input-op"><Tensor name="U" shape="[B,S,H]"/><Tensor name="ids + weights" shape="2 × [B,S,K]"/></div><span className="flow-down"/><N id="experts"/><span className="flow-down"/><Tensor name="weighted routed output" shape="[B,S,H]"/></section><section><header>SHARED LANE · 始终执行</header><Tensor name="U" shape="[B,S,H]"/><span className="flow-down"/><N id="shared"/><span className="flow-down"/><Tensor name="shared output" shape="[B,S,H]"/></section></div><div className="sum-inputs"><Tensor name="routed output" shape="[B,S,H]"/><Tensor name="shared output" shape="[B,S,H]"/></div><span className="flow-down"/><N id="sum"/><span className="flow-down"/><Tensor name="Ymoe" shape="[B,S,H]" role="output"/></div></section>;
+  if(type==="dense")return <section className="stage-zoom attention-zoom"><header><div><span>DENSE GQA · L0–2</span><b>Q、K、V 与 runtime 输入保持分离</b></div><button onClick={onClose}>收起 ×</button></header><div className="zoom-projection"><Tensor name="X̂" shape="[B,S,H]" role="input"/><N id="qkv"/><N id="split"/></div><div className="zoom-branches"><section><header>Q PATH</header><Tensor name="Q" shape="[B,Nₕ,S,Dₕ]"/><N id="qnorm"/><Tensor name="positions" shape="[Nq]" role="side"/><N id="ropeq"/><Tensor name="Qᵣ" shape="[B,Nₕ,S,Dₕ]"/></section><section><header>K PATH</header><Tensor name="K" shape="[B,Nₖᵥ,S,Dₕ]"/><N id="knorm"/><Tensor name="positions" shape="[Nq]" role="side"/><N id="ropek"/><Tensor name="Kᵣ" shape="[B,Nₖᵥ,S,Dₕ]"/></section><section><header>V + CACHE</header><Tensor name="V" shape="[B,Nₖᵥ,S,Dₕ]"/><Tensor name="slot_mapping" shape="[Nq]" role="side"/><Tensor name="block_table" shape="[B,Nblocks]" role="side"/><N id="cache"/><Tensor name="paged K" shape="[B,Nₖᵥ,T,Dₕ]"/><Tensor name="paged V" shape="[B,Nₖᵥ,T,Dₕ]"/></section></div><div className="attention-deps"><div><Tensor name="Qᵣ" shape="[B,Nₕ,S,Dₕ]"/><Tensor name="paged K" shape="[B,Nₖᵥ,T,Dₕ]"/></div><N id="qk"/><N id="scale"/><Tensor name="causal bounds" shape="runtime metadata" role="side"/><N id="mask"/><N id="softmax"/><Tensor name="P" shape="[B,Nₕ,S,T]"/><Tensor name="paged V" shape="[B,Nₖᵥ,T,Dₕ]"/><N id="pv"/><N id="oproj"/></div></section>;
+  return <section className="stage-zoom attention-zoom"><header><div><span>MINIMAX SPARSE ATTENTION · L3–59</span><b>Index path 只选 block，Main path 负责内容计算</b></div><button onClick={onClose}>收起 ×</button></header><div className="zoom-projection"><Tensor name="X̂" shape="[B,S,H]" role="input"/><N id="packed"/><N id="split"/></div><div className="zoom-branches sparse-branches"><section><header>INDEX PATH</header><Tensor name="Qidx" shape="[B,S,N_idx,D_idx]"/><Tensor name="Kidx" shape="[B,T,1,D_idx]"/><N id="idxnorm"/><N id="idxscore"/><Tensor name="causal bounds" shape="runtime metadata" role="side"/><N id="blockmax"/><N id="topk"/><Tensor name="Top-16 block ids" shape="[B,S,N_idx,K_block]"/></section><section><header>MAIN Q / K PATH</header><Tensor name="Q" shape="[B,Nₕ,S,Dₕ]"/><Tensor name="K" shape="[B,Nₖᵥ,S,Dₕ]"/><N id="mainnorm"/><Tensor name="positions" shape="[Nq]" role="side"/><N id="rope"/><Tensor name="Qᵣ" shape="[B,Nₕ,S,Dₕ]"/><Tensor name="Kᵣ" shape="[B,Nₖᵥ,S,Dₕ]"/></section><section><header>V + PAGED CACHE</header><Tensor name="V" shape="[B,Nₖᵥ,S,Dₕ]"/><Tensor name="slot_mapping" shape="[Nq]" role="side"/><Tensor name="block_table" shape="[B,Nblocks]" role="side"/><N id="cache"/><Tensor name="paged K" shape="KV pages"/><Tensor name="paged V" shape="KV pages"/></section></div><div className="attention-deps"><div><Tensor name="Top-16 ids" shape="[B,S,N_idx,K_block]"/><Tensor name="paged K" shape="KV pages"/><Tensor name="paged V" shape="KV pages"/></div><N id="select"/><Tensor name="selected K" shape="≤K_block×block_size"/><Tensor name="selected V" shape="≤K_block×block_size"/><N id="qk"/><N id="scale"/><Tensor name="causal bounds" shape="runtime metadata" role="side"/><N id="mask"/><N id="softmax"/><N id="pv"/><N id="oproj"/></div></section>;
+}
+
+function DecoderDiagram({type,g,active,expanded,onExpand,onHover,onLeave,onSelect}:{type:LayerType;g:Record<string,OpNode>;active:string;expanded:ExpandedStage;onExpand:(stage:ExpandedStage)=>void;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void}){
+  const p={active:false,onHover,onLeave,onSelect}; const N=({id}:{id:string})=><Op node={g[id]} {...p} active={active===g[id].id}/>;
+  return <div className={`decoder-workbench ${expanded?"has-zoom":""}`}><div className="decoder-column"><Tensor name="hidden_states" shape="[B,S,H]" role="input"/><span className="flow-down"/><N id="norm"/><span className="flow-down"/><button className="stage-summary attention-stage" onClick={()=>onExpand(expanded==="attention"?null:"attention")}><small>可展开模块</small><b>{type==="dense"?"Dense GQA + RoPE":"MiniMax Sparse Attention"}</b><span>{type==="dense"?"Q/K/V · causal · KV cache":"Index path + selected-page attention"}</span></button><span className="flow-down"/><N id={type==="dense"?"add1":"addattn"}/><span className="flow-down"/>{type==="dense"&&<><N id="postnorm"/><span className="flow-down"/></>}<button className="stage-summary ffn-stage" onClick={()=>onExpand(expanded==="ffn"?null:"ffn")}><small>可展开模块</small><b>{type==="dense"?"Dense MLP":"Top-4 MoE + Shared Expert"}</b><span>{type==="dense"?"Gate/Up → SwiGLU → Down":"两条并行 expert lanes"}</span></button><span className="flow-down"/><N id={type==="dense"?"add2":"addout"}/><span className="flow-down"/><Tensor name="next hidden_states" shape="[B,S,H]" role="output"/></div>{expanded&&<StageZoom type={type} stage={expanded} g={g} active={active} onHover={onHover} onLeave={onLeave} onSelect={onSelect} onClose={()=>onExpand(null)}/>}</div>;
+}
+/* eslint-enable react-hooks/static-components */
+
+function LayerNavigator({type,onChange}:{type:LayerType;onChange:(type:LayerType)=>void}){
+  return <div className="layer-nav layer-type-nav"><div className="layer-nav-head"><div><span>DECODER LAYER TYPE</span><b>{type==="dense"?"Dense":"Sparse"}</b><small>{type==="dense"?"Dense GQA + Dense MLP":"MSA + Top-4 MoE"}</small></div></div><div className="layer-type-options"><button className={type==="dense"?"active dense":"dense"} onClick={()=>onChange("dense")}><span>L0–L2</span><b>Dense Decoder</b><small>3 层结构完全相同</small></button><button className={type==="sparse"?"active sparse":"sparse"} onClick={()=>onChange("sparse")}><span>L3–L59</span><b>Sparse + MoE Decoder</b><small>57 层结构完全相同</small></button></div></div>;
 }
 
 function LatexFormula({node}:{node:OpNode}){
-  if(!node.latex)return <code className="formula-fallback">{node.formula}</code>;
-  const html=katex.renderToString(node.latex,{displayMode:true,throwOnError:false,strict:"ignore",output:"htmlAndMathml"});
-  return <div className="latex-render" aria-label={`${node.title} 完整计算公式`} dangerouslySetInnerHTML={{__html:html}}/>;
+  const formula=SIMPLE_FORMULA[node.kind]??String.raw`y=f(x)`;
+  const html=katex.renderToString(formula,{displayMode:true,throwOnError:false,strict:"ignore",output:"htmlAndMathml"});
+  return <div className="latex-render" aria-label={`${node.title} 简化公式`} dangerouslySetInnerHTML={{__html:html}}/>;
+}
+
+function symbolicShape(shape:string){
+  return shape.replaceAll("[B,64,S,128]","[B,Nₕ,S,Dₕ]").replaceAll("[B,64,S,T]","[B,Nₕ,S,T]").replaceAll("[B,4,S,128]","[B,Nₖᵥ,S,Dₕ]").replaceAll("[B,4,T,128]","[B,Nₖᵥ,T,Dₕ]").replaceAll("[B,S,12288]","[B,S,H_dense]").replaceAll("[B,S,6144]","[B,S,H]").replaceAll("[B,S,8192]","[B,S,Nₕ·Dₕ]").replaceAll("[B,S,9216]","[B,S,(Nₕ+2Nₖᵥ)·Dₕ]").replaceAll("[B,S,9856]","[B,S,QKV+Index]").replaceAll("200064","V");
+}
+
+function localShape(shape:string,node:OpNode,binding?:IoBinding){
+  if(binding?.kind==="weight"){
+    if(binding.label.includes("experts."))return `${shape} · 每个 EP rank 约持有 E/EP 个 experts`;
+    if(binding.label.includes("q_proj")||binding.label.includes("gate_proj")||binding.label.includes("up_proj"))return `${shape} · 输出维按 TP 切分`;
+    if(binding.label.includes("o_proj")||binding.label.includes("down_proj"))return `${shape} · 输入维按 TP 切分`;
+  }
+  if(/Q|heads|q_proj|8192|64/.test(`${binding?.label??""} ${shape}`))return `${shape} · 本 rank 使用 Nₕ/TP 个 Q heads`;
+  if(/K|V|kv|512/.test(`${binding?.label??""} ${shape}`))return `${shape} · 逻辑上 Nₖᵥ/TP；TP>Nₖᵥ 时可复制 KV heads`;
+  if(node.id==="s-experts"||node.id==="s-router")return `${shape} · E/EP 个专家由本 EP rank 持有`;
+  return `${shape} · TP/EP 不改变逻辑全局 shape`;
+}
+
+function ShapeRows({shape,node,binding}:{shape:string;node:OpNode;binding?:IoBinding}){
+  return <div className="shape-rows"><span><i>符号</i><code>{symbolicShape(shape)}</code></span><span><i>全局实际</i><code>{shape}</code></span><span><i>并行局部</i><code>{localShape(shape,node,binding)}</code></span></div>;
 }
 
 function bindingsFor(node:OpNode):IoBinding[]{
@@ -361,45 +398,46 @@ function bindingsFor(node:OpNode):IoBinding[]{
 function IoView({node}:{node:OpNode}){
   const bindings=bindingsFor(node);
   const labels:Record<BindingKind,string>={upstream:"上游张量",external:"外部输入",weight:"权重输入"};
-  return <div className="io-binding-view"><section className="binding-list"><header><span>INPUT BINDINGS</span><b>{bindings.length} 路输入</b></header>{bindings.map((binding,index)=><article className={`binding binding-${binding.kind}`} key={`${binding.kind}-${binding.label}-${index}`}><div><span>{labels[binding.kind]}</span><code>{binding.shape}</code></div><b>{binding.label}</b><p><i>来自</i>{binding.from}</p>{binding.note&&<small>{binding.note}</small>}</article>)}</section><div className={`io-operator op-${node.kind}`}><span>CURRENT OPERATOR</span><b>{node.title}</b><code>{node.runtime}</code></div><section className="output-binding"><header><span>OUTPUT BINDING</span><b>1 路产物</b></header><article><div><span>计算产物</span><code>{node.outputShape}</code></div><b>{node.output}</b><p><i>送往</i>{NEXT_BY_ID[node.id]??"图中下游模块"}</p></article></section></div>;
+  return <div className="io-binding-view"><section className="binding-list"><header><span>INPUT BINDINGS</span><b>{bindings.length} 路输入</b></header>{bindings.map((binding,index)=><article className={`binding binding-${binding.kind}`} key={`${binding.kind}-${binding.label}-${index}`}><div><span>{labels[binding.kind]}</span></div><b>{binding.label}</b><ShapeRows shape={binding.shape} node={node} binding={binding}/><p><i>来自</i>{binding.from}</p>{binding.note&&<small>{binding.note}</small>}</article>)}</section><div className={`io-operator op-${node.kind}`}><span>CURRENT OPERATOR</span><b>{node.title}</b><code>{node.runtime}</code></div><section className="output-binding"><header><span>OUTPUT BINDING</span><b>1 路产物</b></header><article><div><span>计算产物</span></div><b>{node.output}</b><ShapeRows shape={node.outputShape} node={node}/><p><i>送往</i>{NEXT_BY_ID[node.id]??"图中下游模块"}</p></article></section></div>;
 }
 
 function CodeView({node}:{node:OpNode}){
-  const sections=node.codeSections??[{stage:"SOURCE",title:"当前模块摘录",location:node.source,code:node.code,url:pinSource(node.sourceUrl)}];
+  const sections=(node.codeSections??[]).filter(section=>/forward|CALL|ENTER|PROJECT|ATTEND|ROUTE|SHARED/.test(`${section.title} ${section.stage}`));
   return <div className="code-view">
     <a className="code-source" href={pinSource(node.sourceUrl)} target="_blank" rel="noreferrer"><span>PINNED SOURCE · {VLLM_COMMIT.slice(0,7)}</span><b>{node.source}</b><i>↗</i></a>
-    {!!node.codeSymbols?.length&&<section className="code-symbols"><header><span>OBJECT RESOLUTION</span><b>对象解析</b></header>{node.codeSymbols.map(item=><article key={`${node.id}-${item.symbol}`}><code>{item.symbol}</code><i>→</i><b>{item.resolvesTo}</b><p>{item.meaning}</p></article>)}</section>}
-    <section className="code-call-chain"><header><span>CALL CHAIN</span><b>从父模块追到实际运算</b></header>{sections.map((section,index)=><article className="code-section" key={`${node.id}-${section.stage}-${index}`}><header><div><span>{section.stage}</span><b>{section.title}</b><small>{section.location}</small></div>{section.url&&<a href={section.url} target="_blank" rel="noreferrer" aria-label={`打开 ${section.title} 固定源码`}>↗</a>}</header><pre><code>{section.code}</code></pre></article>)}</section>
+    {sections.length?<section className="code-call-chain"><header><span>FORWARD ONLY</span><b>仅保留 forward / forward_native</b></header>{sections.map((section,index)=><article className="code-section" key={`${node.id}-${section.stage}-${index}`}><header><div><span>{section.stage}</span><b>{section.title}</b><small>{section.location}</small></div>{section.url&&<a href={section.url} target="_blank" rel="noreferrer" aria-label={`打开 ${section.title} 固定源码`}>↗</a>}</header><pre><code>{section.code}</code></pre></article>)}</section>:<div className="code-empty"><b>此节点没有独立 forward</b><p>它由所在模块的 forward 调度，或只是一个数学拆解步骤。</p></div>}
   </div>;
 }
 
-function DetailPanel({node,tab,setTab}:{node:OpNode;tab:Tab;setTab:(t:Tab)=>void}){
+function DetailPanel({node,tab,setTab}:{node:OpNode|null;tab:Tab;setTab:(t:Tab)=>void}){
   const tabs:[Tab,string][]=[["io","I/O + 权重"],["formula","公式"],["code","代码"]];
-  return <aside className="detail-panel"><header className="detail-header"><div><span>{node.kicker}</span><h2>{node.title}</h2></div><i className={`kind-dot op-${node.kind}`}/><p>{node.summary}</p><code>{node.runtime}</code></header><div className="detail-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div><div className="detail-content">
+  if(!node)return <aside className="detail-panel detail-empty"><div><span>MODULE DETAIL</span><b>尚未选择模块</b><p>点击左侧任一运算模块后，可在这里查看固定的 I/O、权重、公式和 forward 代码。</p></div></aside>;
+  return <aside className="detail-panel"><header className="detail-header"><div><span>{node.kicker}</span><h2>{node.title}</h2></div><i className={`kind-dot op-${node.kind}`}/><p>{node.summary}</p><code>{node.runtime}</code></header><div className="detail-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div><div className={`detail-content detail-${tab}`}>
     {tab==="io"&&<IoView node={node}/>}
-    {tab==="formula"&&<div className="formula-view"><span>LATEX · FULL COMPUTE</span><LatexFormula node={node}/><div className="formula-implementation"><b>实现摘要</b><code>{node.formula}</code></div><p>{node.formulaNote}</p></div>}
+    {tab==="formula"&&<div className="formula-view"><span>SIMPLE LATEX</span><LatexFormula node={node}/><div className="formula-implementation"><b>一句话解释</b><p>{FORMULA_NOTE[node.kind]??node.formulaNote}</p></div><div className="formula-terms"><span><b>x / a / b</b>输入张量</span><span><b>y / p</b>输出张量</span><span><b>W</b>权重矩阵</span><span><b>dₕ</b>head_dim = 128</span></div></div>}
     {tab==="code"&&<CodeView node={node}/>}
     </div><footer>vLLM @ {VLLM_COMMIT.slice(0,7)} · official safetensors</footer></aside>;
 }
 
 function HelpModal({onClose}:{onClose:()=>void}){
-  return <div className="modal-backdrop" onMouseDown={onClose}><section className="help-modal" onMouseDown={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label="参数、符号与映射说明"><header><div><span>REFERENCE</span><h2>参数、符号与运行时映射</h2></div><button onClick={onClose} aria-label="关闭">×</button></header><div className="help-grid"><section><h3>Shape 符号</h3><table><tbody><tr><th>B</th><td>batch size</td><th>S</th><td>当前 query token 数</td></tr><tr><th>Nq</th><td>本轮所有 query tokens</td><th>T</th><td>含历史 cache 的 KV 长度</td></tr><tr><th>d</th><td>head dim = 128</td><th>V</th><td>vocab = 200064</td></tr><tr><th>E</th><td>routed experts = 128</td><th>K</th><td>Top-K experts = 4</td></tr></tbody></table></section><section><h3>节点与底色</h3><div className="node-rule"><i className="input-swatch"/><b>输入</b><span>→</span><i className="operator-swatch"/><b>计算算子</b><span>→</span><i className="tensor-swatch"/><b>中间张量</b><span>→</span><i className="output-swatch"/><b>输出</b></div><p className="node-rule-note">Attention 的 mask 在 vLLM 中不是显式 [S,T] 张量：runner 生成 query_start_loc、seq_lens、causal=True、block_table 与 slot_mapping，后端内核直接据此限制可见 token。</p><div className="color-legend">{[["norm","Norm"],["linear","Linear"],["matmul","MatMul"],["rope","RoPE"],["scale","Scale"],["mask","Mask / Bounds"],["activation","Activation"],["route","Runtime / Routing"],["cache","Cache"],["add","Residual Add"]].map(([kind,label])=><span key={kind}><i className={`op-${kind}`}/>{label}</span>)}</div></section><section className="mapping-section"><h3>Checkpoint → vLLM runtime</h3><div className="mapping-table"><div><code>q_proj · k_proj · v_proj</code><span>→</span><b>QKVParallelLinear.qkv_proj</b></div><div><code>q/k/v + index_q/index_k</code><span>→</span><b>MinimaxM3QKV…WithIndexer</b></div><div><code>gate_proj · up_proj</code><span>→</span><b>gate_up_proj</b></div><div><code>experts.*.w1 · w3 · w2</code><span>→</span><b>FusedMoE w13 · w2</b></div></div></section></div></section></div>;
+  const [section,setSection]=useState<"shape"|"config">("shape");
+  const symbols=[["B","batch size"],["S","本轮 query 长度"],["T","含历史 cache 的 KV 长度"],["Nq","本轮全部 query tokens"],["H","hidden_size = 6144"],["Nₕ","query heads = 64"],["Nₖᵥ","KV heads = 4"],["Dₕ","head_dim = 128"],["Dᵣ","rotary_dim = 64"],["H_dense","dense FFN = 12288"],["H_expert","expert FFN = 3072"],["E","routed experts = 128"],["K","experts per token = 4"],["N_idx","index heads = 4"],["D_idx","index dim = 128"],["K_block","selected blocks = 16"],["TP","tensor parallel size"],["EP","expert parallel size"],["V","vocab_size = 200064"]];
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="help-modal reference-modal" onMouseDown={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label="模型参数与 Shape Reference"><header><div><span>REFERENCE</span><h2>模型参数与 Shape Reference</h2></div><button onClick={onClose} aria-label="关闭">×</button></header><nav className="reference-tabs"><button className={section==="shape"?"active":""} onClick={()=>setSection("shape")}>Shape · TP / EP</button><button className={section==="config"?"active":""} onClick={()=>setSection("config")}>完整 config.json</button></nav>{section==="shape"?<div className="reference-shape"><section><h3>Shape 符号</h3><div className="symbol-grid">{symbols.map(([symbol,meaning])=><div key={symbol}><b>{symbol}</b><span>{meaning}</span></div>)}</div></section><section><h3>全局 shape 与单 rank shape</h3><div className="parallel-examples"><div><code>Q: [B,Nₕ,S,Dₕ]</code><span>→ TP rank: [B,Nₕ/TP,S,Dₕ]</span></div><div><code>K/V: [B,Nₖᵥ,T,Dₕ]</code><span>→ Nₖᵥ/TP；TP 较大时可复制 KV heads</span></div><div><code>Routed experts: E=128</code><span>→ 每个 EP rank 约持有 E/EP 个 experts</span></div><div><code>Dense / shared MLP</code><span>→ 中间维按 TP 切分；不按 EP 路由</span></div></div></section><section><h3>权重名称为什么与代码不同？</h3><p className="reference-copy">权重文件保存的是训练时参数名；vLLM 为减少 kernel 次数，会把多个权重装载到一个运行时模块。它们数值一一对应，只是存储名称与执行模块名称不同。</p><div className="mapping-table"><div><code>q_proj · k_proj · v_proj</code><span>装载为</span><b>qkv_proj</b></div><div><code>gate_proj · up_proj</code><span>装载为</span><b>gate_up_proj</b></div><div><code>experts.w1 · w3</code><span>装载为</span><b>FusedMoE w13</b></div></div></section></div>:<div className="config-reference">{CONFIG_GROUPS.map(group=><section key={group.title}><h3>{group.title}</h3><table><tbody>{group.rows.map(([key,value])=><tr key={key}><th>{key}</th><td>{value}</td></tr>)}</tbody></table></section>)}</div>}</section></div>;
 }
 
 export default function Home(){
-  const [layer,setLayer]=useState(3); const [tab,setTab]=useState<Tab>("io"); const [dark,setDark]=useState(false); const [help,setHelp]=useState(false);
-  const graph=layer<3?denseGraph(layer):sparseGraph(layer); const [pinned,setPinned]=useState<OpNode>(sparseGraph(3).packed); const [hovered,setHovered]=useState<OpNode|null>(null); const active=hovered??pinned;
-  const changeLayer=(next:number)=>{const g=next<3?denseGraph(next):sparseGraph(next);setLayer(next);setPinned(next<3?g.qkv:g.packed);setHovered(null)};
-  const vision=visionNodes;
+  const [layerType,setLayerType]=useState<LayerType>("sparse"); const [expanded,setExpanded]=useState<ExpandedStage>(null); const [tab,setTab]=useState<Tab>("io"); const [dark,setDark]=useState(false); const [help,setHelp]=useState(false);
+  const layer=layerType==="dense"?2:3; const graph=layerType==="dense"?denseGraph(layer):sparseGraph(layer); const [pinned,setPinned]=useState<OpNode|null>(null); const [hovered,setHovered]=useState<OpNode|null>(null); const active=hovered??pinned;
+  const changeLayerType=(next:LayerType)=>{setLayerType(next);setExpanded(null);setPinned(null);setHovered(null)};
   return <main className={`atlas-app ${dark?"dark":""}`}><header className="app-header">
+    <div className="brand-lockup"><span className="brand-glyph"><i/><i/><i/></span><div><b>模型结构概览</b></div></div>
     <label className="model-select"><span>MODEL</span><select aria-label="选择模型" value="minimax-m3" onChange={()=>undefined}>{MODEL_REGISTRY.map(m=><option key={m.id} value={m.id} disabled={!m.enabled}>{m.name}</option>)}</select></label>
-    <div className="brand-lockup"><span className="brand-glyph"><i/><i/><i/></span><div><b>模型结构概览</b><small>MiniMax-M3</small></div></div>
     <nav className="resource-links"><a href={CODE_URL} target="_blank" rel="noreferrer"><b>CODE ↗</b><small>vLLM @ {VLLM_COMMIT.slice(0,7)}</small></a><a href={WEIGHTS_URL} target="_blank" rel="noreferrer"><b>WEIGHTS ↗</b><small>Hugging Face · 59 shards</small></a></nav>
     <div className="model-facts"><span><b>428B</b><small>模型总参数量</small></span><span><b>23B</b><small>每 token 激活参数</small></span><span><b>1M</b><small>最大上下文 token</small></span><span><b>869 GB</b><small>BF16 checkpoint</small></span></div>
     <button className="help-button" onClick={()=>setHelp(true)} aria-label="查看参数和符号说明">?</button><button className="theme-button" onClick={()=>setDark(v=>!v)} aria-label="切换明暗主题">{dark?"☀":"☾"}</button>
   </header><div className="screen-grid"><section className="map-panel">
-    <div className="model-overview"><button onMouseEnter={()=>setHovered(cloneOp(vision[0],{id:"overview-input",kind:"io",title:"Text / Vision Inputs"}))} onMouseLeave={()=>setHovered(null)}>Text / Vision Inputs</button><Arrow/><button onMouseEnter={()=>setHovered(cloneOp(vision[4],{id:"overview-fusion",kind:"linear",title:"Embedding Fusion"}))} onMouseLeave={()=>setHovered(null)}>Embedding Fusion <code>[B,S,6144]</code></button><Arrow/><div className="overview-stack"><b>Decoder ×60</b><span><i className="dense"/>Dense ×3</span><span><i className="sparse"/>MSA+MoE ×57</span></div><Arrow/><button onMouseEnter={()=>setHovered((layer<3?denseGraph(layer).add2:sparseGraph(layer).addout))} onMouseLeave={()=>setHovered(null)}>Final Norm → LM Head <code>[B,S,200064]</code></button></div>
-    <LayerNavigator layer={layer} onChange={changeLayer}/>
-    <section className="layer-canvas"><header><div><span>SELECTED LAYER DETAIL</span><h1>L{layer} · {layer<3?"Dense GQA + Dense MLP":"MiniMax Sparse Attention + MoE"}</h1></div><div className="node-legend"><span><i className="input-swatch"/>INPUT</span><span><i className="tensor-swatch"/>TENSOR</span><span><i className="operator-swatch"/>OPERATOR</span><span><i className="output-swatch"/>OUTPUT</span><code>{layerShard(layer)}</code></div></header>{layer<3?<DenseDiagram g={graph} active={active.id} onHover={setHovered} onLeave={()=>setHovered(null)} onSelect={setPinned}/>:<SparseDiagram g={graph} active={active.id} onHover={setHovered} onLeave={()=>setHovered(null)} onSelect={setPinned}/>}</section>
+    <div className="model-overview"><div className="model-step">Text / Vision Inputs</div><Arrow/><div className="model-step">Embedding Fusion <code>[B,S,H]</code></div><Arrow/><div className="overview-stack"><b>Decoder ×60</b><span><i className="dense"/>L0–2 · Dense</span><span><i className="sparse"/>L3–59 · Sparse+MoE</span></div><Arrow/><div className="model-step">Final RMSNorm <code>[B,S,H]</code></div><Arrow/><div className="model-step">LM Head <code>[B,S,V]</code></div></div>
+    <LayerNavigator type={layerType} onChange={changeLayerType}/>
+    <section className="layer-canvas"><header><div><span>DECODER LAYER · 按结构类型展示</span><h1>{layerType==="dense"?"Dense Decoder · L0–L2 同构":"Sparse + MoE Decoder · L3–L59 同构"}</h1></div><div className="node-legend"><span><i className="input-swatch"/>INPUT</span><span><i className="tensor-swatch"/>TENSOR</span><span><i className="operator-swatch"/>OPERATOR</span><span><i className="output-swatch"/>OUTPUT</span><code>点击大模块展开 · 点击算子固定详情</code></div></header><DecoderDiagram type={layerType} g={graph} active={active?.id??""} expanded={expanded} onExpand={setExpanded} onHover={setHovered} onLeave={()=>setHovered(null)} onSelect={node=>{setPinned(node);setTab("io")}}/></section>
   </section><DetailPanel node={active} tab={tab} setTab={setTab}/></div>{help&&<HelpModal onClose={()=>setHelp(false)}/>}</main>;
 }
