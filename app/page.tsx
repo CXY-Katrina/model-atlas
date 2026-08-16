@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import katex from "katex";
 import { denseNodes, layerShard, sparseNodes, visionNodes, type Node, type Weight } from "./model-data";
 
 type Tab = "io" | "formula" | "code" | "weights";
 type OpKind = "io" | "norm" | "linear" | "split" | "rope" | "matmul" | "scale" | "mask" | "softmax" | "activation" | "route" | "cache" | "add";
-type OpNode = Node & { kind: OpKind };
+type OpNode = Node & { kind: OpKind; latex?: string };
 
 const VLLM_COMMIT = "edd4c8176cfd98ece8a29beda574378c42971967";
 const CODE_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/models/minimax_m3/nvidia/model.py`;
@@ -19,7 +20,59 @@ const MODEL_REGISTRY = [
   { id: "step-3.7", name: "Step 3.7 · 待添加", enabled: false },
 ];
 
-const cloneOp = (base: Node, values: Partial<Node> & { id: string; kind: OpKind; title: string }): OpNode => ({ ...base, ...values });
+const LATEX_BY_ID: Record<string,string> = {
+  "d-position":String.raw`\begin{aligned}q_b&=\mathrm{num\_scheduled\_tokens}[b]\\p_{b,i}&=\mathrm{num\_computed\_tokens}[b]+i,\quad 0\le i<q_b\\\mathbf p&=\operatorname{concat}_{b=1}^{B}(p_{b,0},\ldots,p_{b,q_b-1})\in\mathbb Z^{N_q}\end{aligned}`,
+  "s-position":String.raw`\begin{aligned}q_b&=\mathrm{num\_scheduled\_tokens}[b]\\p_{b,i}&=\mathrm{num\_computed\_tokens}[b]+i,\quad 0\le i<q_b\\\mathbf p&=\operatorname{concat}_{b=1}^{B}(p_{b,0},\ldots,p_{b,q_b-1})\in\mathbb Z^{N_q}\end{aligned}`,
+  "d-attnmeta":String.raw`\begin{aligned}q_b&=\mathrm{query\_start\_loc}_{b+1}-\mathrm{query\_start\_loc}_b\\c_b&=\mathrm{seq\_len}_b-q_b\\M_{b,i,j}&=\begin{cases}0,&0\le j\le c_b+i\\-\infty,&\text{otherwise}\end{cases}\end{aligned}`,
+  "s-attnmeta":String.raw`\begin{aligned}q_b&=\mathrm{query\_start\_loc}_{b+1}-\mathrm{query\_start\_loc}_b\\c_b&=\mathrm{seq\_len}_b-q_b\\M_{b,i,j}&=\begin{cases}0,&0\le j\le c_b+i\\-\infty,&\text{otherwise}\end{cases}\end{aligned}`,
+  "d-slots":String.raw`\begin{aligned}\ell&=\left\lfloor p/\mathrm{block\_size}\right\rfloor,\quad o=p\bmod \mathrm{block\_size}\\b_{\mathrm{phys}}&=\mathrm{block\_table}[r,\ell]\\\mathrm{slot}(r,p)&=b_{\mathrm{phys}}\cdot\mathrm{block\_size}+o\end{aligned}`,
+  "s-slots":String.raw`\begin{aligned}\ell&=\left\lfloor p/\mathrm{block\_size}\right\rfloor,\quad o=p\bmod \mathrm{block\_size}\\b_{\mathrm{phys}}&=\mathrm{block\_table}[r,\ell]\\\mathrm{slot}(r,p)&=b_{\mathrm{phys}}\cdot\mathrm{block\_size}+o\end{aligned}`,
+  "d-norm":String.raw`\begin{aligned}\operatorname{rms}(x)&=\sqrt{\frac1{6144}\sum_{j=1}^{6144}x_j^2+\varepsilon}\\\hat x_j&=\frac{x_j}{\operatorname{rms}(x)}(1+\gamma_j),\qquad \varepsilon=10^{-6}\end{aligned}`,
+  "d-qkv":String.raw`\begin{aligned}Z&=\hat X\,[W_Q^\top\mid W_K^\top\mid W_V^\top]\\Z&\in\mathbb R^{B\times S\times(8192+512+512)}\end{aligned}`,
+  "d-split":String.raw`\begin{aligned}Q&=Z_{:,:,0:8192}\in\mathbb R^{B\times64\times S\times128}\\K&=Z_{:,:,8192:8704}\in\mathbb R^{B\times4\times S\times128}\\V&=Z_{:,:,8704:9216}\in\mathbb R^{B\times4\times S\times128}\end{aligned}`,
+  "d-qnorm":String.raw`\tilde Q_{b,h,s,:}=\frac{Q_{b,h,s,:}}{\sqrt{\frac1{128}\lVert Q_{b,h,s,:}\rVert_2^2+\varepsilon}}\odot(1+\gamma_Q)`,
+  "d-knorm":String.raw`\tilde K_{b,g,s,:}=\frac{K_{b,g,s,:}}{\sqrt{\frac1{128}\lVert K_{b,g,s,:}\rVert_2^2+\varepsilon}}\odot(1+\gamma_K)`,
+  "d-ropeq":String.raw`\begin{aligned}\theta_{p,j}&=p\,\theta_{\mathrm{base}}^{-2j/d_r},\quad d_r=64\\\binom{Q^r_{2j}}{Q^r_{2j+1}}&=\begin{bmatrix}\cos\theta_{p,j}&-\sin\theta_{p,j}\\\sin\theta_{p,j}&\cos\theta_{p,j}\end{bmatrix}\binom{\tilde Q_{2j}}{\tilde Q_{2j+1}}\\Q^r_{d_r:128}&=\tilde Q_{d_r:128}\end{aligned}`,
+  "d-ropek":String.raw`\begin{aligned}\theta_{p,j}&=p\,\theta_{\mathrm{base}}^{-2j/d_r},\quad d_r=64\\\binom{K^r_{2j}}{K^r_{2j+1}}&=\begin{bmatrix}\cos\theta_{p,j}&-\sin\theta_{p,j}\\\sin\theta_{p,j}&\cos\theta_{p,j}\end{bmatrix}\binom{\tilde K_{2j}}{\tilde K_{2j+1}}\\K^r_{d_r:128}&=\tilde K_{d_r:128}\end{aligned}`,
+  "d-cache":String.raw`\begin{aligned}\mathcal K[\mathrm{slot}(r,p)]&\leftarrow K^r_{r,p}\\\mathcal V[\mathrm{slot}(r,p)]&\leftarrow V_{r,p}\\K_{\le p},V_{\le p}&\leftarrow\operatorname{gather}(\mathcal K,\mathcal V,\mathrm{block\_table}_r)\end{aligned}`,
+  "d-qk":String.raw`A_{b,h,i,j}=\sum_{m=1}^{128}Q^r_{b,h,i,m}\,K^r_{b,\lfloor h/16\rfloor,j,m}`,
+  "d-scale":String.raw`\bar A_{b,h,i,j}=\frac{A_{b,h,i,j}}{\sqrt{128}}`,
+  "d-mask":String.raw`\tilde A_{b,h,i,j}=\bar A_{b,h,i,j}+M_{b,i,j}=\begin{cases}\bar A_{b,h,i,j},&j\le c_b+i\\-\infty,&j>c_b+i\end{cases}`,
+  "d-softmax":String.raw`P_{b,h,i,j}=\frac{\exp(\tilde A_{b,h,i,j}-m_{b,h,i})}{\sum_{t=0}^{T-1}\exp(\tilde A_{b,h,i,t}-m_{b,h,i})},\quad m_{b,h,i}=\max_t\tilde A_{b,h,i,t}`,
+  "d-pv":String.raw`O_{b,h,i,m}=\sum_{j=0}^{T-1}P_{b,h,i,j}\,V_{b,\lfloor h/16\rfloor,j,m}`,
+  "d-oproj":String.raw`Y_{\mathrm{attn}}=\operatorname{Concat}_{h=1}^{64}(O_h)W_O^\top\in\mathbb R^{B\times S\times6144}`,
+  "d-add1":String.raw`U=X_l+Y_{\mathrm{attn}}`,
+  "d-postnorm":String.raw`\hat U=\operatorname{RMSNorm}(U)=\frac{U}{\sqrt{\operatorname{mean}(U^2)+\varepsilon}}\odot(1+\gamma_{\mathrm{post}})`,
+  "d-gateup":String.raw`\begin{aligned}G&=\hat U W_{\mathrm{gate}}^\top\\R&=\hat U W_{\mathrm{up}}^\top,\qquad G,R\in\mathbb R^{B\times S\times12288}\end{aligned}`,
+  "d-swiglu":String.raw`\begin{aligned}\bar G&=\operatorname{clip}(G,-7,7),\quad \bar R=\operatorname{clip}(R+1,-7,7)\\H&=\bar G\odot\sigma(1.702\,\bar G)\odot\bar R\end{aligned}`,
+  "d-down":String.raw`Y_{\mathrm{ffn}}=HW_{\mathrm{down}}^\top\in\mathbb R^{B\times S\times6144}`,
+  "d-add2":String.raw`X_{l+1}=U+Y_{\mathrm{ffn}}`,
+  "s-norm":String.raw`\hat X=\frac{X}{\sqrt{\operatorname{mean}(X^2)+\varepsilon}}\odot(1+\gamma),\qquad\varepsilon=10^{-6}`,
+  "s-packed":String.raw`Z=\hat X[W_Q^\top\mid W_K^\top\mid W_V^\top\mid W_{Q_i}^\top\mid W_{K_i}^\top]\in\mathbb R^{B\times S\times9856}`,
+  "s-split":String.raw`Z\longrightarrow(Q_{8192},K_{512},V_{512},Q^{\mathrm{idx}}_{512},K^{\mathrm{idx}}_{128})`,
+  "s-idxnorm":String.raw`\tilde Q^{\mathrm{idx}}=\operatorname{RMSNorm}(Q^{\mathrm{idx}}),\qquad\tilde K^{\mathrm{idx}}=\operatorname{RMSNorm}(K^{\mathrm{idx}})`,
+  "s-idxscore":String.raw`S^{(r)}_{b,i,j}=\frac{\langle\tilde Q^{\mathrm{idx}}_{b,r,i,:},\tilde K^{\mathrm{idx}}_{b,0,j,:}\rangle}{\sqrt{128}}+M_{b,i,j}`,
+  "s-blockmax":String.raw`B^{(r)}_{b,i,u}=\max_{j\in[128u,128(u+1))}S^{(r)}_{b,i,j}`,
+  "s-topk":String.raw`\begin{aligned}\hat B_u&=B_u+10^{29}\mathbf1[u\in\mathcal L_i]+10^{30}\mathbf1[u\in\mathcal I]\\\mathcal S_{b,r,i}&=\operatorname{TopK}_{16}(\hat B)\end{aligned}`,
+  "s-mainnorm":String.raw`\tilde Q=\operatorname{RMSNorm}(Q),\qquad\tilde K=\operatorname{RMSNorm}(K)`,
+  "s-rope":String.raw`\begin{aligned}(Q^r_{:d_r},K^r_{:d_r})&=\operatorname{RoPE}(\tilde Q_{:d_r},\tilde K_{:d_r};\mathbf p),\quad d_r=64\\(Q^r_{d_r:},K^r_{d_r:})&=(\tilde Q_{d_r:},\tilde K_{d_r:})\end{aligned}`,
+  "s-cache":String.raw`\mathcal K[\mathrm{slot}(r,p)]\leftarrow K^r_{r,p},\qquad\mathcal V[\mathrm{slot}(r,p)]\leftarrow V_{r,p}`,
+  "s-select":String.raw`\begin{aligned}\mathcal P_{b,r,i}&=\{\mathrm{block\_table}[b,u]\mid u\in\mathcal S_{b,r,i}\}\\(K_{\mathcal S},V_{\mathcal S})&=\operatorname{gather}(\mathcal K,\mathcal V;\mathcal P_{b,r,i})\end{aligned}`,
+  "s-qk":String.raw`A_{b,h,i,j}=\sum_{m=1}^{128}Q^r_{b,h,i,m}(K_{\mathcal S})_{b,\lfloor h/16\rfloor,j,m},\quad j\in\mathcal S_{b,\lfloor h/16\rfloor,i}`,
+  "s-scale":String.raw`\bar A_{b,h,i,j}=A_{b,h,i,j}/\sqrt{128}`,
+  "s-mask":String.raw`\tilde A_{b,h,i,j}=\begin{cases}\bar A_{b,h,i,j},&j\in\mathcal S_i\ \land\ j\le c_b+i\\-\infty,&\text{otherwise}\end{cases}`,
+  "s-softmax":String.raw`P_{b,h,i,j}=\frac{\exp(\tilde A_{b,h,i,j}-\max_t\tilde A_{b,h,i,t})}{\sum_{t\in\mathcal S_i}\exp(\tilde A_{b,h,i,t}-\max_u\tilde A_{b,h,i,u})}`,
+  "s-pv":String.raw`O_{b,h,i,m}=\sum_{j\in\mathcal S_i}P_{b,h,i,j}(V_{\mathcal S})_{b,\lfloor h/16\rfloor,j,m}`,
+  "s-oproj":String.raw`Y_{\mathrm{attn}}=\operatorname{Concat}_{h=1}^{64}(O_h)W_O^\top`,
+  "s-addattn":String.raw`U=X_l+Y_{\mathrm{attn}}`,
+  "s-router":String.raw`\begin{aligned}r&=UW_{\mathrm{router}}^\top\in\mathbb R^{B\times S\times128}\\s&=\sigma(r),\qquad\mathcal E=\operatorname{TopK}_4(s+b)\\\hat w_e&=2\,\frac{s_e}{\sum_{j\in\mathcal E}s_j},\quad e\in\mathcal E\end{aligned}`,
+  "s-experts":String.raw`E_e(u)=W_{2,e}\left[\operatorname{clip}(g_e)\odot\sigma(1.702\operatorname{clip}(g_e))\odot\operatorname{clip}(v_e+1)\right],\quad(g_e,v_e)=(W_{1,e}u,W_{3,e}u)`,
+  "s-shared":String.raw`E_{\mathrm{shared}}(u)=W_{2,s}\operatorname{SwiGLUOAI}(W_{1,s}u,W_{3,s}u)`,
+  "s-sum":String.raw`Y_{\mathrm{moe}}=\sum_{e\in\mathcal E}\hat w_eE_e(U)+E_{\mathrm{shared}}(U)`,
+  "s-addout":String.raw`X_{l+1}=U+Y_{\mathrm{moe}}`,
+};
+
+const cloneOp = (base: Node, values: Partial<OpNode> & { id: string; kind: OpKind; title: string }): OpNode => ({ ...base, ...values, latex:values.latex??LATEX_BY_ID[values.id] });
 const pinSource = (url: string) => url.replace("/blob/main/", `/blob/${VLLM_COMMIT}/`);
 
 function denseGraph(layer: number): Record<string, OpNode> {
@@ -150,11 +203,17 @@ function LayerNavigator({layer,onChange}:{layer:number;onChange:(n:number)=>void
   return <div className="layer-nav"><div className="layer-nav-head"><div><span>DECODER LAYER</span><b>L{layer}</b><small>{layer<3?"Dense GQA + Dense MLP":"MSA + Top-4 MoE"}</small></div><div className="layer-type-legend"><span><i className="dense"/>Dense · L0–2</span><span><i className="sparse"/>MSA+MoE · L3–59</span></div></div><div className="layer-ticks" ref={ticksRef}>{Array.from({length:60},(_,i)=><button key={i} className={`${i<3?"dense":"sparse"} ${i===layer?"active":""}`} onClick={()=>onChange(i)} title={`L${i} · ${i<3?"Dense":"MSA+MoE"}`}>{i}</button>)}</div><div className="layer-slider"><span>L0</span><input type="range" min="0" max="59" value={layer} onChange={e=>onChange(Number(e.target.value))}/><span>L59</span></div></div>;
 }
 
+function LatexFormula({node}:{node:OpNode}){
+  if(!node.latex)return <code className="formula-fallback">{node.formula}</code>;
+  const html=katex.renderToString(node.latex,{displayMode:true,throwOnError:false,strict:"ignore",output:"htmlAndMathml"});
+  return <div className="latex-render" aria-label={`${node.title} 完整计算公式`} dangerouslySetInnerHTML={{__html:html}}/>;
+}
+
 function DetailPanel({node,tab,setTab}:{node:OpNode;tab:Tab;setTab:(t:Tab)=>void}){
   const tabs:[Tab,string][]=[["io","I/O"],["formula","公式"],["code","代码"],["weights","权重"]];
   return <aside className="detail-panel"><header className="detail-header"><div><span>{node.kicker}</span><h2>{node.title}</h2></div><i className={`kind-dot op-${node.kind}`}/><p>{node.summary}</p><code>{node.runtime}</code></header><div className="detail-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div><div className="detail-content">
     {tab==="io"&&<div className="shape-view"><article><span>INPUT</span><b>{node.input}</b><code>{node.inputShape}</code></article><i>→</i><article><span>OUTPUT</span><b>{node.output}</b><code>{node.outputShape}</code></article></div>}
-    {tab==="formula"&&<div className="formula-view"><span>COMPUTE</span><code>{node.formula}</code><p>{node.formulaNote}</p></div>}
+    {tab==="formula"&&<div className="formula-view"><span>LATEX · FULL COMPUTE</span><LatexFormula node={node}/><div className="formula-implementation"><b>实现摘要</b><code>{node.formula}</code></div><p>{node.formulaNote}</p></div>}
     {tab==="code"&&<div className="code-view"><a href={pinSource(node.sourceUrl)} target="_blank" rel="noreferrer"><span>PINNED SOURCE</span><b>{node.source}</b><i>↗</i></a><pre><code>{node.code}</code></pre></div>}
     {tab==="weights"&&<WeightView weights={node.weights}/>}</div><footer>vLLM @ {VLLM_COMMIT.slice(0,7)} · official safetensors</footer></aside>;
 }

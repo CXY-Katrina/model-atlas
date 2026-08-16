@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import katex from "katex";
 
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -84,6 +85,11 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /compute_slot_mapping/);
   assert.match(source, /Apply Causal \/ Pad Bounds/);
   assert.match(source, /mask 在 vLLM 中不是显式 \[S,T\] 张量/);
+  assert.match(source, /katex\.renderToString/);
+  assert.match(source, /LATEX_BY_ID/);
+  assert.match(source, /LATEX · FULL COMPUTE/);
+  assert.match(source, /operatorname\{TopK\}_4/);
+  assert.match(source, /theta_\{p,j\}/);
   assert.match(source, /Checkpoint → vLLM runtime/);
   assert.match(source, /type="range"/);
   assert.match(source, /MODEL_REGISTRY/);
@@ -94,5 +100,17 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.runtime-io/);
   assert.match(css, /\.tensor-input/);
   assert.match(css, /\.tensor-output/);
+  assert.match(css, /\.latex-render/);
+  assert.match(css, /\.katex-display/);
   assert.doesNotMatch(css, /\.op-node\{[^}]*border-left/);
+});
+
+test("renders every operator equation as valid LaTeX", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const equations = [...page.matchAll(/String\.raw`([^`]*)`/g)].map((match) => match[1]);
+
+  assert.ok(equations.length >= 40, `expected a complete formula set, got ${equations.length}`);
+  for (const equation of equations) {
+    assert.doesNotThrow(() => katex.renderToString(equation, { throwOnError: true }));
+  }
 });
