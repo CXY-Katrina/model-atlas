@@ -14,7 +14,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const metadataBase = new URL(`${protocol}://${host}`);
-  const imageUrl = new URL("/og-operator-map.png", metadataBase).toString();
+  const imageUrl = new URL("/og-tensor-operator-map.png", metadataBase).toString();
 
   return {
     metadataBase,
@@ -25,7 +25,7 @@ export async function generateMetadata(): Promise<Metadata> {
       type: "website",
       title,
       description,
-      images: [{ url: imageUrl, width: 1536, height: 1024, alt: "MiniMax-M3 architecture, code, and weights explorer" }],
+      images: [{ url: imageUrl, width: 1536, height: 1024, alt: "MiniMax-M3 tensor-to-operator architecture map" }],
     },
     twitter: { card: "summary_large_image", title, description, images: [imageUrl] },
   };
