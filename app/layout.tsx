@@ -7,14 +7,14 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 const title = "MiniMax-M3 · 结构 × 代码 × 权重";
-const description = "沿真实数据流拆解 MiniMax-M3：逐层核对输入输出 shape、数学公式、vLLM 运行时代码与官方 checkpoint 权重。";
+const description = "一屏查看 MiniMax-M3 完整结构；hover 或点击模块即可核对输入输出 shape、数学公式、vLLM 代码与官方 checkpoint 权重。";
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const metadataBase = new URL(`${protocol}://${host}`);
-  const imageUrl = new URL("/og.png", metadataBase).toString();
+  const imageUrl = new URL("/og-one-screen.png", metadataBase).toString();
 
   return {
     metadataBase,

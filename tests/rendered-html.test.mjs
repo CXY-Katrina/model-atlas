@@ -30,22 +30,30 @@ test("server-renders the MiniMax-M3 architecture workbench", async () => {
 
   const html = await response.text();
   assert.match(html, /MiniMax-M3/);
-  assert.match(html, /从一张图追到一个张量/);
-  assert.match(html, /END-TO-END FORWARD/);
-  assert.match(html, /CHECKPOINT → RUNTIME/);
-  assert.match(html, /59 safetensors shards/);
-  assert.match(html, /q\/k\/v \+ index_q\/index_k/);
+  assert.match(html, /一屏看完整结构/);
+  assert.match(html, /COMPLETE FORWARD MAP/);
+  assert.match(html, /60 layers/);
+  assert.match(html, /MSA \+ Top-4 MoE/);
+  assert.match(html, /hover 预览 · click 固定/);
+  assert.match(html, /model-00003-of-00059\.safetensors/);
+  assert.match(html, /og-one-screen\.png/);
   assert.doesNotMatch(html, /Building your site|SkeletonPreview|codex-preview/);
 });
 
 test("keeps code, checkpoint, formula, and shape evidence together", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const [page, modelData, css] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/model-data.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  const source = `${page}\n${modelData}`;
 
-  assert.match(page, /MinimaxM3QKVParallelLinearWithIndexer/);
-  assert.match(page, /block_sparse_moe\.experts\.0\.w1\.weight/);
-  assert.match(page, /model\.safetensors\.index\.json/);
-  assert.match(page, /safetensors/);
-  assert.match(page, /shape/);
-  assert.match(page, /formula/);
-  assert.match(page, /weight/);
+  assert.match(source, /MinimaxM3QKVParallelLinearWithIndexer/);
+  assert.match(source, /block_sparse_moe\.experts\.0\.w1\.weight/);
+  assert.match(source, /safetensors/);
+  assert.match(source, /inputShape/);
+  assert.match(source, /formula/);
+  assert.match(source, /weights/);
+  assert.match(css, /height:100svh/);
+  assert.match(css, /overflow:hidden/);
 });
