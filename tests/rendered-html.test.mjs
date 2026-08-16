@@ -91,6 +91,14 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /operatorname\{TopK\}_4/);
   assert.match(source, /theta_\{p,j\}/);
   assert.match(source, /Checkpoint → vLLM runtime/);
+  assert.match(source, /SiluAndMulWithClamp/);
+  assert.match(source, /self\.act_fn/);
+  assert.match(source, /forward_native/);
+  assert.match(source, /torch\.clamp\(x\[\.\.\., :d\], max=self\.swiglu_limit\)/);
+  assert.match(source, /torch\.ops\._C\.silu_and_mul_with_clamp/);
+  assert.match(source, /对象解析/);
+  assert.match(source, /CALL CHAIN/);
+  assert.match(source, /MergedColumnParallelLinear/);
   assert.match(source, /type="range"/);
   assert.match(source, /MODEL_REGISTRY/);
   assert.match(css, /height:100svh/);
@@ -102,6 +110,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.tensor-output/);
   assert.match(css, /\.latex-render/);
   assert.match(css, /\.katex-display/);
+  assert.match(css, /\.code-symbols/);
+  assert.match(css, /\.code-call-chain/);
+  assert.match(css, /\.code-section/);
   assert.doesNotMatch(css, /\.op-node\{[^}]*border-left/);
 });
 

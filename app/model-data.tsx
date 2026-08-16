@@ -100,7 +100,7 @@ export function denseNodes(layer: number): Node[] {
       id: "dense-mlp", tone: "moe", kicker: "DENSE FFN · WIDTH 12288", title: "SwiGLU-OAI MLP",
       summary: "仅 L0–L2 使用 dense FFN；gate/up 在运行时合并，down 投回 6144。",
       input: "normalized hidden", inputShape: "[B,S,6144]", output: "Xₗ₊₁", outputShape: "[B,S,6144]",
-      formula: "Wdown[clamp(g)·σ(1.702·clamp(g))·clamp(u+1)]", formulaNote: "g=Wgate x，u=Wup x；clamp limit=7.0。",
+      formula: "Wdown[min(g,7)·σ(1.702·min(g,7))·(clip(u,−7,7)+1)]", formulaNote: "g=Wgate x，u=Wup x；self.act_fn = SiluAndMulWithClamp(limit=7.0, alpha=1.702, beta=1.0)。",
       runtime: "MiniMaxM3MLP · gate_up_proj / down_proj", source: "nvidia/model.py · MiniMaxM3MLP", sourceUrl: MODEL,
       code: `gate_up, _ = self.gate_up_proj(x)\nx = self.act_fn(gate_up)\nx, _ = self.down_proj(x)`,
       weights: [

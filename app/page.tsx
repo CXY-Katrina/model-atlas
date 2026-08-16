@@ -6,12 +6,16 @@ import { denseNodes, layerShard, sparseNodes, visionNodes, type Node, type Weigh
 
 type Tab = "io" | "formula" | "code" | "weights";
 type OpKind = "io" | "norm" | "linear" | "split" | "rope" | "matmul" | "scale" | "mask" | "softmax" | "activation" | "route" | "cache" | "add";
-type OpNode = Node & { kind: OpKind; latex?: string };
+type CodeSection = { stage: string; title: string; location: string; code: string; url?: string };
+type CodeSymbol = { symbol: string; resolvesTo: string; meaning: string };
+type CodeDetail = { sections: CodeSection[]; symbols: CodeSymbol[] };
+type OpNode = Node & { kind: OpKind; latex?: string; codeSections?: CodeSection[]; codeSymbols?: CodeSymbol[] };
 
 const VLLM_COMMIT = "edd4c8176cfd98ece8a29beda574378c42971967";
 const CODE_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/models/minimax_m3/nvidia/model.py`;
 const WEIGHTS_URL = "https://huggingface.co/MiniMaxAI/MiniMax-M3";
 const RUNNER_URL = "https://github.com/vllm-project/vllm/blob/main/vllm/v1/worker/gpu_model_runner.py";
+const ACTIVATION_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/model_executor/layers/activation.py`;
 
 const MODEL_REGISTRY = [
   { id: "minimax-m3", name: "MiniMax-M3", enabled: true },
@@ -44,7 +48,7 @@ const LATEX_BY_ID: Record<string,string> = {
   "d-add1":String.raw`U=X_l+Y_{\mathrm{attn}}`,
   "d-postnorm":String.raw`\hat U=\operatorname{RMSNorm}(U)=\frac{U}{\sqrt{\operatorname{mean}(U^2)+\varepsilon}}\odot(1+\gamma_{\mathrm{post}})`,
   "d-gateup":String.raw`\begin{aligned}G&=\hat U W_{\mathrm{gate}}^\top\\R&=\hat U W_{\mathrm{up}}^\top,\qquad G,R\in\mathbb R^{B\times S\times12288}\end{aligned}`,
-  "d-swiglu":String.raw`\begin{aligned}\bar G&=\operatorname{clip}(G,-7,7),\quad \bar R=\operatorname{clip}(R+1,-7,7)\\H&=\bar G\odot\sigma(1.702\,\bar G)\odot\bar R\end{aligned}`,
+  "d-swiglu":String.raw`\begin{aligned}\bar G&=\min(G,7),\qquad \bar U=\operatorname{clip}(U,-7,7)\\H&=\bar G\odot\sigma(1.702\,\bar G)\odot(\bar U+1)\end{aligned}`,
   "d-down":String.raw`Y_{\mathrm{ffn}}=HW_{\mathrm{down}}^\top\in\mathbb R^{B\times S\times6144}`,
   "d-add2":String.raw`X_{l+1}=U+Y_{\mathrm{ffn}}`,
   "s-norm":String.raw`\hat X=\frac{X}{\sqrt{\operatorname{mean}(X^2)+\varepsilon}}\odot(1+\gamma),\qquad\varepsilon=10^{-6}`,
@@ -66,13 +70,117 @@ const LATEX_BY_ID: Record<string,string> = {
   "s-oproj":String.raw`Y_{\mathrm{attn}}=\operatorname{Concat}_{h=1}^{64}(O_h)W_O^\top`,
   "s-addattn":String.raw`U=X_l+Y_{\mathrm{attn}}`,
   "s-router":String.raw`\begin{aligned}r&=UW_{\mathrm{router}}^\top\in\mathbb R^{B\times S\times128}\\s&=\sigma(r),\qquad\mathcal E=\operatorname{TopK}_4(s+b)\\\hat w_e&=2\,\frac{s_e}{\sum_{j\in\mathcal E}s_j},\quad e\in\mathcal E\end{aligned}`,
-  "s-experts":String.raw`E_e(u)=W_{2,e}\left[\operatorname{clip}(g_e)\odot\sigma(1.702\operatorname{clip}(g_e))\odot\operatorname{clip}(v_e+1)\right],\quad(g_e,v_e)=(W_{1,e}u,W_{3,e}u)`,
+  "s-experts":String.raw`\begin{aligned}g_e&=W_{1,e}u,\quad v_e=W_{3,e}u\\\bar g_e&=\min(g_e,7),\quad\bar v_e=\operatorname{clip}(v_e,-7,7)\\E_e(u)&=W_{2,e}[\bar g_e\odot\sigma(1.702\bar g_e)\odot(\bar v_e+1)]\end{aligned}`,
   "s-shared":String.raw`E_{\mathrm{shared}}(u)=W_{2,s}\operatorname{SwiGLUOAI}(W_{1,s}u,W_{3,s}u)`,
   "s-sum":String.raw`Y_{\mathrm{moe}}=\sum_{e\in\mathcal E}\hat w_eE_e(U)+E_{\mathrm{shared}}(U)`,
   "s-addout":String.raw`X_{l+1}=U+Y_{\mathrm{moe}}`,
 };
 
-const cloneOp = (base: Node, values: Partial<OpNode> & { id: string; kind: OpKind; title: string }): OpNode => ({ ...base, ...values, latex:values.latex??LATEX_BY_ID[values.id] });
+const MLP_SECTIONS: CodeSection[] = [
+  {stage:"1 · DEFINE",title:"MiniMaxM3MLP.__init__：成员真实类型",location:"nvidia/model.py · L136–163",url:`${CODE_URL}#L136-L163`,code:`self.gate_up_proj = MergedColumnParallelLinear(
+    config.hidden_size,
+    [intermediate_size] * 2,
+    bias=False,
+    quant_config=quant_config,
+    prefix=f"{prefix}.gate_up_proj",
+)
+self.down_proj = RowParallelLinear(
+    intermediate_size,
+    config.hidden_size,
+    bias=False,
+    quant_config=quant_config,
+    reduce_results=reduce_results,
+    prefix=f"{prefix}.down_proj",
+)
+self.act_fn = SiluAndMulWithClamp(
+    swiglu_limit=config.swiglu_limit,  # 7.0
+    alpha=config.swiglu_alpha,        # 1.702
+    beta=config.swiglu_beta,          # 1.0
+)`},
+  {stage:"2 · CALL",title:"MiniMaxM3MLP.forward：调用顺序",location:"nvidia/model.py · L165–171",url:`${CODE_URL}#L165-L171`,code:`def forward(self, x):
+    gate_up, _ = self.gate_up_proj(x)
+    x = self.act_fn(gate_up)
+    x, _ = self.down_proj(x)
+    return x`},
+  {stage:"3 · ENTER",title:"SiluAndMulWithClamp.forward_native：展开 self.act_fn",location:"activation.py · L214–218",url:`${ACTIVATION_URL}#L214-L218`,code:`def forward_native(self, x: torch.Tensor) -> torch.Tensor:
+    d = x.shape[-1] // 2
+    gate = torch.clamp(x[..., :d], max=self.swiglu_limit)
+    up = torch.clamp(
+        x[..., d:],
+        min=-self.swiglu_limit,
+        max=self.swiglu_limit,
+    )
+    return gate * torch.sigmoid(self.alpha * gate) * (up + self.beta)`},
+  {stage:"4 · KERNEL",title:"CUDA 路径：同一语义的自定义算子",location:"activation.py · L219–224",url:`${ACTIVATION_URL}#L219-L224`,code:`def forward_cuda(self, x: torch.Tensor) -> torch.Tensor:
+    d = x.shape[-1] // 2
+    output_shape = x.shape[:-1] + (d,)
+    out = torch.empty(output_shape, dtype=x.dtype, device=x.device)
+    self.op(out, x, self.swiglu_limit, self.alpha, self.beta)
+    return out
+
+# self.op = torch.ops._C.silu_and_mul_with_clamp`},
+];
+
+const MLP_SYMBOLS: CodeSymbol[] = [
+  {symbol:"self.gate_up_proj",resolvesTo:"MergedColumnParallelLinear",meaning:"一次并行 GEMM 产生 packed [gate | up]，随后沿最后一维平分。"},
+  {symbol:"self.act_fn",resolvesTo:"SiluAndMulWithClamp",meaning:"不是未说明的黑盒 SiLU；内部完成 split、clamp、sigmoid 与逐元素乘法。"},
+  {symbol:"self.down_proj",resolvesTo:"RowParallelLinear",meaning:"把激活后的中间维投回 hidden_size，并按配置归并 TP 结果。"},
+  {symbol:"swiglu_limit / alpha / beta",resolvesTo:"7.0 / 1.702 / 1.0",meaning:"来自 MiniMax-M3 config，并直接传入激活算子。"},
+];
+
+const ATTENTION_SECTIONS: CodeSection[] = [
+  {stage:"1 · PROJECT",title:"Attention.forward：packed QKV 投影",location:"nvidia/model.py · MiniMaxM3Attention.forward",url:CODE_URL,code:`qkv, _ = self.qkv_proj(hidden_states)
+ops.fused_minimax_m3_qknorm_rope_kv_insert(
+    qkv, positions, self.q_norm.weight, self.k_norm.weight,
+    self.attn.kv_cache, ...
+)
+q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)`},
+  {stage:"2 · ATTEND",title:"Q/K/V 进入 attention backend",location:"nvidia/model.py · MiniMaxM3Attention.forward",url:CODE_URL,code:`attn_output = self.attn(q, k, v)
+output, _ = self.o_proj(attn_output)
+return output`},
+];
+
+const ATTENTION_SYMBOLS: CodeSymbol[] = [
+  {symbol:"self.qkv_proj",resolvesTo:"QKVParallelLinear",meaning:"checkpoint 的 q_proj/k_proj/v_proj 在运行时合并为一次投影。"},
+  {symbol:"fused_minimax_m3_qknorm_rope_kv_insert",resolvesTo:"Q/K RMSNorm + partial RoPE + KV cache insert",meaning:"positions、norm 权重和 cache 写入在融合 kernel 中一起消费。"},
+  {symbol:"self.attn",resolvesTo:"vLLM Attention backend",meaning:"causal、长度与 block table 由 runtime metadata 提供，不要求物化稠密 mask。"},
+];
+
+const MOE_SECTIONS: CodeSection[] = [
+  {stage:"1 · ROUTE",title:"MiniMaxM3MoE.forward：router logits",location:"nvidia/model.py · MiniMaxM3MoE.forward",url:CODE_URL,code:`router_logits, _ = self.gate(hidden_states)
+final_hidden_states = self.experts(
+    hidden_states=hidden_states,
+    router_logits=router_logits,
+)`},
+  {stage:"2 · SHARED",title:"共享专家复用 MiniMaxM3MLP",location:"nvidia/model.py · MiniMaxM3MoE.forward",url:CODE_URL,code:`shared_hidden_states = self.shared_experts(hidden_states)
+final_hidden_states = final_hidden_states + shared_hidden_states
+return final_hidden_states.view(num_tokens, hidden_dim)`},
+  {stage:"3 · CONFIG",title:"FusedMoEFactory：routed expert 配置",location:"nvidia/model.py · MiniMaxM3MoE.__init__",url:CODE_URL,code:`FusedMoEFactory(
+    num_experts=128,
+    top_k=4,
+    hidden_size=6144,
+    intermediate_size=3072,
+    activation="swigluoai_uninterleave",
+    routed_scaling_factor=2.0,
+)`},
+];
+
+const MOE_SYMBOLS: CodeSymbol[] = [
+  {symbol:"self.gate",resolvesTo:"GateLinear",meaning:"输出 128 个 FP32 router logits；Top-4 路由由 fused MoE 消费。"},
+  {symbol:"self.experts",resolvesTo:"FusedMoE",meaning:"把 w1/w3 打包为 w13，并对每个 token 执行 4 个 routed experts。"},
+  {symbol:"self.shared_experts",resolvesTo:"MiniMaxM3MLP",meaning:"所有 token 都执行，内部的 self.act_fn 同样是 SiluAndMulWithClamp。"},
+  {symbol:"activation",resolvesTo:"swigluoai_uninterleave",meaning:"routed-expert fused kernel 中与 dense/shared 分支等价的 SwiGLU-OAI 语义。"},
+];
+
+const CODE_BY_ID: Record<string, CodeDetail> = {};
+for(const id of ["d-gateup","d-swiglu","d-down","s-shared"]) CODE_BY_ID[id]={sections:MLP_SECTIONS,symbols:MLP_SYMBOLS};
+for(const id of ["d-qkv","d-split","d-qnorm","d-knorm","d-ropeq","d-ropek","d-cache","d-qk","d-scale","d-mask","d-softmax","d-pv","d-oproj","s-packed","s-split","s-mainnorm","s-rope","s-cache","s-select","s-qk","s-scale","s-mask","s-softmax","s-pv","s-oproj"]) CODE_BY_ID[id]={sections:ATTENTION_SECTIONS,symbols:ATTENTION_SYMBOLS};
+for(const id of ["s-router","s-experts","s-shared","s-sum"]) CODE_BY_ID[id]={sections:id==="s-shared"?[...MOE_SECTIONS,...MLP_SECTIONS]:MOE_SECTIONS,symbols:id==="s-shared"?[...MOE_SYMBOLS,...MLP_SYMBOLS]:MOE_SYMBOLS};
+
+const cloneOp = (base: Node, values: Partial<OpNode> & { id: string; kind: OpKind; title: string }): OpNode => {
+  const detail=CODE_BY_ID[values.id];
+  return { ...base, ...values, latex:values.latex??LATEX_BY_ID[values.id], codeSections:values.codeSections??detail?.sections, codeSymbols:values.codeSymbols??detail?.symbols };
+};
 const pinSource = (url: string) => url.replace("/blob/main/", `/blob/${VLLM_COMMIT}/`);
 
 function denseGraph(layer: number): Record<string, OpNode> {
@@ -209,12 +317,21 @@ function LatexFormula({node}:{node:OpNode}){
   return <div className="latex-render" aria-label={`${node.title} 完整计算公式`} dangerouslySetInnerHTML={{__html:html}}/>;
 }
 
+function CodeView({node}:{node:OpNode}){
+  const sections=node.codeSections??[{stage:"SOURCE",title:"当前模块摘录",location:node.source,code:node.code,url:pinSource(node.sourceUrl)}];
+  return <div className="code-view">
+    <a className="code-source" href={pinSource(node.sourceUrl)} target="_blank" rel="noreferrer"><span>PINNED SOURCE · {VLLM_COMMIT.slice(0,7)}</span><b>{node.source}</b><i>↗</i></a>
+    {!!node.codeSymbols?.length&&<section className="code-symbols"><header><span>OBJECT RESOLUTION</span><b>对象解析</b></header>{node.codeSymbols.map(item=><article key={`${node.id}-${item.symbol}`}><code>{item.symbol}</code><i>→</i><b>{item.resolvesTo}</b><p>{item.meaning}</p></article>)}</section>}
+    <section className="code-call-chain"><header><span>CALL CHAIN</span><b>从父模块追到实际运算</b></header>{sections.map((section,index)=><article className="code-section" key={`${node.id}-${section.stage}-${index}`}><header><div><span>{section.stage}</span><b>{section.title}</b><small>{section.location}</small></div>{section.url&&<a href={section.url} target="_blank" rel="noreferrer" aria-label={`打开 ${section.title} 固定源码`}>↗</a>}</header><pre><code>{section.code}</code></pre></article>)}</section>
+  </div>;
+}
+
 function DetailPanel({node,tab,setTab}:{node:OpNode;tab:Tab;setTab:(t:Tab)=>void}){
   const tabs:[Tab,string][]=[["io","I/O"],["formula","公式"],["code","代码"],["weights","权重"]];
   return <aside className="detail-panel"><header className="detail-header"><div><span>{node.kicker}</span><h2>{node.title}</h2></div><i className={`kind-dot op-${node.kind}`}/><p>{node.summary}</p><code>{node.runtime}</code></header><div className="detail-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div><div className="detail-content">
     {tab==="io"&&<div className="shape-view"><article><span>INPUT</span><b>{node.input}</b><code>{node.inputShape}</code></article><i>→</i><article><span>OUTPUT</span><b>{node.output}</b><code>{node.outputShape}</code></article></div>}
     {tab==="formula"&&<div className="formula-view"><span>LATEX · FULL COMPUTE</span><LatexFormula node={node}/><div className="formula-implementation"><b>实现摘要</b><code>{node.formula}</code></div><p>{node.formulaNote}</p></div>}
-    {tab==="code"&&<div className="code-view"><a href={pinSource(node.sourceUrl)} target="_blank" rel="noreferrer"><span>PINNED SOURCE</span><b>{node.source}</b><i>↗</i></a><pre><code>{node.code}</code></pre></div>}
+    {tab==="code"&&<CodeView node={node}/>}
     {tab==="weights"&&<WeightView weights={node.weights}/>}</div><footer>vLLM @ {VLLM_COMMIT.slice(0,7)} · official safetensors</footer></aside>;
 }
 
