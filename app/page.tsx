@@ -2,467 +2,370 @@
 
 import { useState } from "react";
 
-type Op = {
-  name: string;
-  impl: string;
-  role: string;
-  input: string;
-  actualIn: string;
-  output: string;
-  actualOut: string;
-  formula: string;
+type Scope = "language" | "vision";
+type Tab = "io" | "formula" | "code" | "weights";
+type Tone = "norm" | "projection" | "attention" | "index" | "moe" | "vision" | "output";
+
+type Weight = {
+  key: string;
+  shape: string;
+  dtype: "BF16" | "F32";
+  shard: string;
+  runtime?: string;
   note?: string;
-  code?: string;
+  params?: string;
 };
 
-const visionOps: Op[] = [
-  {
-    name: "Patchify + Conv3D Patch Embedding",
-    impl: "MiniMaxV3PatchEmbed.proj",
-    role: "把图像或视频切成时空 patch，并一次投影到视觉隐藏空间。静态图像会在时间轴上复制为 2 帧。",
-    input: "[Nᵥ, C·Pₜ·P²]",
-    actualIn: "[2304, 3·2·14²] = [2304, 1176]（672² 示例）",
-    output: "[Nᵥ, Hᵥ]",
-    actualOut: "[2304, 1280]",
-    formula: "Xᵥ = Conv3D(pixel_values), kernel = stride = (Pₜ, P, P)",
-    note: "Pₜ=2，P=14。2304 来自 (672/14)²；不同动态分辨率会改变 Nᵥ。",
-  },
-  {
-    name: "Pre LayerNorm",
-    impl: "MiniMaxV3VisionTransformer.pre_layernorm",
-    role: "稳定视觉编码器入口的通道尺度。",
-    input: "[Nᵥ, Hᵥ]",
-    actualIn: "[2304, 1280]",
-    output: "[Nᵥ, Hᵥ]",
-    actualOut: "[2304, 1280]",
-    formula: "LN(x) = γ ⊙ (x-μ) / √(σ²+ε) + β",
-  },
-  {
-    name: "QKV Projection",
-    impl: "MiniMaxV3VisionAttention.qkv",
-    role: "每个视觉层一次线性映射同时生成 16 组 Q/K/V。",
-    input: "[Nᵥ, Hᵥ]",
-    actualIn: "[2304, 1280]",
-    output: "[1, Nᵥ, 3, Hᵥq, Dᵥ]",
-    actualOut: "[1, 2304, 3, 16, 80]",
-    formula: "[Q,K,V] = XWqkv + bqkv；Dᵥ = Hᵥ / Hᵥq",
-  },
-  {
-    name: "3D partial RoPE",
-    impl: "apply_rotary_pos_emb_vision",
-    role: "把时间、高度、宽度坐标写入 Q/K。每个轴使用 26 维，共旋转 78 维，剩余 2 维直通。",
-    input: "Q,K: [1, Nᵥ, Hᵥq, Dᵥ]",
-    actualIn: "[1, 2304, 16, 80]",
-    output: "Q̃,K̃: 同形状",
-    actualOut: "[1, 2304, 16, 80]",
-    formula: "Q̃ = concat(RoPEₜ(Q₀:₂₆), RoPEₕ(Q₂₆:₅₂), RoPE𝓌(Q₅₂:₇₈), Q₇₈:₈₀)",
-  },
-  {
-    name: "Full Vision Self-Attention",
-    impl: "MiniMaxV3VisionAttention.attn",
-    role: "在同一图像/视频样本的全部视觉 patch 间做全注意力，cu_seqlens 隔离 batch 中不同媒体。",
-    input: "Q̃,K̃,V: [1, Nᵥ, Hᵥq, Dᵥ]",
-    actualIn: "3 × [1, 2304, 16, 80]",
-    output: "[Nᵥ, Hᵥ]",
-    actualOut: "[2304, 1280]",
-    formula: "O = softmax(Q̃K̃ᵀ / √Dᵥ + Mmedia)V",
-  },
-  {
-    name: "Encoder Layer ×32",
-    impl: "MiniMaxV3EncoderLayer",
-    role: "Pre-Norm Attention 与 GELU MLP 各自带残差；视觉宽度保持不变。",
-    input: "xₗ: [Nᵥ, Hᵥ]",
-    actualIn: "[2304, 1280]",
-    output: "xₗ₊₁: [Nᵥ, Hᵥ]",
-    actualOut: "[2304, 1280]",
-    formula: "u=xₗ+Attn(LN₁(xₗ)); xₗ₊₁=u+W₂·GELU(W₁·LN₂(u))",
-    code: "x = x + self.self_attn(self.layer_norm1(x), ...)\nreturn residual + self.mlp(self.layer_norm2(x))",
-  },
-  {
-    name: "Project to Language Width",
-    impl: "MiniMaxV3MultiModalProjector",
-    role: "把视觉通道 1280 对齐到语言模型 hidden_size=6144。",
-    input: "[Nᵥ, Hᵥ]",
-    actualIn: "[2304, 1280]",
-    output: "[Nᵥ, H]",
-    actualOut: "[2304, 6144]",
-    formula: "Z = W₂·GELU(W₁Xᵥ)",
-  },
-  {
-    name: "2×2 Spatial Merge",
-    impl: "MiniMaxV3PatchMerger",
-    role: "每 2×2 相邻视觉 token 先拼接，再压回语言宽度，token 数缩小 4 倍。",
-    input: "[Nᵥ/4, 4H]",
-    actualIn: "[576, 24576]",
-    output: "[Nᵥ/4, H]",
-    actualOut: "[576, 6144]",
-    formula: "Yᵥ = W₂·GELU(W₁·concat₂×₂(Z))",
-    note: "672×672 示例最终产生 24×24=576 个视觉 token；576 不是所有分辨率的固定结果。",
-  },
-];
+type Node = {
+  id: string;
+  tone: Tone;
+  kicker: string;
+  title: string;
+  summary: string;
+  input: string;
+  inputShape: string;
+  output: string;
+  outputShape: string;
+  formula: string;
+  formulaNote: string;
+  runtime: string;
+  source: string;
+  sourceUrl: string;
+  code: string;
+  weights: Weight[];
+};
 
-const denseOps: Op[] = [
-  {
-    name: "Gemma RMSNorm",
-    impl: "input_layernorm",
-    role: "对 decoder 输入做 Pre-Norm；vLLM 在后续层可把残差加法与下一次归一化融合。",
-    input: "X: [B, S, H]",
-    actualIn: "[B, S, 6144]",
-    output: "X̂: [B, S, H]",
-    actualOut: "[B, S, 6144]",
-    formula: "X̂ = X / √(mean(X²)+ε) ⊙ (1+γ)",
-  },
-  {
-    name: "Fused QKV Projection",
-    impl: "QKVParallelLinear",
-    role: "生成 64 个 Query 头与 4 组 Key/Value；每 16 个 Q 头共享一组 KV。",
-    input: "[B, S, H]",
-    actualIn: "[B, S, 6144]",
-    output: "Q:[B,Hq,S,Dh]；K,V:[B,Hkv,S,Dh]",
-    actualOut: "Q [B,64,S,128]；K,V [B,4,S,128]",
-    formula: "Q=X̂Wq, K=X̂Wk, V=X̂Wv；group_size=Hq/Hkv=16",
-  },
-  {
-    name: "Per-head QK Norm + partial RoPE",
-    impl: "fused_qk_norm_rope_cache_insert",
-    role: "Q/K 按 head 做 RMSNorm，仅前 Dr=64 维应用 NeoX RoPE；K/V 同时写入 paged KV cache。",
-    input: "Q,K,V + position + slot_mapping",
-    actualIn: "Q 64 heads；K/V 4 heads；Dh=128",
-    output: "Q̃,K̃,V + cache",
-    actualOut: "RoPE 64/128 dims；4-head KV cache",
-    formula: "q̃=[RoPE(RMSNorm(q)₀:Dr), RMSNorm(q)Dr:Dh]",
-  },
-  {
-    name: "Causal Dense GQA",
-    impl: "Attention(..., use_mla=False)",
-    role: "Layer 0–2 对全部可见历史做精确因果注意力；Query head h 使用 KV head ⌊h/16⌋。",
-    input: "Q:[B,Hq,S,Dh]；K,V cache:[B,Hkv,T,Dh]",
-    actualIn: "[B,64,S,128]；2×[B,4,T,128]",
-    output: "O:[B,S,Hq·Dh]",
-    actualOut: "[B,S,8192]",
-    formula: "Oₕ=softmax(Q̃ₕK̃⌊h/16⌋ᵀ/√Dh + Mcausal)V⌊h/16⌋",
-  },
-  {
-    name: "Output Projection + Residual",
-    impl: "RowParallelLinear(o_proj)",
-    role: "拼接所有 attention heads，投影回 6144，再与 decoder 残差相加。",
-    input: "[B,S,Hq·Dh]",
-    actualIn: "[B,S,8192]",
-    output: "[B,S,H]",
-    actualOut: "[B,S,6144]",
-    formula: "Y = concat(O₀…O₆₃)Wo + X",
-  },
-  {
-    name: "Dense SwiGLU-OAI MLP",
-    impl: "MiniMaxM3MLP",
-    role: "仅 Layer 0–2 使用 dense FFN；gate/up 合并投影，激活采用带 clamp 的 SwiGLU-OAI。",
-    input: "[B,S,H]",
-    actualIn: "[B,S,6144]",
-    output: "[B,S,H]",
-    actualOut: "6144 → 2×12288 → 12288 → 6144",
-    formula: "MLP(x)=Wdown[clamp(g)·σ(1.702·clamp(g))·clamp(u+1)]",
-  },
-];
+const MODEL = "https://github.com/vllm-project/vllm/blob/main/vllm/models/minimax_m3/nvidia/model.py";
+const VISION = "https://github.com/vllm-project/vllm/blob/main/vllm/models/minimax_m3/common/vision_tower.py";
+const INDEXER = "https://github.com/vllm-project/vllm/blob/main/vllm/models/minimax_m3/common/indexer.py";
+const SPARSE = "https://github.com/vllm-project/vllm/blob/main/vllm/models/minimax_m3/common/ops/sparse_attn.py";
 
-const msaOps: Op[] = [
-  {
-    name: "Gemma RMSNorm",
-    impl: "input_layernorm",
-    role: "Layer 3–59 的稀疏注意力入口归一化。",
-    input: "X:[B,S,H]",
-    actualIn: "[B,S,6144]",
-    output: "X̂:[B,S,H]",
-    actualOut: "[B,S,6144]",
-    formula: "X̂ = RMSNorm(X)",
-  },
-  {
-    name: "Fused 5-way Projection",
-    impl: "MiniMaxM3MSAAttention.qkv_proj",
-    role: "一次 GEMM 同时产生主注意力 Q/K/V 与索引侧路 Qidx/Kidx。索引侧路只检索，不生成内容。",
-    input: "[B,S,H]",
-    actualIn: "[B,S,6144]",
-    output: "Q|K|V|Qidx|Kidx",
-    actualOut: "8192 | 512 | 512 | 512 | 128 channels",
-    formula: "[Q,K,V,Qidx,Kidx] = X̂·Wfused",
-  },
-  {
-    name: "Main QK Norm + partial RoPE",
-    impl: "fused_qk_norm_rope_cache_insert",
-    role: "主分支规范化 Q/K、应用 50% RoPE，并按 slot_mapping 写入主 KV cache。",
-    input: "Q:[B,64,S,128]；K,V:[B,4,S,128]",
-    actualIn: "RoPE Dr=64，θ=5,000,000",
-    output: "Q̃ + paged K/V cache",
-    actualOut: "每 token 4×128 的 K 与 V",
-    formula: "cache[physical_slot] ← (K̃,V)",
-  },
-  {
-    name: "Index QK Norm + Index-K Cache",
-    impl: "MiniMaxM3Indexer",
-    role: "4 个 GQA group 各自拥有 Qidx；Kidx 在各组之间共享，并写入单独的 key-only paged cache。",
-    input: "Qidx:[B,S,Hi,Di]；Kidx:[B,S,1,Di]",
-    actualIn: "[B,S,4,128]；[B,S,1,128]",
-    output: "normalized Qidx + index key cache",
-    actualOut: "每物理 slot 仅 1×128 key",
-    formula: "sᵢⱼʳ = ⟨RMS(Qidxᵢʳ), RMS(Kidxⱼ)⟩ / √Di",
-  },
-  {
-    name: "Causal Token Score → Block Max",
-    impl: "indexer_paged_forward",
-    role: "先屏蔽未来 token，再把每 128 个 token 的分数做 max 聚合，得到每个 index head 的 block relevance。",
-    input: "token score:[B,Hi,S,T]",
-    actualIn: "Hi=4；Bk=128；j≤i 才有效",
-    output: "block score:[B,Hi,S,⌈T/Bk⌉]",
-    actualOut: "2048 tokens → [B,4,S,16]",
-    formula: "Mᵢ,bʳ = maxⱼ∈block(b), j≤i sᵢⱼʳ；未来位置 = −∞",
-  },
-  {
-    name: "Priority-aware Top-K Blocks",
-    impl: "index_topk",
-    role: "每个 index head 选 k=16 个逻辑 block。当前/local block 强制保留；发布配置没有首块强制。",
-    input: "[B,Hi,S,Nb]",
-    actualIn: "Hi=4，k=16，local=1，init=0",
-    output: "topk_indices_buffer:[B,S,Hi,k]",
-    actualOut: "[B,S,4,16]，不足 16 的槽位为 -1",
-    formula: "score(local)=10²⁹；score(init)=10³⁰，但 sparse_init_block=0",
-    code: "score = where(is_local, 1e29, where(is_init, 1e30, score))",
-    note: "当可见 block 数 ≤16 时，real_topk=min(16, visible_blocks)，因此全部可见 block 都进入结果。",
-  },
-  {
-    name: "Block Table Address Translation",
-    impl: "paged KV cache metadata",
-    role: "Top-K 给出逻辑 block id；block_table 再映射到物理 KV page。这样请求可使用非连续显存。",
-    input: "logical block ids + block_table",
-    actualIn: "16 logical ids / index head",
-    output: "physical page addresses",
-    actualOut: "16 pages × 128 slots",
-    formula: "physical_page = block_table[request, logical_block]",
-  },
-  {
-    name: "Exact Block-sparse GQA",
-    impl: "MiniMaxM3SparseAttention",
-    role: "主分支只读取被索引选中的 KV pages；在选中块内部仍做精确 token attention，并再次施加因果与 padding mask。",
-    input: "Q + selected K/V pages",
-    actualIn: "Q:[B,64,S,128]；≤16×128 KV / head",
-    output: "O:[B,S,Hq·Dh]",
-    actualOut: "[B,S,8192]",
-    formula: "Oₕ=softmax(QₕK𝒮ᵀ/√Dh + Mcausal + Mpad)V𝒮",
-    code: "self.indexer(index_query)\nreturn self.impl.forward(..., topk_indices_buffer, ...)" ,
-  },
-  {
-    name: "Output Projection + Residual",
-    impl: "RowParallelLinear(o_proj)",
-    role: "把 64 个稀疏 attention head 合并回语言隐藏宽度，并进入 post-attention RMSNorm。",
-    input: "[B,S,Hq·Dh]",
-    actualIn: "[B,S,8192]",
-    output: "[B,S,H]",
-    actualOut: "[B,S,6144]",
-    formula: "Y = Wo·concat(O₀…O₆₃) + X",
-  },
-];
-
-const moeOps: Op[] = [
-  {
-    name: "Router Logits",
-    impl: "GateLinear",
-    role: "每个 token 计算到 128 个 routed experts 的 FP32 路由 logits。",
-    input: "[B,S,H]",
-    actualIn: "[B,S,6144]",
-    output: "[B,S,E]",
-    actualOut: "[B,S,128]",
-    formula: "r = XWrouter",
-  },
-  {
-    name: "Sigmoid + Correction Bias + Top-4",
-    impl: "FusedMoE routing method",
-    role: "sigmoid 分数加 correction bias 后决定专家；被选专家的原始 sigmoid 权重重新归一化。",
-    input: "r:[B,S,E]",
-    actualIn: "E=128",
-    output: "expert_ids, weights:[B,S,K]",
-    actualOut: "2×[B,S,4]",
-    formula: "𝓔=TopK₄(σ(r)+b)；ŵₑ=σ(rₑ)/Σⱼ∈𝓔σ(rⱼ)",
-  },
-  {
-    name: "Routed Expert SwiGLU-OAI",
-    impl: "FusedMoE experts",
-    role: "每个 token 只执行命中的 4 个 routed expert；各 expert 的中间宽度为 3072。",
-    input: "4 × [tokensₑ,H]",
-    actualIn: "4 × [tokensₑ,6144]",
-    output: "4 × [tokensₑ,H]",
-    actualOut: "6144 → 2×3072 → 3072 → 6144",
-    formula: "Eₑ(x)=Wdownₑ[SwiGLU-OAI(Wgate/upₑx)]",
-  },
-  {
-    name: "Shared Expert",
-    impl: "shared_experts",
-    role: "1 个共享专家对所有 token 始终执行，用来承载通用能力，不参与 Top-K 竞争。",
-    input: "[B,S,H]",
-    actualIn: "[B,S,6144]",
-    output: "[B,S,H]",
-    actualOut: "6144 → 2×3072 → 3072 → 6144",
-    formula: "Yshared = Eshared(X)",
-  },
-  {
-    name: "Weighted Combine + Residual",
-    impl: "FusedMoE output",
-    role: "将 4 个 routed expert 输出按权重合并、乘 routed scaling=2，再加共享专家与 decoder 残差。",
-    input: "4 routed outputs + shared output",
-    actualIn: "5 × [B,S,6144]（逻辑形状）",
-    output: "[B,S,H]",
-    actualOut: "[B,S,6144]",
-    formula: "Y = X + 2·Σₑ∈𝓔 ŵₑEₑ(X) + Eshared(X)",
-  },
-];
-
-const sections = [
-  ["overall", "总 Forward"], ["config", "配置与符号"], ["vit", "ViT 视觉塔"], ["gqa", "Dense GQA"],
-  ["msa", "MSA 稀疏注意力"], ["cache", "Cache / Mask"], ["moe", "MoE FFN"], ["sources", "依据与边界"],
-];
-
-function Shape({ symbolic, actual }: { symbolic: string; actual: string }) {
-  return <div className="shape"><div><span>符号形状</span><code>{symbolic}</code></div><div><span>MiniMax-M3 实值</span><code>{actual}</code></div></div>;
+function layerShard(layer: number) {
+  if (layer === 0) return "model-00001-of-00059.safetensors";
+  if (layer < 3) return "model-00002-of-00059.safetensors";
+  return `model-${String(layer).padStart(5, "0")}-of-00059.safetensors`;
 }
 
-function OperatorChain({ ops, tone }: { ops: Op[]; tone: string }) {
-  return <div className={`op-chain ${tone}`}>
-    {ops.map((op, i) => <div className="op-wrap" key={op.name}>
-      <article className="op-card">
-        <div className="op-index">{String(i + 1).padStart(2, "0")}</div>
-        <div className="op-main">
-          <div className="op-title"><div><span>{op.impl}</span><h3>{op.name}</h3></div><p>{op.role}</p></div>
-          <div className="io-grid"><Shape symbolic={op.input} actual={op.actualIn}/><div className="io-arrow">↓</div><Shape symbolic={op.output} actual={op.actualOut}/></div>
-          <details>
-            <summary>展开运算细节、公式{op.code ? "与代码" : ""}</summary>
-            <div className="compute"><div><span>COMPUTE</span><code>{op.formula}</code>{op.note && <p>{op.note}</p>}</div>{op.code && <pre><code>{op.code}</code></pre>}</div>
-          </details>
-        </div>
-      </article>
-      {i < ops.length - 1 && <div className="chain-arrow"><span>↓</span></div>}
-    </div>)}
+function key(layer: number, suffix: string) {
+  return `language_model.model.layers.${layer}.${suffix}`;
+}
+
+function denseNodes(layer: number): Node[] {
+  const shard = layerShard(layer);
+  return [
+    {
+      id: "dense-norm", tone: "norm", kicker: `L${layer} · PRE-NORM`, title: "Gemma RMSNorm",
+      summary: "先保留 residual，再用 1+γ 的 Gemma 风格 RMSNorm 规范化本层输入。",
+      input: "Xₗ", inputShape: "[B,S,6144]", output: "X̂ₗ", outputShape: "[B,S,6144]",
+      formula: "X̂ = X / √(mean(X²)+ε) ⊙ (1+γ)", formulaNote: "ε=1e-6；vLLM 可把上一层 all-reduce 与这里融合。",
+      runtime: "MiniMAXGemmaRMSNorm · input_layernorm", source: "nvidia/model.py · MiniMaxM3DecoderLayer.forward", sourceUrl: MODEL,
+      code: `residual = hidden_states\nhidden_states = self.input_layernorm(hidden_states)\nhidden_states = self.self_attn(positions, hidden_states)`,
+      weights: [{ key: key(layer,"input_layernorm.weight"), shape:"[6144]", dtype:"BF16", shard, params:"6,144" }],
+    },
+    {
+      id: "dense-qkv", tone: "projection", kicker: "64Q : 4KV · ONE GEMM", title: "Q / K / V 投影",
+      summary: "checkpoint 保存三块矩阵；vLLM loader 将它们拼成 QKVParallelLinear。",
+      input: "X̂", inputShape: "[B,S,6144]", output: "Q | K | V", outputShape: "[B,S,8192 | 512 | 512]",
+      formula: "Q=X̂Wqᵀ, K=X̂Wkᵀ, V=X̂Wvᵀ", formulaNote: "head_dim=128；每 16 个 Query heads 共享一组 K/V。",
+      runtime: "QKVParallelLinear · qkv_proj", source: "nvidia/model.py · MiniMaxM3Attention", sourceUrl: MODEL,
+      code: `self.qkv_proj = QKVParallelLinear(6144, 128, 64, 4)\nqkv, _ = self.qkv_proj(hidden_states)`,
+      weights: [
+        { key:key(layer,"self_attn.q_proj.weight"), shape:"[8192,6144]", dtype:"BF16", shard, runtime:"qkv_proj · q shard", params:"50.33M" },
+        { key:key(layer,"self_attn.k_proj.weight"), shape:"[512,6144]", dtype:"BF16", shard, runtime:"qkv_proj · k shard", params:"3.15M" },
+        { key:key(layer,"self_attn.v_proj.weight"), shape:"[512,6144]", dtype:"BF16", shard, runtime:"qkv_proj · v shard", params:"3.15M" },
+      ],
+    },
+    {
+      id: "dense-attn", tone: "attention", kicker: "QK NORM · 50% ROPE · FULL GQA", title: "完整历史因果注意力",
+      summary: "Q/K 按 head 归一化，仅前 64/128 维应用 RoPE；前三层读取全部可见 KV。",
+      input: "Q,K,V + positions", inputShape: "Q [B,64,S,128] · K/V [B,4,T,128]", output: "attention heads", outputShape: "[B,S,8192]",
+      formula: "Oₕ=softmax(Q̃ₕK̃⌊h/16⌋ᵀ/√128+Mcausal)V⌊h/16⌋", formulaNote: "S=本轮 query 长度；T=包含历史 cache 的 KV 总长度。",
+      runtime: "fused_qknorm_rope_kv_insert → Attention", source: "nvidia/model.py · MiniMaxM3Attention.forward", sourceUrl: MODEL,
+      code: `ops.fused_minimax_m3_qknorm_rope_kv_insert(qkv, ...)\nq, k, v = qkv.split([8192, 512, 512], dim=-1)\nattn_output = self.attn(q, k, v)`,
+      weights: [
+        { key:key(layer,"self_attn.q_norm.weight"), shape:"[128]", dtype:"BF16", shard, params:"128" },
+        { key:key(layer,"self_attn.k_norm.weight"), shape:"[128]", dtype:"BF16", shard, params:"128" },
+      ],
+    },
+    {
+      id: "dense-o", tone: "projection", kicker: "HEADS → HIDDEN", title: "O Projection + residual",
+      summary: "64 个 head 拼成 8192 通道，再投回模型隐藏宽度 6144。",
+      input: "concat(O₀…O₆₃)", inputShape: "[B,S,8192]", output: "Yattn", outputShape: "[B,S,6144]",
+      formula: "Yattn=concat(O)Woᵀ+residual", formulaNote: "后接 post_attention_layernorm，再进入 FFN。",
+      runtime: "RowParallelLinear · o_proj", source: "nvidia/model.py · MiniMaxM3Attention", sourceUrl: MODEL,
+      code: `output, _ = self.o_proj(attn_output)\nhidden_states, residual = post_attention_layernorm(output, residual)`,
+      weights: [{ key:key(layer,"self_attn.o_proj.weight"), shape:"[6144,8192]", dtype:"BF16", shard, params:"50.33M" }],
+    },
+    {
+      id: "dense-mlp", tone: "moe", kicker: "DENSE FFN · WIDTH 12288", title: "SwiGLU-OAI MLP",
+      summary: "仅 L0–L2 使用 dense FFN；gate/up 在运行时合并，down 投回 6144。",
+      input: "normalized hidden", inputShape: "[B,S,6144]", output: "Xₗ₊₁", outputShape: "[B,S,6144]",
+      formula: "Wdown[clamp(g)·σ(1.702·clamp(g))·clamp(u+1)]", formulaNote: "g=Wgate x，u=Wup x；clamp limit=7.0。",
+      runtime: "MiniMaxM3MLP · gate_up_proj / down_proj", source: "nvidia/model.py · MiniMaxM3MLP", sourceUrl: MODEL,
+      code: `gate_up, _ = self.gate_up_proj(x)\nx = self.act_fn(gate_up)\nx, _ = self.down_proj(x)`,
+      weights: [
+        { key:key(layer,"mlp.gate_proj.weight"), shape:"[12288,6144]", dtype:"BF16", shard, runtime:"gate_up_proj · gate", params:"75.50M" },
+        { key:key(layer,"mlp.up_proj.weight"), shape:"[12288,6144]", dtype:"BF16", shard, runtime:"gate_up_proj · up", params:"75.50M" },
+        { key:key(layer,"mlp.down_proj.weight"), shape:"[6144,12288]", dtype:"BF16", shard, params:"75.50M" },
+      ],
+    },
+  ];
+}
+
+function sparseNodes(layer: number): Node[] {
+  const shard = layerShard(layer);
+  return [
+    {
+      id:"sparse-proj", tone:"projection", kicker:`L${layer} · FIVE-WAY PROJECTION`, title:"主分支 + Index 分支融合投影",
+      summary:"一次 GEMM 同时产生 Q/K/V 与 Qidx/Kidx；前者生成内容，后者只选 KV block。",
+      input:"RMSNorm(Xₗ)", inputShape:"[B,S,6144]", output:"Q|K|V|Qidx|Kidx", outputShape:"8192 | 512 | 512 | 512 | 128",
+      formula:"[Q,K,V,Qidx,Kidx]=X̂·Wpackedᵀ", formulaNote:"共 9856 输出通道；M3 禁用 index V/O。",
+      runtime:"MinimaxM3QKVParallelLinearWithIndexer", source:"nvidia/model.py · MiniMaxM3SparseAttention", sourceUrl:MODEL,
+      code:`self.qkv_proj = MinimaxM3QKVParallelLinearWithIndexer(\n    6144, 128, 64, 4, total_idx_heads=4, idx_head_dim=128\n)\nqkv, _ = self.qkv_proj(hidden_states)`,
+      weights:[
+        {key:key(layer,"self_attn.q_proj.weight"),shape:"[8192,6144]",dtype:"BF16",shard,runtime:"qkv_proj · q",params:"50.33M"},
+        {key:key(layer,"self_attn.k_proj.weight"),shape:"[512,6144]",dtype:"BF16",shard,runtime:"qkv_proj · k",params:"3.15M"},
+        {key:key(layer,"self_attn.v_proj.weight"),shape:"[512,6144]",dtype:"BF16",shard,runtime:"qkv_proj · v",params:"3.15M"},
+        {key:key(layer,"self_attn.index_q_proj.weight"),shape:"[512,6144]",dtype:"BF16",shard,runtime:"qkv_proj · index q",params:"3.15M"},
+        {key:key(layer,"self_attn.index_k_proj.weight"),shape:"[128,6144]",dtype:"BF16",shard,runtime:"qkv_proj · index k",params:"0.79M"},
+      ],
+    },
+    {
+      id:"indexer", tone:"index", kicker:"INDEX BRANCH · 4 HEADS", title:"Token score → block max",
+      summary:"每个 GQA group 有独立 Qidx，Kidx 跨组共享；先遮住未来 token，再对每 128 token 取 max。",
+      input:"Qidx,Kidx cache", inputShape:"[B,S,4,128] · [B,T,1,128]", output:"block scores", outputShape:"[B,4,S,⌈T/128⌉]",
+      formula:"Mᵢ,bʳ=maxⱼ∈block(b),j≤i ⟨RMS(Qidxᵢʳ),RMS(Kidxⱼ)⟩/√128", formulaNote:"未来 token 先置 −∞，所以尾块内部也不会偷看未来。",
+      runtime:"MiniMaxM3Indexer · key-only paged cache", source:"common/indexer.py · MiniMaxM3Indexer", sourceUrl:INDEXER,
+      code:`self.indexer = MiniMaxM3Indexer(\n    topk_blocks=16, sparse_block_size=128,\n    num_index_heads=4, index_head_dim=128,\n    init_blocks=0, local_blocks=1, score_type="max"\n)`,
+      weights:[
+        {key:key(layer,"self_attn.index_q_norm.weight"),shape:"[128]",dtype:"BF16",shard,params:"128"},
+        {key:key(layer,"self_attn.index_k_norm.weight"),shape:"[128]",dtype:"BF16",shard,params:"128"},
+      ],
+    },
+    {
+      id:"topk", tone:"index", kicker:"LOGICAL BLOCK ROUTING", title:"Priority-aware Top-16",
+      summary:"每个 index head 选 16 个逻辑块；local block 强制保留，首块没有 sink 优先级。",
+      input:"block scores", inputShape:"[B,4,S,Nblocks]", output:"logical block ids", outputShape:"[B,S,4,16]",
+      formula:"TopK₁₆(M+10²⁹·Ilocal+10³⁰·Iinit), init_blocks=0", formulaNote:"可见块 ≤16 时会全选；block_table 再把逻辑 id 翻译为物理 page。",
+      runtime:"index_topk → topk_indices_buffer", source:"common/indexer.py · index_topk", sourceUrl:INDEXER,
+      code:`self.indexer(index_query)\n# writes [token, index_head, topk] logical block ids\n# into the shared topk_indices_buffer`, weights:[],
+    },
+    {
+      id:"sparse-attn", tone:"attention", kicker:"MAIN BRANCH · EXACT ATTENTION", title:"Selected pages 上的精确 GQA",
+      summary:"主 Q/K 做 per-head norm 与 50% RoPE；attention 只读取 Top-16 pages，但块内仍做精确 token softmax。",
+      input:"Q + selected K/V pages", inputShape:"Q [B,64,S,128] · ≤16×128 KV/group", output:"attention heads", outputShape:"[B,S,8192]",
+      formula:"Oₕ=softmax(QₕK𝒮ᵀ/√128+Mcausal+Mpad)V𝒮", formulaNote:"稀疏的是访问块集合，不是块内数学。page size 与 sparse block size 都是 128。",
+      runtime:"MiniMaxM3SparseImpl.forward", source:"common/ops/sparse_attn.py", sourceUrl:SPARSE,
+      code:`self.indexer(index_query)\nattn_output = self.impl.forward(\n    self, query, self.kv_cache, output\n)\noutput, _ = self.o_proj(attn_output)`,
+      weights:[
+        {key:key(layer,"self_attn.q_norm.weight"),shape:"[128]",dtype:"BF16",shard,params:"128"},
+        {key:key(layer,"self_attn.k_norm.weight"),shape:"[128]",dtype:"BF16",shard,params:"128"},
+        {key:key(layer,"self_attn.o_proj.weight"),shape:"[6144,8192]",dtype:"BF16",shard,params:"50.33M"},
+      ],
+    },
+    {
+      id:"router", tone:"moe", kicker:"FP32 ROUTER · 128 → TOP-4", title:"Sigmoid + correction bias",
+      summary:"每 token 计算 128 个 FP32 logits；校正 bias 决定入选专家，原始 sigmoid 分数用于混合权重。",
+      input:"post-attn hidden", inputShape:"[B,S,6144]", output:"expert ids + weights", outputShape:"2 × [B,S,4]",
+      formula:"𝓔=TopK₄(σ(XWrouterᵀ)+b), ŵₑ=σ(rₑ)/Σⱼ∈𝓔σ(rⱼ)", formulaNote:"routed_scaling_factor=2.0；router 与 bias 都是 F32。",
+      runtime:"GateLinear + FusedMoE routing", source:"nvidia/model.py · MiniMaxM3MoE", sourceUrl:MODEL,
+      code:`router_logits, _ = self.gate(hidden_states)\nfinal_hidden_states = self.experts(\n    hidden_states=hidden_states, router_logits=router_logits\n)`,
+      weights:[
+        {key:key(layer,"block_sparse_moe.gate.weight"),shape:"[128,6144]",dtype:"F32",shard,params:"0.79M"},
+        {key:key(layer,"block_sparse_moe.e_score_correction_bias"),shape:"[128]",dtype:"F32",shard,params:"128"},
+      ],
+    },
+    {
+      id:"experts", tone:"moe", kicker:"ROUTED LANE · 128 EXPERTS", title:"每 token 执行 4 个 routed experts",
+      summary:"每专家三块矩阵；以下是 expert 0 的真实键，结构同构重复 128 次。vLLM 把 w1/w3 打包为 w13。",
+      input:"4 token groups", inputShape:"4 × [tokensₑ,6144]", output:"4 expert outputs", outputShape:"4 × [tokensₑ,6144]",
+      formula:"Eₑ(x)=W2ₑ[SwiGLU-OAI(W1ₑx,W3ₑx)]", formulaNote:"单专家 56.62M；128 个 routed experts 合计约 7.248B 参数/层。",
+      runtime:"FusedMoE · experts.w13 / experts.w2", source:"nvidia/model.py · FusedMoEFactory", sourceUrl:MODEL,
+      code:`FusedMoEFactory(\n  num_experts=128, top_k=4, hidden_size=6144,\n  intermediate_size=3072, activation="swigluoai_uninterleave"\n)`,
+      weights:[
+        {key:key(layer,"block_sparse_moe.experts.0.w1.weight"),shape:"[3072,6144]",dtype:"BF16",shard,runtime:"experts.w13 · gate",note:"×128",params:"18.87M"},
+        {key:key(layer,"block_sparse_moe.experts.0.w3.weight"),shape:"[3072,6144]",dtype:"BF16",shard,runtime:"experts.w13 · up",note:"×128",params:"18.87M"},
+        {key:key(layer,"block_sparse_moe.experts.0.w2.weight"),shape:"[6144,3072]",dtype:"BF16",shard,runtime:"experts.w2",note:"×128",params:"18.87M"},
+      ],
+    },
+    {
+      id:"shared", tone:"moe", kicker:"SHARED LANE · ALWAYS ON", title:"1 个 shared expert",
+      summary:"所有 token 都执行，不参与 Top-K 竞争；形状与单个 routed expert 相同。",
+      input:"all tokens", inputShape:"[B,S,6144]", output:"shared output", outputShape:"[B,S,6144]",
+      formula:"Yshared=Wdown[SwiGLU-OAI(Wgate x,Wup x)]", formulaNote:"约 56.62M 参数/层，始终属于激活路径。",
+      runtime:"MiniMaxM3MLP · shared_experts", source:"nvidia/model.py · MiniMaxM3MoE", sourceUrl:MODEL,
+      code:`self.shared_experts = MiniMaxM3MLP(\n    intermediate_size=3072, reduce_results=False\n)`,
+      weights:[
+        {key:key(layer,"block_sparse_moe.shared_experts.gate_proj.weight"),shape:"[3072,6144]",dtype:"BF16",shard,runtime:"shared gate_up · gate",params:"18.87M"},
+        {key:key(layer,"block_sparse_moe.shared_experts.up_proj.weight"),shape:"[3072,6144]",dtype:"BF16",shard,runtime:"shared gate_up · up",params:"18.87M"},
+        {key:key(layer,"block_sparse_moe.shared_experts.down_proj.weight"),shape:"[6144,3072]",dtype:"BF16",shard,params:"18.87M"},
+      ],
+    },
+    {
+      id:"combine", tone:"output", kicker:"MOE OUTPUT", title:"Weighted combine + residual",
+      summary:"4 个 routed 输出加权并乘 2，再与 shared expert 和 decoder residual 汇合。",
+      input:"4 routed + shared + residual", inputShape:"逻辑上 6 × [B,S,6144]", output:"Xₗ₊₁", outputShape:"[B,S,6144]",
+      formula:"Xₗ₊₁=residual+2·Σₑ∈𝓔 ŵₑEₑ(X)+Eshared(X)", formulaNote:"实现按 token 分派/合并，不会物化 6 份完整张量。",
+      runtime:"FusedMoE output combine", source:"nvidia/model.py · MiniMaxM3MoE.forward", sourceUrl:MODEL,
+      code:`return final_hidden_states.view(num_tokens, hidden_dim)`, weights:[],
+    },
+  ];
+}
+
+const visionNodes: Node[] = [
+  {
+    id:"patch",tone:"vision",kicker:"VISION INPUT",title:"Conv3D Patch Embedding",
+    summary:"把图像/视频切成 2×14×14 时空 patch，并投影到视觉宽度 1280。",
+    input:"flat pixel patches",inputShape:"[Nᵥ,3×2×14×14]=[Nᵥ,1176]",output:"visual tokens",outputShape:"[Nᵥ,1280]",
+    formula:"Xᵥ=Conv3D(pixels), kernel=stride=(2,14,14)",formulaNote:"672×672 单图示例 Nᵥ=(672/14)²=2304；动态分辨率会改变 Nᵥ。",
+    runtime:"MiniMaxVLPatchEmbed.patch_embedding",source:"common/vision_tower.py · MiniMaxVLPatchEmbed",sourceUrl:VISION,
+    code:`nn.Conv3d(3, 1280, kernel_size=(2,14,14), stride=(2,14,14), bias=False)`,
+    weights:[{key:"vision_tower.vision_model.embeddings.patch_embedding.weight",shape:"[1280,3,2,14,14]",dtype:"F32",shard:"model-00059-of-00059.safetensors",params:"1.51M"}],
+  },
+  {
+    id:"vit",tone:"vision",kicker:"ENCODER ×32",title:"Full attention Vision Transformer",
+    summary:"16-head full attention + partial 3D RoPE，再经过 1280→5120→1280 GELU MLP；每段带残差。",
+    input:"xₗ+(t,h,w)",inputShape:"[Nᵥ,1280] · 16 heads × 80",output:"xₗ₊₁",outputShape:"[Nᵥ,1280]",
+    formula:"u=x+Attn(LN₁(x),RoPEₜₕ𝓌); x′=u+W₂GELU(W₁LN₂(u))",formulaNote:"80 维 head 中 t/h/w 各旋转 26 维，共 78 维，剩余 2 维直通。",
+    runtime:"MiniMaxVLEncoderLayer ×32",source:"common/vision_tower.py · MiniMaxVLEncoderLayer",sourceUrl:VISION,
+    code:`x = x + self.self_attn(self.layer_norm1(x), ...)\nresidual = x\nx, _ = self.fc1(self.layer_norm2(x))\nx, _ = self.fc2(self.act(x))\nreturn residual + x`,
+    weights:[
+      {key:"vision_tower.vision_model.encoder.layers.0.self_attn.q_proj.weight",shape:"[1280,1280]",dtype:"BF16",shard:"model-00059-of-00059.safetensors",runtime:"qkv_proj · q",note:"×32",params:"1.64M"},
+      {key:"vision_tower.vision_model.encoder.layers.0.self_attn.k_proj.weight",shape:"[1280,1280]",dtype:"BF16",shard:"model-00059-of-00059.safetensors",runtime:"qkv_proj · k",note:"×32",params:"1.64M"},
+      {key:"vision_tower.vision_model.encoder.layers.0.self_attn.v_proj.weight",shape:"[1280,1280]",dtype:"BF16",shard:"model-00059-of-00059.safetensors",runtime:"qkv_proj · v",note:"×32",params:"1.64M"},
+      {key:"vision_tower.vision_model.encoder.layers.0.mlp.fc1.weight",shape:"[5120,1280]",dtype:"BF16",shard:"model-00059-of-00059.safetensors",runtime:"encoder.layers.0.fc1",note:"×32",params:"6.55M"},
+      {key:"vision_tower.vision_model.encoder.layers.0.mlp.fc2.weight",shape:"[1280,5120]",dtype:"BF16",shard:"model-00059-of-00059.safetensors",runtime:"encoder.layers.0.fc2",note:"×32",params:"6.55M"},
+    ],
+  },
+  {
+    id:"projector",tone:"projection",kicker:"WIDTH ALIGNMENT",title:"Multi-modal projector",
+    summary:"两层 GELU MLP 把视觉宽度 1280 对齐到语言 hidden_size=6144。",
+    input:"ViT output",inputShape:"[Nᵥ,1280]",output:"language-width tokens",outputShape:"[Nᵥ,6144]",
+    formula:"Z=W₂·GELU(W₁Xᵥ+b₁)+b₂",formulaNote:"projector 中间宽度使用 text hidden size 6144。",
+    runtime:"MiniMaxVLMultiModalProjector",source:"common/vision_tower.py · projector",sourceUrl:VISION,
+    code:`x, _ = self.linear_1(x)  # 1280 → 6144\nx = self.act(x)\nx, _ = self.linear_2(x)  # 6144 → 6144`,
+    weights:[
+      {key:"multi_modal_projector.linear_1.weight",shape:"[6144,1280]",dtype:"BF16",shard:"model-00026-of-00059.safetensors",params:"7.86M"},
+      {key:"multi_modal_projector.linear_2.weight",shape:"[6144,6144]",dtype:"BF16",shard:"model-00026-of-00059.safetensors",params:"37.75M"},
+    ],
+  },
+  {
+    id:"merge",tone:"vision",kicker:"TOKEN COMPRESSION · 2×2",title:"Spatial Patch Merger",
+    summary:"每 2×2 个相邻 token 拼成 24576 通道，再压回 6144；视觉 token 数缩小 4 倍。",
+    input:"2×2 grouped tokens",inputShape:"[Nᵥ/4,24576]",output:"merged visual tokens",outputShape:"[Nᵥ/4,6144]",
+    formula:"Yᵥ=W₂·GELU(W₁·concat₂×₂(Z))",formulaNote:"672×672 示例从 2304 patch 压缩为 576 个视觉 token。",
+    runtime:"MiniMaxVLPatchMerger · patch_merge_mlp",source:"common/vision_tower.py · MiniMaxVLPatchMerger",sourceUrl:VISION,
+    code:`x = x.reshape(x.shape[0] // 4, -1)\nx, _ = self.linear_1(x)  # 24576 → 6144\nx, _ = self.linear_2(self.act(x))`,
+    weights:[
+      {key:"patch_merge_mlp.linear_1.weight",shape:"[6144,24576]",dtype:"BF16",shard:"model-00026-of-00059.safetensors",params:"150.99M"},
+      {key:"patch_merge_mlp.linear_2.weight",shape:"[6144,6144]",dtype:"BF16",shard:"model-00026-of-00059.safetensors",params:"37.75M"},
+    ],
+  },
+  {
+    id:"fusion",tone:"output",kicker:"MODAL FUSION",title:"替换视觉占位 token",
+    summary:"视觉向量替换 image/video placeholder 的文本 embedding，随后共享同一 60 层 decoder。",
+    input:"text embeddings + Yᵥ",inputShape:"最后一维均为 6144",output:"fused embeddings",outputShape:"[B,S,6144]",
+    formula:"X₀[visual_positions]←Yᵥ",formulaNote:"后续 attention/MoE 不再区分模态。",
+    runtime:"merge_multimodal_embeddings",source:"nvidia/model.py · multimodal wrapper",sourceUrl:MODEL,
+    code:`inputs_embeds = merge_multimodal_embeddings(\n  input_ids, inputs_embeds, multimodal_embeddings,\n  [image_token_id, video_token_id]\n)`,weights:[],
+  },
+];
+
+function FlowNode({node,active,onClick}:{node:Node;active:boolean;onClick:()=>void}) {
+  return <button className={`flow-node ${node.tone} ${active?"active":""}`} onClick={onClick} aria-pressed={active}>
+    <span>{node.kicker}</span><div><b>{node.title}</b><small>{node.summary}</small></div><code>{node.outputShape}</code>
+  </button>;
+}
+
+function Arrow({label}:{label?:string}) {
+  return <div className="flow-arrow"><i/><span>↓</span>{label&&<code>{label}</code>}</div>;
+}
+
+function LinearFlow({nodes,active,onSelect}:{nodes:Node[];active:string;onSelect:(id:string)=>void}) {
+  return <div className="linear-flow">{nodes.map((node,index)=><div key={node.id}><FlowNode node={node} active={active===node.id} onClick={()=>onSelect(node.id)}/>{index<nodes.length-1&&<Arrow label={node.outputShape}/>}</div>)}</div>;
+}
+
+function SparseFlow({nodes,active,onSelect}:{nodes:Node[];active:string;onSelect:(id:string)=>void}) {
+  const get=(id:string)=>nodes.find(node=>node.id===id)!;
+  const item=(id:string)=><FlowNode node={get(id)} active={active===id} onClick={()=>onSelect(id)}/>;
+  return <div className="linear-flow sparse-flow">
+    {item("sparse-proj")}
+    <div className="split"><span>同一次投影，分成选择路径与内容路径</span><i>↙</i><i>↘</i></div>
+    <div className="branch-grid">
+      <section className="branch-lane"><header><b>INDEX BRANCH</b><span>决定读哪些块</span></header>{item("indexer")}<Arrow label="block scores"/>{item("topk")}</section>
+      <section className="branch-lane main-lane"><header><b>MAIN BRANCH</b><span>生成语义输出</span></header><div className="cache-note"><b>Q/K/V + paged KV cache</b><code>Q [64×128] · K/V [4×128]</code></div><Arrow label="Top-16 控制 page 访问"/>{item("sparse-attn")}</section>
+    </div>
+    <div className="converge"><span>↓</span><code>O projection + residual + post norm</code></div>
+    {item("router")}
+    <div className="split moe-split"><span>同一输入并行进入 routed 与 shared 路径</span><i>↙</i><i>↘</i></div>
+    <div className="branch-grid"><section className="branch-lane"><header><b>ROUTED ×4</b><span>128 选 4</span></header>{item("experts")}</section><section className="branch-lane"><header><b>SHARED ×1</b><span>始终执行</span></header>{item("shared")}</section></div>
+    <div className="converge"><span>↓</span><code>weighted sum + shared + residual</code></div>{item("combine")}
   </div>;
 }
 
-function SectionHeader({ id, eyebrow, title, children }: { id: string; eyebrow: string; title: string; children: React.ReactNode }) {
-  return <header className="section-head" id={id}><span>{eyebrow}</span><h2>{title}</h2><p>{children}</p></header>;
+function Inspector({node,tab,setTab}:{node:Node;tab:Tab;setTab:(tab:Tab)=>void}) {
+  const tabs:[Tab,string][]=[["io","I/O Shape"],["formula","数学公式"],["code","代码"],["weights","模型权重"]];
+  return <aside className="inspector-card">
+    <header><span>{node.kicker}</span><h3>{node.title}</h3><p>{node.summary}</p><code>{node.runtime}</code></header>
+    <div className="inspector-tabs" role="tablist">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div>
+    <div className="inspector-body">
+      {tab==="io"&&<div className="io-proof"><div><span>INPUT</span><code>{node.input}</code><b>{node.inputShape}</b></div><i>→</i><div><span>OUTPUT</span><code>{node.output}</code><b>{node.outputShape}</b></div></div>}
+      {tab==="formula"&&<div className="formula-proof"><span>COMPUTE</span><code>{node.formula}</code><p>{node.formulaNote}</p></div>}
+      {tab==="code"&&<div className="code-proof"><a href={node.sourceUrl} target="_blank" rel="noreferrer"><span>SOURCE</span><b>{node.source}</b><i>↗</i></a><pre><code>{node.code}</code></pre></div>}
+      {tab==="weights"&&<div className="weight-list">{node.weights.length?node.weights.map(weight=><article key={weight.key}><div className="weight-key"><span>CHECKPOINT KEY</span><code>{weight.key}</code></div><div className="weight-meta"><b>{weight.dtype}</b><code>{weight.shape}</code>{weight.params&&<span>{weight.params} params</span>}{weight.note&&<em>{weight.note}</em>}</div><div className="weight-shard"><span>{weight.shard}</span>{weight.runtime&&<code>→ {weight.runtime}</code>}</div></article>):<div className="no-weight"><b>无可训练权重</b><p>这是缓存、mask、路由选择或张量合并操作；行为来自配置与运行时状态。</p></div>}</div>}
+    </div><footer><i/> safetensors header + config + vLLM main</footer>
+  </aside>;
 }
 
-function CacheMaskLab() {
-  const [scenario, setScenario] = useState<"short" | "long">("short");
-  const count = scenario === "short" ? 16 : 32;
-  const selectedLong = new Set([2,3,5,7,8,11,13,15,17,19,21,23,26,28,29,31]);
-  return <section className="report-section" aria-labelledby="cache-title">
-    <SectionHeader id="cache" eyebrow="MEMORY & MASK" title="KV Cache、Block Table 与真实选择规则">
-      删除随机“点选 block”演示，改为与当前 vLLM 实现一致的确定性推演。索引选的是逻辑 block，Block Table 负责把它翻译为物理 KV page。
-    </SectionHeader>
-    <div className="scenario-tabs" role="tablist" aria-label="上下文长度场景">
-      <button className={scenario === "short" ? "active" : ""} onClick={() => setScenario("short")}>2048 tokens · 全选</button>
-      <button className={scenario === "long" ? "active" : ""} onClick={() => setScenario("long")}>4096 tokens · Top-16</button>
+function LayerRibbon({value,onChange}:{value:number;onChange:(layer:number)=>void}) {
+  return <div className="layer-ribbon">{Array.from({length:60},(_,layer)=><button key={layer} className={`${layer<3?"dense":"sparse"} ${value===layer?"active":""}`} onClick={()=>onChange(layer)} aria-label={`Layer ${layer}`} aria-pressed={value===layer}><span>{layer}</span></button>)}</div>;
+}
+
+function Overview({chooseLayer,chooseVision}:{chooseLayer:(layer:number)=>void;chooseVision:()=>void}) {
+  return <section className="panel overview-card" id="architecture">
+    <div className="panel-heading"><div><span className="eyebrow">END-TO-END FORWARD</span><h2>先看模型骨架，再下钻一层</h2><p>两种输入在 embedding 处汇合；60 层语言主干只有两种层型。</p></div><div className="verified-pill"><i/> 59 shards aligned</div></div>
+    <div className="overview-flow">
+      <div className="input-branches"><button onClick={()=>chooseLayer(0)}><span>TEXT</span><b>input_ids → token embeddings</b><code>[B,S] → [B,S,6144]</code></button><button className="vision-input" onClick={chooseVision}><span>IMAGE / VIDEO</span><b>Vision Tower ×32</b><code>pixels → [Nᵥ/4,6144]</code></button></div>
+      <div className="merge-arrows"><span>↘</span><code>replace visual placeholders</code><span>↙</span></div>
+      <button className="overview-stage fusion-stage" onClick={()=>chooseLayer(0)}><span>FUSION</span><b>Unified token embeddings</b><code>[B,S,6144]</code></button><Arrow label="shared hidden width H=6144"/>
+      <div className="decoder-stack"><button className="overview-stage dense-stage" onClick={()=>chooseLayer(0)}><span>L0–L2 · ×3</span><b>Dense GQA + Dense MLP</b><code>full causal history · ≈333.46M params/layer</code></button><div className="stack-arrow">↓ <code>[B,S,6144]</code></div><button className="overview-stage sparse-stage" onClick={()=>chooseLayer(3)}><span>L3–L59 · ×57</span><b>MSA + Top-4 MoE + Shared Expert</b><code>Top-16 blocks · ≈7.416B params/layer</code></button></div>
+      <Arrow label="X₆₀ [B,S,6144]"/><button className="overview-stage output-stage" onClick={()=>chooseLayer(59)}><span>OUTPUT</span><b>final RMSNorm → lm_head</b><code>[B,S,6144] → [B,S,200064]</code></button>
     </div>
-    <div className="cache-card">
-      <div className="cache-summary">
-        <div><span>可见 KV 长度 T</span><b>{scenario === "short" ? "2048" : "4096"}</b></div>
-        <div><span>可见 blocks ⌈T/Bk⌉</span><b>{count}</b></div>
-        <div><span>real_topk=min(k, visible)</span><b>16</b></div>
-        <div><span>每 block</span><b>128 tokens</b></div>
-      </div>
-      <div className="block-explain">
-        {Array.from({length: count}, (_, i) => {
-          const selected = scenario === "short" || selectedLong.has(i);
-          const local = i === count - 1;
-          return <div key={i} className={`block ${selected ? "selected" : ""} ${local ? "local" : ""}`}><small>L{i}</small><b>{local ? "LOCAL" : selected ? (scenario === "short" ? "VISIBLE" : "TOP-K") : "SKIP"}</b></div>
-        })}
-      </div>
-      <p className="cache-verdict">{scenario === "short" ? "结论：2048 / 128 = 16，恰好等于 k=16，所以 16 个可见 block 全部被选择；这里不存在“只绿一部分”的合理结果。" : "结论：32 个可见 block 中选择 16 个。L31 是当前 local block，固定优先级 10²⁹；其余 15 个由 Indexer 分数决定。图中 Top-K 仅用于解释数量，不代表某次真实请求的模型得分。"}</p>
-    </div>
-    <div className="mask-grid">
-      <article><span>01 · Indexer token mask</span><h3>先因果，再做 block max</h3><code>j ≤ i → score(qᵢ,kⱼ)<br/>j &gt; i → −∞</code><p>query 所在 block 内未来 token 不得参与 max，避免 Indexer 偷看未来。</p></article>
-      <article><span>02 · Block priority</span><h3>尾块强制，首块不强制</h3><code>local block → 10²⁹<br/>init block → 10³⁰（数量为 0）</code><p><b>sparse_local_block=1</b>；<b>sparse_init_block=0</b>。因此首块只是普通候选，不具备固定 sink 优先级。</p></article>
-      <article><span>03 · Main attention mask</span><h3>读到 page 后仍要 mask</h3><code>future token → −∞<br/>padding slot → −∞</code><p>选中一个 block 不等于其中 128 个位置都可见；尾块内部仍按 query 绝对位置遮住未来 token。</p></article>
-    </div>
-    <div className="translation"><div><span>Indexer 输出</span><code>logical ids [L₂, L₇, …, L₃₁]</code></div><i>→</i><div><span>Block Table</span><code>request × logical_block</code></div><i>→</i><div><span>物理 KV pages</span><code>[P₄₁, P₃, …, P₁₈]</code></div></div>
   </section>;
 }
 
-export default function Home() {
-  return <main>
-    <aside className="sidebar">
-      <a className="wordmark" href="#overall"><span>MM</span><div><b>MiniMax-M3</b><small>MODEL TRACE</small></div></a>
-      <nav>{sections.map(([id,label], i) => <a href={`#${id}`} key={id}><span>{String(i+1).padStart(2,"0")}</span>{label}</a>)}</nav>
-      <div className="verified"><i/> config + source aligned</div>
-    </aside>
+const ledger=[
+  ["Dense layer · attention","106.95M","1.45%","amber","Q/K/V/O 主矩阵"],
+  ["Dense layer · FFN","226.49M","3.05%","amber","12288-wide gate/up/down"],
+  ["Sparse layer · attention + index","110.89M","1.50%","green","主 GQA + Index projections"],
+  ["Sparse layer · 128 routed experts","7.248B","97.73%","violet","56.62M × 128 experts"],
+  ["Sparse layer · shared + router","57.41M",".77%","rose","shared expert + FP32 router"],
+];
 
-    <div className="content">
-      <section className="report-section first">
-        <SectionHeader id="overall" eyebrow="FORWARD TRACE · AUG 2026" title="MiniMax-M3 模型逐算子分析">
-          从输入到 logits 的实现链路。所有 shape 先写配置变量，再写发布配置实值；默认只展示结构，点击每个算子可展开计算公式与关键代码。
-        </SectionHeader>
-        <div className="model-facts"><div><b>60</b><span>decoder layers</span></div><div><b>1M</b><span>context</span></div><div><b>64:4</b><span>Q : KV heads</span></div><div><b>3 + 57</b><span>Dense + MSA/MoE</span></div></div>
-        <div className="overview-chain">
-          {[
-            ["Input processor", "text ids + image/video grids"],
-            ["Vision tower（可选）", "pixels → visual embeddings [Nᵥ/4, H]"],
-            ["Embedding integration", "视觉向量替换占位 token embedding"],
-            ["embed_tokens", "input_ids → X₀ [B,S,H]"],
-            ["Decoder Layer 0–2", "Dense GQA + Dense SwiGLU"],
-            ["Decoder Layer 3–59", "MSA + Top-4 MoE + shared expert"],
-            ["final RMSNorm", "X₆₀ → normalized hidden states"],
-            ["lm_head", "[B,S,H] → logits [B,S,V]"],
-          ].map(([a,b],i) => <div className="overview-step" key={a}><span>{String(i+1).padStart(2,"0")}</span><div><b>{a}</b><code>{b}</code></div>{i<7&&<i>↓</i>}</div>)}
-        </div>
-        <div className="layer-strip">{Array.from({length:60},(_,i)=><div className={i<3?"dense":"sparse"} key={i} title={`Layer ${i}`}><span>{i}</span></div>)}</div>
-        <div className="legend"><span><i className="dense"/>L0–2 Dense GQA + Dense MLP</span><span><i className="sparse"/>L3–59 MSA + MoE</span></div>
-      </section>
+export default function Home(){
+  const [scope,setScope]=useState<Scope>("language");
+  const [layer,setLayer]=useState(3);
+  const [selected,setSelected]=useState("indexer");
+  const [tab,setTab]=useState<Tab>("weights");
+  const [dark,setDark]=useState(false);
+  const nodes=scope==="vision"?visionNodes:layer<3?denseNodes(layer):sparseNodes(layer);
+  const activeNode=nodes.find(node=>node.id===selected)??nodes[0];
+  const activeId=activeNode.id;
+  const chooseLayer=(next:number)=>{setScope("language");setLayer(next);setSelected(next<3?"dense-qkv":"indexer");setTab("weights")};
+  const chooseVision=()=>{setScope("vision");setSelected("patch");setTab("weights")};
 
-      <section className="report-section">
-        <SectionHeader id="config" eyebrow="CONFIGURATION" title="符号表与发布配置实值">
-          页面统一使用 B/S/T 区分 batch、本轮 query 长度与 KV 总长度；避免把 prefill 和 decode 都含糊写成一个 T。
-        </SectionHeader>
-        <div className="config-grid">
-          {[
-            ["B", "batch / sequence 数", "运行时"], ["S", "本轮 query token 数", "prefill&gt;1；decode=1"], ["T", "含 cache 的 KV 总长度", "≤1,048,576"],
-            ["H", "text hidden_size", "6144"], ["Hq / Hkv", "query / KV heads", "64 / 4"], ["Dh", "attention head_dim", "128"],
-            ["Dr", "rotary_dim", "64（50%）"], ["Hi / Di", "index heads / dim", "4 / 128"], ["Bk / k", "block size / top blocks", "128 / 16"],
-            ["E / K", "routed experts / active", "128 / 4"], ["I / Id", "MoE / dense FFN width", "3072 / 12288"], ["V", "vocab_size", "200,064"],
-            ["Hᵥ / Hᵥq / Dᵥ", "vision width / heads / dim", "1280 / 16 / 80"], ["Lᵥ", "vision layers", "32"], ["Pₜ / P / M", "temporal patch / patch / merge", "2 / 14 / 2"],
-          ].map(([s,m,v])=><div key={s}><code>{s}</code><span>{m}</span><b>{v}</b></div>)}
-        </div>
-      </section>
-
-      <section className="report-section">
-        <SectionHeader id="vit" eyebrow="VISION TOWER" title="ViT：pixels → language-width visual tokens">32 层视觉 Transformer、3D partial RoPE、语言宽度投影和 2×2 token merge。以下用 672×672 单图展示实值链路。</SectionHeader>
-        <OperatorChain ops={visionOps} tone="vision"/>
-      </section>
-
-      <section className="report-section">
-        <SectionHeader id="gqa" eyebrow="DECODER · LAYER 0–2" title="Dense GQA：完整历史的因果注意力">前三层是全量注意力与 dense MLP。GQA 比例 64:4，使 16 个 Query heads 共享一个 KV head。</SectionHeader>
-        <OperatorChain ops={denseOps} tone="dense"/>
-      </section>
-
-      <section className="report-section">
-        <SectionHeader id="msa" eyebrow="DECODER · LAYER 3–59" title="MSA：索引侧路先找 block，主分支再精算">MSA 不是窗口注意力。Indexer 为每个 GQA group 动态检索相关逻辑块，主分支只在所选 paged KV cache 上执行精确 GQA。</SectionHeader>
-        <div className="branch-note"><div><b>Main branch</b><span>Q / K / V → exact sparse GQA → semantic output</span></div><div><b>Index branch</b><span>Qidx / shared Kidx → causal block score → Top-16 ids</span></div></div>
-        <OperatorChain ops={msaOps} tone="sparse"/>
-      </section>
-
-      <CacheMaskLab/>
-
-      <section className="report-section">
-        <SectionHeader id="moe" eyebrow="DECODER FFN · LAYER 3–59" title="MoE：128 选 4，再加 1 个共享专家">这里聚焦算子语义，不展示部署并行拓扑。路由决策与专家计算均按公开配置和 vLLM 实现描述。</SectionHeader>
-        <OperatorChain ops={moeOps} tone="moe"/>
-      </section>
-
-      <footer className="report-section" id="sources">
-        <span className="eyebrow">PROVENANCE</span><h2>分析依据与实现边界</h2>
-        <p>结构参数以发布配置为准，运行链路以 Transformers / vLLM 当前实现交叉核验。技术报告中的算法定义用于解释 MSA；报告实验数字不与线上 M3 博客的产品指标混用。</p>
-        <div className="sources">
-          <a href="https://www.minimaxi.com/blog/minimax-m3" target="_blank" rel="noreferrer"><b>官方 MiniMax-M3 博客</b><span>模型定位、1M 上下文、线上加速</span></a>
-          <a href="https://arxiv.org/html/2606.13392" target="_blank" rel="noreferrer"><b>MiniMax Sparse Attention 技术报告</b><span>Indexer、block score、复杂度与 kernel</span></a>
-          <a href="https://github.com/MiniMax-AI/MiniMax-M3/" target="_blank" rel="noreferrer"><b>MiniMax-AI/MiniMax-M3</b><span>官方模型仓库与用法</span></a>
-          <a href="https://github.com/vllm-project/vllm/tree/main/vllm/models/minimax_m3" target="_blank" rel="noreferrer"><b>vLLM MiniMax-M3</b><span>model、vision、indexer、sparse attention</span></a>
-          <a href="https://huggingface.co/MiniMaxAI/MiniMax-M3/blob/main/config.json" target="_blank" rel="noreferrer"><b>发布配置 config.json</b><span>维度、层型、稀疏与 MoE 参数</span></a>
-          <a href="https://gitcode.com/gcw_hasgjVbP/model_analysis/blob/main/MiniMax-M3-analysis-report.html" target="_blank" rel="noreferrer"><b>原分析报告</b><span>章节结构与 Ascend 分析方法参考</span></a>
-        </div>
-        <small className="disclaimer">Shape 为逻辑布局；实际张量会因 batch packing、tensor layout、backend 与 dtype 改写。2048/4096 block 图只解释选择与 mask 规则，不伪造模型相关性分数。</small>
-      </footer>
+  return <main className={`app ${dark?"dark":""}`}><div className="ambient one"/><div className="ambient two"/><div className="shell">
+    <header className="topbar"><a className="brand" href="#architecture"><span className="brand-mark"><i/><i/><i/></span><div><b>MiniMax-M3</b><small>ARCHITECTURE TRACE</small></div></a><div className="top-facts"><span><i/> facts aligned</span><b>428B total</b><b>23B active</b><b>1M context</b></div><button className="theme-toggle" onClick={()=>setDark(value=>!value)} aria-label="切换明暗主题"><span>{dark?"☀":"☾"}</span>{dark?"浅色":"深色"}</button></header>
+    <section className="hero"><div><span>MODEL ARCHITECTURE · CODE · WEIGHTS</span><h1>把 MiniMax-M3<br/>从一张图追到一个张量</h1><p>结构不是摘要。点击任一模块，核对输入输出 shape、数学公式、vLLM 实现，以及官方 BF16 checkpoint 中真实存在的权重键。</p></div><div className="checkpoint-card"><span>OFFICIAL CHECKPOINT</span><strong>869.16 <small>GB</small></strong><p>59 safetensors shards</p><div><span>hidden</span><b>6144</b><span>Q : KV</span><b>64 : 4</b><span>layers</span><b>3 + 57</b></div></div></section>
+    <Overview chooseLayer={chooseLayer} chooseVision={chooseVision}/>
+    <div className="workspace" id="trace">
+      <aside className="control-card"><div className="control-heading"><span className="eyebrow">TRACE CONTROL</span><h2>选择要下钻的结构</h2></div><fieldset><legend>模型分支</legend><div className="scope-tabs"><button className={scope==="language"?"active":""} onClick={()=>chooseLayer(layer)}>语言主干</button><button className={scope==="vision"?"active":""} onClick={chooseVision}>视觉塔</button></div></fieldset>{scope==="language"&&<fieldset><legend>Decoder layer</legend><div className="layer-picker"><strong>L{layer}</strong><span className={layer<3?"dense":"sparse"}>{layer<3?"Dense GQA + MLP":"MSA + SparseMoE"}</span></div><input className="layer-range" type="range" min="0" max="59" value={layer} onChange={event=>chooseLayer(Number(event.target.value))}/><div className="range-ends"><span>L0</span><span>L59</span></div></fieldset>}<fieldset><legend>本层证据</legend><div className="evidence-list"><div><i/>输入输出 shape</div><div><i/>数学公式</div><div><i/>vLLM 运行时代码</div><div><i/>checkpoint key / dtype / shard</div></div></fieldset><div className="reading-note"><b>读图方法</b><p>沿连线看数据流，再点击节点。权重页先显示 checkpoint 名字，箭头后是 vLLM 融合后的运行时参数。</p></div></aside>
+      <div className="results">
+        <section className="panel trace-panel"><div className="panel-heading"><div><span className="eyebrow">{scope==="vision"?"VISION PIPELINE":layer<3?`DECODER L${layer} · DENSE`:`DECODER L${layer} · MSA + MOE`}</span><h2>{scope==="vision"?"Pixels → language-width visual tokens":layer<3?"完整历史注意力与 Dense FFN":"索引选块、精确注意力与 Top-4 MoE"}</h2><p>{scope==="vision"?"以 672×672 单图展示 shape；Nᵥ 会随动态分辨率变化。":`当前层主要权重位于 ${layerShard(layer)}。`}</p></div><div className={`layer-badge ${scope==="vision"?"vision":layer<3?"dense":"sparse"}`}>{scope==="vision"?"ViT ×32":`L${layer}`}</div></div>{scope==="language"&&<LayerRibbon value={layer} onChange={chooseLayer}/>}<div className="explorer-grid"><div className="graph-canvas">{scope==="vision"||layer<3?<LinearFlow nodes={nodes} active={activeId} onSelect={setSelected}/>:<SparseFlow nodes={nodes} active={activeId} onSelect={setSelected}/>}</div><Inspector node={activeNode} tab={tab} setTab={setTab}/></div></section>
+        <section className="panel ledger-card"><div className="panel-heading"><div><span className="eyebrow">PARAMETER LEDGER</span><h2>为什么 57 个 MoE 层主导 428B</h2><p>条形按单个 sparse layer ≈7.416B 归一；norm/bias 对总量影响很小。</p></div><span className="unit-pill">parameters / layer</span></div><div className="ledger-grid"><div className="ledger-bars">{ledger.map(([label,value,width,tone,note])=><div className="ledger-row" key={label}><div><span>{label}</span><b>{value}</b></div><div className="bar-track"><i className={tone} style={{width}}/></div><small>{note}</small></div>)}</div><div className="ledger-summary"><article><span>DENSE LAYER ×3</span><b>≈333.46M</b><p>attention 106.95M + dense FFN 226.49M</p></article><article><span>SPARSE LAYER ×57</span><b>≈7.416B</b><p>128 routed experts 占约 97.7%</p></article><article><span>VISION</span><b>≈19.66M / layer</b><p>32 层约 629M，另有约 234M bridge</p></article></div></div></section>
+        <section className="panel mapping-card"><div className="panel-heading"><div><span className="eyebrow">CHECKPOINT → RUNTIME</span><h2>同一组权重，为什么代码里名字不一样</h2><p>checkpoint 保存分离矩阵；vLLM 加载时为了减少 GEMM 次数进行打包。</p></div></div><div className="mapping-table"><div><span>CHECKPOINT</span><code>q_proj · k_proj · v_proj</code><i>→</i><b>QKVParallelLinear.qkv_proj</b><small>Dense 与 Vision attention</small></div><div><span>CHECKPOINT</span><code>q/k/v + index_q/index_k</code><i>→</i><b>MinimaxM3QKV…WithIndexer</b><small>MSA 一次 GEMM 输出五路</small></div><div><span>CHECKPOINT</span><code>gate_proj · up_proj</code><i>→</i><b>gate_up_proj</b><small>Dense MLP 与 shared expert</small></div><div><span>CHECKPOINT</span><code>expert.*.w1 · w3 · w2</code><i>→</i><b>FusedMoE w13 · w2</b><small>128 routed experts</small></div></div><div className="mapping-warning"><b>不要混淆：</b><span>checkpoint 键来自官方 weight index 与分片 header；运行时名来自 vLLM main。两者通过 loader 映射相连。</span></div></section>
+      </div>
     </div>
-  </main>;
+    <footer className="sources-panel"><div><span className="eyebrow">PRIMARY SOURCES · VERIFIED 2026-08-16</span><h2>事实来源与解释边界</h2><p>参数、dtype、shape 和 shard 来自发布配置、权重索引及 safetensors header；运行路径以 vLLM main 为准；MSA 数学语义以技术报告为准。</p></div><div className="source-links"><a href="https://huggingface.co/MiniMaxAI/MiniMax-M3/blob/main/config.json" target="_blank" rel="noreferrer"><b>config.json</b><span>维度、稀疏与 MoE 配置</span><i>↗</i></a><a href="https://huggingface.co/MiniMaxAI/MiniMax-M3/blob/main/model.safetensors.index.json" target="_blank" rel="noreferrer"><b>weight index</b><span>checkpoint key → shard</span><i>↗</i></a><a href={MODEL} target="_blank" rel="noreferrer"><b>vLLM MiniMax-M3</b><span>decoder、MSA、MoE、loader</span><i>↗</i></a><a href={VISION} target="_blank" rel="noreferrer"><b>vLLM vision tower</b><span>ViT、projector、merger</span><i>↗</i></a><a href="https://arxiv.org/abs/2606.13392" target="_blank" rel="noreferrer"><b>MSA report</b><span>Index branch 与 sparse attention</span><i>↗</i></a><a href="https://github.com/MiniMax-AI/MiniMax-M3" target="_blank" rel="noreferrer"><b>Official repository</b><span>428B / 23B / 1M context</span><i>↗</i></a></div><small>页面 shape 是逻辑布局；tensor parallel、batch packing、cache dtype 与 kernel layout 会改变物理张量。参数账本用于解释结构，不等同于某个并行配置下的单卡显存。</small></footer>
+  </div></main>;
 }
