@@ -110,10 +110,21 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /const active=pinned\?\?hovered/);
   assert.match(source, /function AddCircle/);
   assert.match(source, /function WeightedOp/);
+  assert.match(source, /function GraphSurface/);
+  assert.match(source, /data-graph-id/);
+  assert.match(source, /ResizeObserver/);
+  assert.match(source, /markerEnd/);
+  const graphNodes = new Set(
+    [...source.matchAll(/(?:graphId|weightGraphId|data-graph-id)="((?:main|mlp|moe|attn)-[^"]+)"/g)].map((match) => match[1]),
+  );
+  const graphEndpoints = new Set(
+    [...source.matchAll(/(?:from|to):"((?:main|mlp|moe|attn)-[^"]+)"/g)].map((match) => match[1]),
+  );
+  assert.deepEqual([...graphNodes].filter((id) => !graphEndpoints.has(id)), [], "every rendered graph node needs an edge");
+  assert.deepEqual([...graphEndpoints].filter((id) => !graphNodes.has(id)), [], "every graph edge needs rendered endpoints");
   assert.match(source, /L0–L2/);
   assert.match(source, /L3–L59/);
-  assert.match(source, /同时分发到两条支路/);
-  assert.match(source, /Router lane 与 Shared lane 同时读取 U/);
+  assert.match(source, /同一个 Û 同时进入 Router、Routed Experts 与 Shared Expert/);
   assert.match(source, /symbolicShape/);
   assert.match(source, /Nₕ\/TP/);
   assert.match(source, /E\/EP/);
@@ -143,6 +154,11 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.add-circle/);
   assert.match(css, /\.weighted-op/);
   assert.match(css, /\.parallel-gate-up/);
+  assert.match(css, /\.graph-edges/);
+  assert.match(css, /\.decoder-node-graph/);
+  assert.match(css, /\.connected-attention-graph/);
+  assert.match(css, /\.mlp-node-graph/);
+  assert.match(css, /\.moe-node-graph/);
   assert.match(css, /\.shape-rows/);
   assert.match(css, /\.config-reference/);
   assert.match(css, /\.detail-formula\{overflow:hidden/);

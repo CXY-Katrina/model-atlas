@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import katex from "katex";
 import { denseNodes, layerShard, sparseNodes, type Node, type Weight } from "./model-data";
 
@@ -14,6 +14,8 @@ type CodeDetail = { sections: CodeSection[]; symbols: CodeSymbol[] };
 type OpNode = Node & { kind: OpKind; latex?: string; codeSections?: CodeSection[]; codeSymbols?: CodeSymbol[] };
 type LayerType = "dense" | "sparse";
 type ExpandedStage = "attention" | "ffn" | null;
+type EdgePort = "top" | "right" | "bottom" | "left";
+type GraphEdge = { from: string; to: string; fromPort?: EdgePort; toPort?: EdgePort; route?: "direct" | "side-left" | "side-right" };
 
 const VLLM_COMMIT = "edd4c8176cfd98ece8a29beda574378c42971967";
 const CODE_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/models/minimax_m3/nvidia/model.py`;
@@ -288,27 +290,79 @@ function sparseGraph(layer: number): Record<string, OpNode> {
   };
 }
 
-function Op({node,active,onHover,onLeave,onSelect}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void}){
-  return <button className={`op-node op-${node.kind} ${active?"active":""}`} onMouseEnter={()=>onHover(node)} onMouseLeave={onLeave} onFocus={()=>onHover(node)} onBlur={onLeave} onClick={()=>onSelect(node)}><small>OP · {node.kind}</small><b>{node.title}</b></button>;
+function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:string;children:ReactNode}){
+  const rootRef=useRef<HTMLDivElement>(null);
+  const markerId=`graph-arrow-${useId().replaceAll(":","")}`;
+  const serializedEdges=JSON.stringify(edges);
+  const edgeKey=edges.map(edge=>`${edge.from}:${edge.fromPort??"bottom"}>${edge.to}:${edge.toPort??"top"}:${edge.route??"direct"}`).join("|");
+  const [paths,setPaths]=useState<string[]>([]);
+  useLayoutEffect(()=>{
+    const root=rootRef.current;
+    if(!root)return;
+    let frame=0;
+    const point=(rect:DOMRect,port:EdgePort,rootRect:DOMRect)=>{
+      const x=rect.left-rootRect.left; const y=rect.top-rootRect.top;
+      if(port==="top")return [x+rect.width/2,y];
+      if(port==="right")return [x+rect.width,y+rect.height/2];
+      if(port==="left")return [x,y+rect.height/2];
+      return [x+rect.width/2,y+rect.height];
+    };
+    const measure=()=>{
+      const rootRect=root.getBoundingClientRect();
+      const currentEdges=JSON.parse(serializedEdges) as GraphEdge[];
+      const next=currentEdges.flatMap(edge=>{
+        const source=root.querySelector<HTMLElement>(`[data-graph-id="${edge.from}"]`);
+        const target=root.querySelector<HTMLElement>(`[data-graph-id="${edge.to}"]`);
+        if(!source||!target)return [];
+        const fromPort=edge.fromPort??"bottom"; const toPort=edge.toPort??"top";
+        const [sx,sy]=point(source.getBoundingClientRect(),fromPort,rootRect);
+        const [tx,ty]=point(target.getBoundingClientRect(),toPort,rootRect);
+        if(edge.route==="side-right"){
+          const side=Math.max(sx,tx)+34;
+          return [`M ${sx} ${sy} L ${side} ${sy} Q ${side+5} ${sy} ${side+5} ${sy+5} L ${side+5} ${ty-5} Q ${side+5} ${ty} ${side} ${ty} L ${tx} ${ty}`];
+        }
+        if(edge.route==="side-left"){
+          const side=Math.min(sx,tx)-34;
+          return [`M ${sx} ${sy} L ${side} ${sy} Q ${side-5} ${sy} ${side-5} ${sy+5} L ${side-5} ${ty-5} Q ${side-5} ${ty} ${side} ${ty} L ${tx} ${ty}`];
+        }
+        if(fromPort==="right"||fromPort==="left"||toPort==="right"||toPort==="left"){
+          const mid=(sx+tx)/2;
+          return [`M ${sx} ${sy} C ${mid} ${sy}, ${mid} ${ty}, ${tx} ${ty}`];
+        }
+        const mid=(sy+ty)/2;
+        return [`M ${sx} ${sy} C ${sx} ${mid}, ${tx} ${mid}, ${tx} ${ty}`];
+      });
+      setPaths(next);
+    };
+    const observer=new ResizeObserver(()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(measure)});
+    observer.observe(root);
+    root.querySelectorAll<HTMLElement>("[data-graph-id]").forEach(node=>observer.observe(node));
+    frame=requestAnimationFrame(measure);
+    return()=>{cancelAnimationFrame(frame);observer.disconnect()};
+  },[serializedEdges]);
+  return <div ref={rootRef} className={`graph-surface ${className}`}>{children}<svg className="graph-edges" aria-hidden="true"><defs><marker id={markerId} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,4 L0,8 z"/></marker></defs>{paths.map((path,index)=><path key={`${edgeKey}-${index}`} d={path} markerEnd={`url(#${markerId})`}/>)}</svg></div>;
+}
+
+function Op({node,active,onHover,onLeave,onSelect,graphId}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;graphId?:string}){
+  return <button data-graph-id={graphId} className={`op-node op-${node.kind} ${active?"active":""}`} onMouseEnter={()=>onHover(node)} onMouseLeave={onLeave} onFocus={()=>onHover(node)} onBlur={onLeave} onClick={()=>onSelect(node)}><small>OP · {node.kind}</small><b>{node.title}</b></button>;
 }
 
 type TensorRole = "input" | "tensor" | "output" | "side" | "weight";
 
-function Tensor({name,shape,role="tensor"}:{name:string;shape:string;role?:TensorRole}){
+function Tensor({name,shape,role="tensor",graphId}:{name:string;shape:string;role?:TensorRole;graphId?:string}){
   const label={input:"TENSOR",tensor:"TENSOR",output:"TENSOR",side:"EXTERNAL",weight:"WEIGHT"}[role];
-  return <div className={`tensor-node tensor-${role}`}><small>{label}</small><b>{name}</b><code>{shape}</code></div>;
+  return <div data-graph-id={graphId} className={`tensor-node tensor-${role}`}><small>{label}</small><b>{name}</b><code>{shape}</code></div>;
 }
 
 const Arrow=({label}:{label?:string})=><span className="op-arrow"><i/>{label&&<small>{label}</small>}</span>;
-const DownArrow=({label}:{label?:string})=><span className="diagram-down">{label&&<small>{label}</small>}</span>;
 
-function WeightedOp({node,active,onHover,onLeave,onSelect,label="γ"}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;label?:string}){
+function WeightedOp({node,active,onHover,onLeave,onSelect,label="γ",graphId,weightGraphId}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;label?:string;graphId?:string;weightGraphId?:string}){
   const weight=node.weights[0];
-  return <div className="weighted-op"><Op node={node} active={active} onHover={onHover} onLeave={onLeave} onSelect={onSelect}/><span className="weight-arrow">←</span><Tensor name={label} shape={weight?.shape??"[H]"} role="weight"/></div>;
+  return <div className="weighted-op"><Op node={node} active={active} onHover={onHover} onLeave={onLeave} onSelect={onSelect} graphId={graphId}/><Tensor name={label} shape={weight?.shape??"[H]"} role="weight" graphId={weightGraphId}/></div>;
 }
 
-function AddCircle({node,active,onHover,onLeave,onSelect}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void}){
-  return <button className={`add-circle ${active?"active":""}`} aria-label={node.title} title={node.title} onMouseEnter={()=>onHover(node)} onMouseLeave={onLeave} onFocus={()=>onHover(node)} onBlur={onLeave} onClick={()=>onSelect(node)}>+</button>;
+function AddCircle({node,active,onHover,onLeave,onSelect,graphId}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;graphId?:string}){
+  return <button data-graph-id={graphId} className={`add-circle ${active?"active":""}`} aria-label={node.title} title={node.title} onMouseEnter={()=>onHover(node)} onMouseLeave={onLeave} onFocus={()=>onHover(node)} onBlur={onLeave} onClick={()=>onSelect(node)}>+</button>;
 }
 
 function RuntimeIORail({N}:{N:({id}:{id:string})=>ReactNode}){
@@ -359,37 +413,47 @@ function SparseDiagram({g,active,onHover,onLeave,onSelect}:{g:Record<string,OpNo
 /* eslint-disable react-hooks/static-components -- local N aliases keep the dependency diagrams legible */
 function StageZoom({type,stage,g,active,onHover,onLeave,onSelect,onClose}:{type:LayerType;stage:Exclude<ExpandedStage,null>;g:Record<string,OpNode>;active:string;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;onClose:()=>void}){
   const p={active:false,onHover,onLeave,onSelect};
-  const N=({id}:{id:string})=><Op node={g[id]} {...p} active={active===g[id].id}/>;
-  const W=({id,label}:{id:string;label?:string})=><WeightedOp node={g[id]} {...p} active={active===g[id].id} label={label}/>;
-  if(stage==="ffn"&&type==="dense")return <section className="stage-zoom lesson-zoom"><header><div><span>GQA + MLP · L0–2</span><b>SwiGLU：Gate / Up 并行计算，再逐元素相乘</b></div><button onClick={onClose}>收起 ×</button></header><div className="lesson-layout"><div className="mlp-flowchart">
-    <Tensor name="U" shape="[B,S,H]"/><DownArrow/><W id="postnorm" label="γpost"/><DownArrow/><Tensor name="Û" shape="[B,S,H]"/><DownArrow/>
-    <div className="fused-projection"><N id="gateup"/><div className="projection-weights"><Tensor name="Wgate" shape="[H_dense,H]" role="weight"/><Tensor name="Wup" shape="[H_dense,H]" role="weight"/></div></div><DownArrow label="一次 fused GEMM，数学上分成两路"/>
-    <div className="parallel-gate-up"><section><Tensor name="gate" shape="[B,S,H_dense]"/><DownArrow/><div className="mini-math">clamp → SiLU(1.702·gate)</div></section><section><Tensor name="up" shape="[B,S,H_dense]"/><DownArrow/><div className="mini-math">clamp → up + 1</div></section></div>
-    <DownArrow label="两路同时进入"/><button className="multiply-circle" onClick={()=>onSelect(g.swiglu)} onMouseEnter={()=>onHover(g.swiglu)} onMouseLeave={onLeave}>×</button><DownArrow/><Tensor name="activated" shape="[B,S,H_dense]"/><DownArrow/><W id="down" label="Wdown"/><DownArrow/><Tensor name="Yffn" shape="[B,S,H]"/>
-  </div><aside className="lesson-notes"><span>作用</span><h3>逐 token 扩维、门控，再投回 hidden size</h3><p>MLP 不混合 token。Gate 决定保留多少信息，Up 提供被门控的内容。</p><span>简化公式</span><code>MLP(x)=Wdown[SiLU(gate) ⊙ (up+1)]</code><p>vLLM 用一次 gate_up_proj 生成 packed [gate | up]；这只是融合执行，两条数学支路仍然并行。</p></aside></div></section>;
-  if(stage==="ffn")return <section className="stage-zoom"><header><div><span>TOP-4 MOE · L3–59</span><b>Router lane 与 Shared lane 同时读取 U</b></div><button onClick={onClose}>收起 ×</button></header><div className="moe-dependency"><Tensor name="U · hidden_states" shape="[B,S,H]" role="input"/><div className="fork-label">同时分发到两条支路 ↓</div><div className="parallel-experts"><section><header>ROUTED LANE · 选择 4 / 128</header><Tensor name="U" shape="[B,S,H]"/><span className="flow-down"/><N id="router"/><span className="flow-down"/><Tensor name="expert ids" shape="[B,S,K]"/><Tensor name="router weights" shape="[B,S,K]"/><div className="two-input-op"><Tensor name="U" shape="[B,S,H]"/><Tensor name="ids + weights" shape="2 × [B,S,K]"/></div><span className="flow-down"/><N id="experts"/><span className="flow-down"/><Tensor name="weighted routed output" shape="[B,S,H]"/></section><section><header>SHARED LANE · 始终执行</header><Tensor name="U" shape="[B,S,H]"/><span className="flow-down"/><N id="shared"/><span className="flow-down"/><Tensor name="shared output" shape="[B,S,H]"/></section></div><div className="sum-inputs"><Tensor name="routed output" shape="[B,S,H]"/><Tensor name="shared output" shape="[B,S,H]"/></div><span className="flow-down"/><N id="sum"/><span className="flow-down"/><Tensor name="Ymoe" shape="[B,S,H]" role="output"/></div></section>;
+  const N=({id,graphId}:{id:string;graphId?:string})=><Op node={g[id]} {...p} active={active===g[id].id} graphId={graphId}/>;
+  const W=({id,label,graphId,weightGraphId}:{id:string;label?:string;graphId?:string;weightGraphId?:string})=><WeightedOp node={g[id]} {...p} active={active===g[id].id} label={label} graphId={graphId} weightGraphId={weightGraphId}/>;
+  if(stage==="ffn"&&type==="dense"){
+    const edges:GraphEdge[]=[
+      {from:"mlp-u",to:"mlp-post"},{from:"mlp-wpost",to:"mlp-post",fromPort:"left",toPort:"right"},{from:"mlp-post",to:"mlp-uhat"},{from:"mlp-uhat",to:"mlp-gateup"},{from:"mlp-wgate",to:"mlp-gateup",fromPort:"left",toPort:"right"},{from:"mlp-wup",to:"mlp-gateup",fromPort:"left",toPort:"right"},{from:"mlp-gateup",to:"mlp-gate"},{from:"mlp-gateup",to:"mlp-up"},{from:"mlp-gate",to:"mlp-gate-act"},{from:"mlp-up",to:"mlp-up-act"},{from:"mlp-gate-act",to:"mlp-mul"},{from:"mlp-up-act",to:"mlp-mul"},{from:"mlp-mul",to:"mlp-activated"},{from:"mlp-activated",to:"mlp-down"},{from:"mlp-wdown",to:"mlp-down",fromPort:"left",toPort:"right"},{from:"mlp-down",to:"mlp-y"},
+    ];
+    return <section className="stage-zoom lesson-zoom"><header><div><span>GQA + MLP · L0–2</span><b>SwiGLU Graph：每条边都连接具体张量、权重与算子</b></div><button onClick={onClose}>收起 ×</button></header><div className="lesson-layout"><GraphSurface className="mlp-node-graph" edges={edges}>
+      <Tensor name="U" shape="[B,S,H]" graphId="mlp-u"/><N id="postnorm" graphId="mlp-post"/><Tensor name="γpost" shape="[H]" role="weight" graphId="mlp-wpost"/><Tensor name="Û" shape="[B,S,H]" graphId="mlp-uhat"/><N id="gateup" graphId="mlp-gateup"/><Tensor name="Wgate" shape="[H_dense,H]" role="weight" graphId="mlp-wgate"/><Tensor name="Wup" shape="[H_dense,H]" role="weight" graphId="mlp-wup"/><Tensor name="gate" shape="[B,S,H_dense]" graphId="mlp-gate"/><Tensor name="up" shape="[B,S,H_dense]" graphId="mlp-up"/><div className="mini-math" data-graph-id="mlp-gate-act">clamp → SiLU(1.702·gate)</div><div className="mini-math" data-graph-id="mlp-up-act">clamp → up + 1</div><button className="multiply-circle" data-graph-id="mlp-mul" onClick={()=>onSelect(g.swiglu)} onMouseEnter={()=>onHover(g.swiglu)} onMouseLeave={onLeave}>×</button><Tensor name="activated" shape="[B,S,H_dense]" graphId="mlp-activated"/><N id="down" graphId="mlp-down"/><Tensor name="Wdown" shape="[H,H_dense]" role="weight" graphId="mlp-wdown"/><Tensor name="Yffn" shape="[B,S,H]" graphId="mlp-y"/>
+    </GraphSurface><aside className="lesson-notes"><span>作用</span><h3>逐 token 扩维、门控，再投回 hidden size</h3><p>MLP 不混合 token。Gate 与 Up 从同一个 fused projection 并行分叉，随后在 × 节点汇合。</p><span>简化公式</span><code>MLP(x)=Wdown[SiLU(gate) ⊙ (up+1)]</code><p>每条箭头都从上游张量或权重的边界出发，并进入实际消费它的算子。</p></aside></div></section>;
+  }
+  if(stage==="ffn"){
+    const edges:GraphEdge[]=[
+      {from:"moe-u",to:"moe-router"},{from:"moe-wrouter",to:"moe-router",fromPort:"right",toPort:"left"},{from:"moe-router",to:"moe-ids"},{from:"moe-router",to:"moe-rweights"},{from:"moe-u",to:"moe-experts",route:"side-left",fromPort:"left",toPort:"left"},{from:"moe-ids",to:"moe-experts"},{from:"moe-rweights",to:"moe-experts"},{from:"moe-wexperts",to:"moe-experts",fromPort:"right",toPort:"left"},{from:"moe-experts",to:"moe-routed"},{from:"moe-u",to:"moe-shared",route:"side-right",fromPort:"right",toPort:"right"},{from:"moe-wshared",to:"moe-shared",fromPort:"left",toPort:"right"},{from:"moe-shared",to:"moe-shared-out"},{from:"moe-routed",to:"moe-sum"},{from:"moe-shared-out",to:"moe-sum"},{from:"moe-sum",to:"moe-y"},
+    ];
+    return <section className="stage-zoom lesson-zoom"><header><div><span>TOP-4 MOE · L3–59</span><b>同一个 Û 同时进入 Router、Routed Experts 与 Shared Expert</b></div><button onClick={onClose}>收起 ×</button></header><GraphSurface className="moe-node-graph" edges={edges}><Tensor name="Û" shape="[B,S,H]" graphId="moe-u"/><Tensor name="Wrouter" shape="[E,H]" role="weight" graphId="moe-wrouter"/><N id="router" graphId="moe-router"/><Tensor name="expert ids" shape="[B,S,K]" graphId="moe-ids"/><Tensor name="router weights" shape="[B,S,K]" graphId="moe-rweights"/><Tensor name="Wrouted" shape="E × expert weights" role="weight" graphId="moe-wexperts"/><N id="experts" graphId="moe-experts"/><Tensor name="weighted routed output" shape="[B,S,H]" graphId="moe-routed"/><N id="shared" graphId="moe-shared"/><Tensor name="Wshared" shape="shared MLP weights" role="weight" graphId="moe-wshared"/><Tensor name="shared output" shape="[B,S,H]" graphId="moe-shared-out"/><N id="sum" graphId="moe-sum"/><Tensor name="Ymoe" shape="[B,S,H]" graphId="moe-y"/></GraphSurface></section>;
+  }
   const dense=type==="dense";
   const ids=dense?{project:"qkv",split:"split",qnorm:"qnorm",knorm:"knorm",ropeq:"ropeq",ropek:"ropek"}:{project:"packed",split:"split",qnorm:"mainnorm",knorm:"mainnorm",ropeq:"rope",ropek:"rope"};
-  return <section className="stage-zoom lesson-zoom attention-lesson"><header><div><span>{dense?"GQA + ROPE · L0–2":"SPARSE GQA + INDEXER · L3–59"}</span><b>{dense?"Q / K / V 分路后，按 Scaled Dot-Product Attention 顺序汇合":"Indexer 先选 KV blocks，主 Attention 再读取内容"}</b></div><button onClick={onClose}>收起 ×</button></header><div className="lesson-layout"><div className="attention-flowchart">
-    <div className="compact-chain"><Tensor name="X̂" shape="[B,S,H]"/><Arrow/><N id={ids.project}/><Arrow/><Tensor name="packed" shape={dense?"[B,S,9216]":"[B,S,9856]"}/><Arrow/><N id={ids.split}/></div>
-    {!dense&&<div className="index-ribbon"><Tensor name="Qidx · Kidx" shape="[B,S,4,128] · [B,T,1,128]"/><Arrow/><N id="idxnorm"/><Arrow/><N id="idxscore"/><Arrow/><N id="blockmax"/><Arrow/><N id="topk"/><Arrow/><Tensor name="Top-16 block ids" shape="[B,S,4,16]"/></div>}
-    <div className="qkv-lanes"><section><header>Q PATH</header><Tensor name="Q" shape="[B,Nₕ,S,Dₕ]"/><DownArrow/><W id={ids.qnorm} label="γq"/><DownArrow/><div className="two-source"><Tensor name="Q̃" shape="same"/><Tensor name="positions" shape="[Nq]" role="side"/></div><DownArrow/><N id={ids.ropeq}/><DownArrow/><Tensor name="Qᵣ" shape="[B,Nₕ,S,Dₕ]"/></section><section><header>K PATH</header><Tensor name="K" shape="[B,Nₖᵥ,S,Dₕ]"/><DownArrow/><W id={ids.knorm} label="γk"/><DownArrow/><div className="two-source"><Tensor name="K̃" shape="same"/><Tensor name="positions" shape="[Nq]" role="side"/></div><DownArrow/><N id={ids.ropek}/><DownArrow/><Tensor name="Kᵣ" shape="[B,Nₖᵥ,S,Dₕ]"/></section><section><header>V + KV CACHE</header><Tensor name="V" shape="[B,Nₖᵥ,S,Dₕ]"/><DownArrow/><div className="two-source"><Tensor name="Kᵣ · V" shape="KV tensors"/><Tensor name="slot_mapping · block_table" shape="runtime" role="side"/></div><DownArrow/><N id="cache"/><DownArrow/><Tensor name="paged K · paged V" shape="KV pages"/></section></div>
-    {!dense&&<div className="compact-chain selection-chain"><Tensor name="Top-16 ids" shape="[B,S,4,16]"/><Tensor name="paged K · V" shape="KV pages"/><Arrow/><N id="select"/><Arrow/><Tensor name="selected K · V" shape="≤2048 tokens/group"/></div>}
-    <div className="score-pipeline"><div className="two-source"><Tensor name="Qᵣ" shape="[B,Nₕ,S,Dₕ]"/><Tensor name={dense?"paged K":"selected K"} shape="[B,Nₖᵥ,T,Dₕ]"/></div><DownArrow/><N id="qk"/><DownArrow/><N id="scale"/><DownArrow/><div className="two-source"><Tensor name="scaled scores" shape="[B,Nₕ,S,T]"/><Tensor name="causal / pad bounds" shape="runtime metadata" role="side"/></div><DownArrow/><N id="mask"/><DownArrow/><N id="softmax"/><DownArrow/><Tensor name="P" shape="[B,Nₕ,S,T]"/></div>
-    <div className="context-pipeline"><div className="two-source"><Tensor name="P" shape="[B,Nₕ,S,T]"/><Tensor name={dense?"paged V":"selected V"} shape="[B,Nₖᵥ,T,Dₕ]"/></div><Arrow/><N id="pv"/><Arrow/><Tensor name="heads" shape="[B,S,Nₕ·Dₕ]"/><Arrow/><N id="oproj"/><Arrow/><Tensor name="Yattn" shape="[B,S,H]"/></div>
-  </div><aside className="lesson-notes"><span>作用</span><h3>用 Q 找到相关 K，再按概率汇总 V</h3><p>Q 表示当前 token 想找什么；K 用于匹配；V 携带真正被汇总的内容。GQA 让 64 个 Q heads 共享 4 个 KV heads。</p><span>简化公式</span><code>Attention(Q,K,V)=softmax(QKᵀ/√Dₕ + mask)V</code><p>{dense?"Dense 层读取完整可见 KV 历史。":"Sparse 层的 Top-16 只缩小候选 KV blocks；causal / padding mask 仍在最终 attention 中执行。"}</p></aside></div></section>;
+  const keyId=dense?"attn-paged-k":"attn-selected-k"; const valueId=dense?"attn-paged-v":"attn-selected-v";
+  const edges:GraphEdge[]=[
+    {from:"attn-x",to:"attn-project",fromPort:"right",toPort:"left"},{from:"attn-project",to:"attn-packed",fromPort:"right",toPort:"left"},{from:"attn-packed",to:"attn-split",fromPort:"right",toPort:"left"},{from:"attn-split",to:"attn-q"},{from:"attn-split",to:"attn-k"},{from:"attn-split",to:"attn-v"},{from:"attn-q",to:"attn-qnorm"},{from:"attn-wq",to:"attn-qnorm",fromPort:"left",toPort:"right"},{from:"attn-qnorm",to:"attn-qt"},{from:"attn-qt",to:"attn-qrope"},{from:"attn-posq",to:"attn-qrope",fromPort:"left",toPort:"right"},{from:"attn-qrope",to:"attn-qr"},{from:"attn-k",to:"attn-knorm"},{from:"attn-wk",to:"attn-knorm",fromPort:"left",toPort:"right"},{from:"attn-knorm",to:"attn-kt"},{from:"attn-kt",to:"attn-krope"},{from:"attn-posk",to:"attn-krope",fromPort:"left",toPort:"right"},{from:"attn-krope",to:"attn-kr"},{from:"attn-kr",to:"attn-cache"},{from:"attn-v",to:"attn-cache"},{from:"attn-cache-meta",to:"attn-cache",fromPort:"left",toPort:"right"},{from:"attn-cache",to:"attn-paged-k"},{from:"attn-cache",to:"attn-paged-v"},{from:"attn-qr",to:"attn-qk"},{from:keyId,to:"attn-qk"},{from:"attn-qk",to:"attn-scale",fromPort:"right",toPort:"left"},{from:"attn-scale",to:"attn-scaled",fromPort:"right",toPort:"left"},{from:"attn-scaled",to:"attn-mask",fromPort:"right",toPort:"left"},{from:"attn-bounds",to:"attn-mask"},{from:"attn-mask",to:"attn-softmax",fromPort:"right",toPort:"left"},{from:"attn-softmax",to:"attn-p",fromPort:"right",toPort:"left"},{from:"attn-p",to:"attn-pv",fromPort:"right",toPort:"left"},{from:valueId,to:"attn-pv"},{from:"attn-pv",to:"attn-heads",fromPort:"right",toPort:"left"},{from:"attn-heads",to:"attn-oproj",fromPort:"right",toPort:"left"},{from:"attn-oproj",to:"attn-y",fromPort:"right",toPort:"left"},
+    ...(!dense?[{from:"attn-split",to:"attn-qidx"},{from:"attn-split",to:"attn-kidx"},{from:"attn-qidx",to:"attn-idxnorm"},{from:"attn-kidx",to:"attn-idxnorm"},{from:"attn-idxnorm",to:"attn-idxscore",fromPort:"right" as EdgePort,toPort:"left" as EdgePort},{from:"attn-idxbounds",to:"attn-idxscore"},{from:"attn-idxscore",to:"attn-blockmax",fromPort:"right" as EdgePort,toPort:"left" as EdgePort},{from:"attn-blockmax",to:"attn-topk",fromPort:"right" as EdgePort,toPort:"left" as EdgePort},{from:"attn-topk",to:"attn-topids",fromPort:"right" as EdgePort,toPort:"left" as EdgePort},{from:"attn-topids",to:"attn-select"},{from:"attn-paged-k",to:"attn-select"},{from:"attn-paged-v",to:"attn-select"},{from:"attn-select",to:"attn-selected-k",fromPort:"right" as EdgePort,toPort:"left" as EdgePort},{from:"attn-select",to:"attn-selected-v",fromPort:"right" as EdgePort,toPort:"left" as EdgePort}] : []),
+  ];
+  return <section className="stage-zoom lesson-zoom attention-lesson"><header><div><span>{dense?"GQA + ROPE · L0–2":"SPARSE GQA + INDEXER · L3–59"}</span><b>{dense?"Q / K / V 从 Split 节点分叉，再在 Attention 算子汇合":"Indexer 与主 Attention 通过明确的 KV page 边连接"}</b></div><button onClick={onClose}>收起 ×</button></header><div className="lesson-layout"><GraphSurface className="attention-flowchart connected-attention-graph" edges={edges}>
+    <div className="compact-chain"><Tensor name="X̂" shape="[B,S,H]" graphId="attn-x"/><N id={ids.project} graphId="attn-project"/><Tensor name="packed" shape={dense?"[B,S,9216]":"[B,S,9856]"} graphId="attn-packed"/><N id={ids.split} graphId="attn-split"/></div>
+    {!dense&&<div className="index-ribbon"><div className="multi-source"><Tensor name="Qidx" shape="[B,S,4,128]" graphId="attn-qidx"/><Tensor name="Kidx" shape="[B,T,1,128]" graphId="attn-kidx"/></div><N id="idxnorm" graphId="attn-idxnorm"/><N id="idxscore" graphId="attn-idxscore"/><Tensor name="causal bounds" shape="runtime" role="side" graphId="attn-idxbounds"/><N id="blockmax" graphId="attn-blockmax"/><N id="topk" graphId="attn-topk"/><Tensor name="Top-16 block ids" shape="[B,S,4,16]" graphId="attn-topids"/></div>}
+    <div className="qkv-lanes"><section><header>Q PATH</header><Tensor name="Q" shape="[B,Nₕ,S,Dₕ]" graphId="attn-q"/><W id={ids.qnorm} label="γq" graphId="attn-qnorm" weightGraphId="attn-wq"/><div className="two-source"><Tensor name="Q̃" shape="same" graphId="attn-qt"/><Tensor name="positions" shape="[Nq]" role="side" graphId="attn-posq"/></div><N id={ids.ropeq} graphId="attn-qrope"/><Tensor name="Qᵣ" shape="[B,Nₕ,S,Dₕ]" graphId="attn-qr"/></section><section><header>K PATH</header><Tensor name="K" shape="[B,Nₖᵥ,S,Dₕ]" graphId="attn-k"/><W id={ids.knorm} label="γk" graphId="attn-knorm" weightGraphId="attn-wk"/><div className="two-source"><Tensor name="K̃" shape="same" graphId="attn-kt"/><Tensor name="positions" shape="[Nq]" role="side" graphId="attn-posk"/></div><N id={ids.ropek} graphId="attn-krope"/><Tensor name="Kᵣ" shape="[B,Nₖᵥ,S,Dₕ]" graphId="attn-kr"/></section><section><header>V + KV CACHE</header><Tensor name="V" shape="[B,Nₖᵥ,S,Dₕ]" graphId="attn-v"/><Tensor name="slot_mapping · block_table" shape="runtime" role="side" graphId="attn-cache-meta"/><N id="cache" graphId="attn-cache"/><div className="two-source"><Tensor name="paged K" shape="KV pages" graphId="attn-paged-k"/><Tensor name="paged V" shape="KV pages" graphId="attn-paged-v"/></div></section></div>
+    {!dense&&<div className="selection-chain"><N id="select" graphId="attn-select"/><div className="two-source"><Tensor name="selected K" shape="≤2048 tokens/group" graphId="attn-selected-k"/><Tensor name="selected V" shape="≤2048 tokens/group" graphId="attn-selected-v"/></div></div>}
+    <div className="score-pipeline"><N id="qk" graphId="attn-qk"/><N id="scale" graphId="attn-scale"/><Tensor name="scaled scores" shape="[B,Nₕ,S,T]" graphId="attn-scaled"/><Tensor name="causal / pad bounds" shape="runtime metadata" role="side" graphId="attn-bounds"/><N id="mask" graphId="attn-mask"/><N id="softmax" graphId="attn-softmax"/><Tensor name="P" shape="[B,Nₕ,S,T]" graphId="attn-p"/></div>
+    <div className="context-pipeline"><N id="pv" graphId="attn-pv"/><Tensor name="heads" shape="[B,S,Nₕ·Dₕ]" graphId="attn-heads"/><N id="oproj" graphId="attn-oproj"/><Tensor name="Yattn" shape="[B,S,H]" graphId="attn-y"/></div>
+  </GraphSurface><aside className="lesson-notes"><span>作用</span><h3>用 Q 找到相关 K，再按概率汇总 V</h3><p>图中的每条边都绑定源节点和目标节点；分叉来自 Split，汇合进入 MatMul、Mask 或 Cache 算子。</p><span>简化公式</span><code>Attention(Q,K,V)=softmax(QKᵀ/√Dₕ + mask)V</code><p>{dense?"Dense 层读取完整可见 KV 历史。":"Sparse 层的 Top-16 只缩小候选 KV blocks；causal / padding mask 仍在最终 attention 中执行。"}</p></aside></div></section>;
 }
 
 function DecoderDiagram({type,g,active,expanded,onExpand,onHover,onLeave,onSelect}:{type:LayerType;g:Record<string,OpNode>;active:string;expanded:ExpandedStage;onExpand:(stage:ExpandedStage)=>void;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void}){
   const p={active:false,onHover,onLeave,onSelect};
-  const W=({id,label}:{id:string;label?:string})=><WeightedOp node={g[id]} {...p} active={active===g[id].id} label={label}/>;
-  const A=({id}:{id:string})=><AddCircle node={g[id]} {...p} active={active===g[id].id}/>;
-  return <div className={`decoder-workbench ${expanded?"has-zoom":""}`}><div className="decoder-column">
-    <div className="residual-block"><Tensor name="Xₗ · hidden_states" shape="[B,S,H]"/><DownArrow/><W id="norm" label="γin"/><DownArrow/><button className="stage-summary attention-stage" onClick={()=>onExpand(expanded==="attention"?null:"attention")}><small>点击展开</small><b>{type==="dense"?"GQA + RoPE":"Sparse GQA + Indexer"}</b><span>{type==="dense"?"Q/K/V · causal mask · KV cache":"Top-16 blocks · causal mask · KV cache"}</span></button><DownArrow/><A id={type==="dense"?"add1":"addattn"}/><span className="skip-rail"><i>residual Xₗ</i></span></div>
-    <DownArrow/><Tensor name="U" shape="[B,S,H]"/><DownArrow/>
-    <div className="residual-block second-residual"><W id="postnorm" label="γpost"/><DownArrow/><button className="stage-summary ffn-stage" onClick={()=>onExpand(expanded==="ffn"?null:"ffn")}><small>点击展开</small><b>{type==="dense"?"SwiGLU MLP":"Top-4 MoE + Shared Expert"}</b><span>{type==="dense"?"Gate / Up 并行 → ⊙ → Down":"Routed 与 Shared 两路并行"}</span></button><DownArrow/><A id={type==="dense"?"add2":"addout"}/><span className="skip-rail"><i>residual U</i></span></div>
-    <DownArrow/><Tensor name="Xₗ₊₁ · hidden_states" shape="[B,S,H]"/>
-  </div>{expanded&&<StageZoom type={type} stage={expanded} g={g} active={active} onHover={onHover} onLeave={onLeave} onSelect={onSelect} onClose={()=>onExpand(null)}/>}</div>;
+  const W=({id,label,graphId,weightGraphId}:{id:string;label?:string;graphId:string;weightGraphId:string})=><WeightedOp node={g[id]} {...p} active={active===g[id].id} label={label} graphId={graphId} weightGraphId={weightGraphId}/>;
+  const A=({id,graphId}:{id:string;graphId:string})=><AddCircle node={g[id]} {...p} active={active===g[id].id} graphId={graphId}/>;
+  const edges:GraphEdge[]=[{from:"main-x",to:"main-norm"},{from:"main-win",to:"main-norm",fromPort:"left",toPort:"right"},{from:"main-norm",to:"main-attn"},{from:"main-attn",to:"main-add1"},{from:"main-x",to:"main-add1",fromPort:"right",toPort:"right",route:"side-right"},{from:"main-add1",to:"main-u"},{from:"main-u",to:"main-post"},{from:"main-wpost",to:"main-post",fromPort:"left",toPort:"right"},{from:"main-post",to:"main-ffn"},{from:"main-ffn",to:"main-add2"},{from:"main-u",to:"main-add2",fromPort:"right",toPort:"right",route:"side-right"},{from:"main-add2",to:"main-out"}];
+  return <div className={`decoder-workbench ${expanded?"has-zoom":""}`}><GraphSurface className="decoder-column decoder-node-graph" edges={edges}>
+    <Tensor name="Xₗ · hidden_states" shape="[B,S,H]" graphId="main-x"/><W id="norm" label="γin" graphId="main-norm" weightGraphId="main-win"/><button data-graph-id="main-attn" className="stage-summary attention-stage" onClick={()=>onExpand(expanded==="attention"?null:"attention")}><small>点击展开</small><b>{type==="dense"?"GQA + RoPE":"Sparse GQA + Indexer"}</b><span>{type==="dense"?"Q/K/V · causal mask · KV cache":"Top-16 blocks · causal mask · KV cache"}</span></button><A id={type==="dense"?"add1":"addattn"} graphId="main-add1"/><Tensor name="U" shape="[B,S,H]" graphId="main-u"/><W id="postnorm" label="γpost" graphId="main-post" weightGraphId="main-wpost"/><button data-graph-id="main-ffn" className="stage-summary ffn-stage" onClick={()=>onExpand(expanded==="ffn"?null:"ffn")}><small>点击展开</small><b>{type==="dense"?"SwiGLU MLP":"Top-4 MoE + Shared Expert"}</b><span>{type==="dense"?"Gate / Up 并行 → ⊙ → Down":"Routed 与 Shared 两路并行"}</span></button><A id={type==="dense"?"add2":"addout"} graphId="main-add2"/><Tensor name="Xₗ₊₁ · hidden_states" shape="[B,S,H]" graphId="main-out"/>
+  </GraphSurface>{expanded&&<StageZoom type={type} stage={expanded} g={g} active={active} onHover={onHover} onLeave={onLeave} onSelect={onSelect} onClose={()=>onExpand(null)}/>}</div>;
 }
 /* eslint-enable react-hooks/static-components */
 
