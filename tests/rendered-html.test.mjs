@@ -111,14 +111,16 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /onPointerDown=\{\(\)=>onSelect\(node\)\}/);
   assert.match(source, /nextDetailState/);
   assert.match(source, /function AddCircle/);
-  assert.match(source, /function WeightedOp/);
+  assert.match(source, /function InputWeightedOp/);
+  assert.match(source, /toPort:"top-left"/);
+  assert.match(source, /toPort:"top-right"/);
   assert.match(source, /function GraphSurface/);
   assert.match(source, /data-graph-id/);
   assert.match(source, /ResizeObserver/);
   assert.match(source, /graph-arrowheads/);
   assert.match(source, /M 0 0 L -8 -4\.5 L -8 4\.5 Z/);
   const graphNodes = new Set(
-    [...source.matchAll(/(?:graphId|weightGraphId|data-graph-id)="((?:main|mlp|moe|attn)-[^"]+)"/g)].map((match) => match[1]),
+    [...source.matchAll(/(?:graphId|inputGraphId|weightGraphId|data-graph-id)="((?:main|mlp|moe|attn)-[^"]+)"/g)].map((match) => match[1]),
   );
   const graphEndpoints = new Set(
     [...source.matchAll(/(?:from|to):"((?:main|mlp|moe|attn)-[^"]+)"/g)].map((match) => match[1]),
@@ -156,6 +158,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.parallel-experts/);
   assert.match(css, /\.add-circle/);
   assert.match(css, /\.weighted-op/);
+  assert.match(css, /\.input-weighted-op/);
+  assert.match(css, /\.co-input-row/);
   assert.match(css, /\.parallel-gate-up/);
   assert.match(css, /\.graph-lines/);
   assert.match(css, /\.graph-arrowheads/);
