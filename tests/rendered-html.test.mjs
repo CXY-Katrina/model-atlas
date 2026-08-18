@@ -178,3 +178,31 @@ test("renders every operator equation as valid LaTeX", async () => {
     assert.doesNotThrow(() => katex.renderToString(equation, { throwOnError: true }));
   }
 });
+
+test("routes the MoE hidden tensor into the shared expert without crossing its weight tensor", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /\{from:"moe-u",to:"moe-shared",fromPort:"bottom",toPort:"top"\}/,
+  );
+  assert.doesNotMatch(
+    source,
+    /\{from:"moe-u",to:"moe-shared",route:"side-right",fromPort:"right",toPort:"right"\}/,
+  );
+
+  const edgeBlock = source.match(/const edges:GraphEdge\[\]=\[\s*\{from:"moe-u"([\s\S]*?)\n\s*\];/)?.[0] ?? "";
+  const artifacts = new Set([
+    "moe-u", "moe-wrouter", "moe-ids", "moe-rweights", "moe-wexperts",
+    "moe-routed", "moe-wshared", "moe-shared-out", "moe-y",
+  ]);
+  const edges = [...edgeBlock.matchAll(/\{from:"([^"]+)",to:"([^"]+)"/g)];
+  assert.equal(edges.length, 15, "expected every MoE graph edge in the invariant check");
+  for (const [, from, to] of edges) {
+    assert.notEqual(
+      artifacts.has(from),
+      artifacts.has(to),
+      `${from} → ${to} must alternate tensor/weight artifacts and operators`,
+    );
+  }
+});
