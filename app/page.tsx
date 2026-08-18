@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import katex from "katex";
 import { denseNodes, layerShard, sparseNodes, type Node, type Weight } from "./model-data";
 
@@ -292,10 +292,9 @@ function sparseGraph(layer: number): Record<string, OpNode> {
 
 function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:string;children:ReactNode}){
   const rootRef=useRef<HTMLDivElement>(null);
-  const markerId=`graph-arrow-${useId().replaceAll(":","")}`;
   const serializedEdges=JSON.stringify(edges);
   const edgeKey=edges.map(edge=>`${edge.from}:${edge.fromPort??"bottom"}>${edge.to}:${edge.toPort??"top"}:${edge.route??"direct"}`).join("|");
-  const [paths,setPaths]=useState<string[]>([]);
+  const [paths,setPaths]=useState<Array<{d:string;tipX:number;tipY:number;angle:number}>>([]);
   useLayoutEffect(()=>{
     const root=rootRef.current;
     if(!root)return;
@@ -317,20 +316,21 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
         const fromPort=edge.fromPort??"bottom"; const toPort=edge.toPort??"top";
         const [sx,sy]=point(source.getBoundingClientRect(),fromPort,rootRect);
         const [tx,ty]=point(target.getBoundingClientRect(),toPort,rootRect);
+        const angle={left:0,right:180,top:90,bottom:-90}[toPort];
         if(edge.route==="side-right"){
-          const side=Math.max(sx,tx)+34;
-          return [`M ${sx} ${sy} L ${side} ${sy} Q ${side+5} ${sy} ${side+5} ${sy+5} L ${side+5} ${ty-5} Q ${side+5} ${ty} ${side} ${ty} L ${tx} ${ty}`];
+          const side=Math.max(sx,tx)+52;
+          return [{d:`M ${sx} ${sy} C ${side} ${sy}, ${side} ${ty}, ${tx} ${ty}`,tipX:tx,tipY:ty,angle}];
         }
         if(edge.route==="side-left"){
-          const side=Math.min(sx,tx)-34;
-          return [`M ${sx} ${sy} L ${side} ${sy} Q ${side-5} ${sy} ${side-5} ${sy+5} L ${side-5} ${ty-5} Q ${side-5} ${ty} ${side} ${ty} L ${tx} ${ty}`];
+          const side=Math.min(sx,tx)-52;
+          return [{d:`M ${sx} ${sy} C ${side} ${sy}, ${side} ${ty}, ${tx} ${ty}`,tipX:tx,tipY:ty,angle}];
         }
         if(fromPort==="right"||fromPort==="left"||toPort==="right"||toPort==="left"){
           const mid=(sx+tx)/2;
-          return [`M ${sx} ${sy} C ${mid} ${sy}, ${mid} ${ty}, ${tx} ${ty}`];
+          return [{d:`M ${sx} ${sy} C ${mid} ${sy}, ${mid} ${ty}, ${tx} ${ty}`,tipX:tx,tipY:ty,angle}];
         }
         const mid=(sy+ty)/2;
-        return [`M ${sx} ${sy} C ${sx} ${mid}, ${tx} ${mid}, ${tx} ${ty}`];
+        return [{d:`M ${sx} ${sy} C ${sx} ${mid}, ${tx} ${mid}, ${tx} ${ty}`,tipX:tx,tipY:ty,angle}];
       });
       setPaths(next);
     };
@@ -340,7 +340,7 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
     frame=requestAnimationFrame(measure);
     return()=>{cancelAnimationFrame(frame);observer.disconnect()};
   },[serializedEdges]);
-  return <div ref={rootRef} className={`graph-surface ${className}`}>{children}<svg className="graph-edges" aria-hidden="true"><defs><marker id={markerId} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,4 L0,8 z"/></marker></defs>{paths.map((path,index)=><path key={`${edgeKey}-${index}`} d={path} markerEnd={`url(#${markerId})`}/>)}</svg></div>;
+  return <div ref={rootRef} className={`graph-surface ${className}`}>{children}<svg className="graph-lines" aria-hidden="true">{paths.map((path,index)=><path key={`${edgeKey}-line-${index}`} d={path.d}/>)}</svg><svg className="graph-arrowheads" aria-hidden="true">{paths.map((path,index)=><g key={`${edgeKey}-arrow-${index}`} transform={`translate(${path.tipX} ${path.tipY}) rotate(${path.angle})`}><path d="M 0 0 L -8 -4.5 L -8 4.5 Z"/></g>)}</svg></div>;
 }
 
 function Op({node,active,onHover,onLeave,onSelect,graphId}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;graphId?:string}){

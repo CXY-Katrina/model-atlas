@@ -113,7 +113,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /function GraphSurface/);
   assert.match(source, /data-graph-id/);
   assert.match(source, /ResizeObserver/);
-  assert.match(source, /markerEnd/);
+  assert.match(source, /graph-arrowheads/);
+  assert.match(source, /M 0 0 L -8 -4\.5 L -8 4\.5 Z/);
   const graphNodes = new Set(
     [...source.matchAll(/(?:graphId|weightGraphId|data-graph-id)="((?:main|mlp|moe|attn)-[^"]+)"/g)].map((match) => match[1]),
   );
@@ -154,7 +155,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.add-circle/);
   assert.match(css, /\.weighted-op/);
   assert.match(css, /\.parallel-gate-up/);
-  assert.match(css, /\.graph-edges/);
+  assert.match(css, /\.graph-lines/);
+  assert.match(css, /\.graph-arrowheads/);
   assert.match(css, /\.decoder-node-graph/);
   assert.match(css, /\.connected-attention-graph/);
   assert.match(css, /\.mlp-node-graph/);
