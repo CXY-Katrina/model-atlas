@@ -2,6 +2,7 @@
 
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import katex from "katex";
+import { nextDetailState, type DetailEvent, type DetailState } from "./detail-selection";
 import { denseNodes, layerShard, sparseNodes, type Node, type Weight } from "./model-data";
 
 type Tab = "io" | "formula" | "code";
@@ -344,7 +345,7 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
 }
 
 function Op({node,active,onHover,onLeave,onSelect,graphId}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;graphId?:string}){
-  return <button data-graph-id={graphId} className={`op-node op-${node.kind} ${active?"active":""}`} onMouseEnter={()=>onHover(node)} onMouseLeave={onLeave} onFocus={()=>onHover(node)} onBlur={onLeave} onClick={()=>onSelect(node)}><small>OP · {node.kind}</small><b>{node.title}</b></button>;
+  return <button data-graph-id={graphId} className={`op-node op-${node.kind} ${active?"active":""}`} aria-pressed={active} onMouseEnter={()=>onHover(node)} onMouseLeave={onLeave} onFocus={()=>onHover(node)} onBlur={onLeave} onPointerDown={()=>onSelect(node)} onClick={event=>{if(event.detail===0)onSelect(node)}}><small>OP · {node.kind}</small><b>{node.title}</b></button>;
 }
 
 type TensorRole = "input" | "tensor" | "output" | "side" | "weight";
@@ -362,7 +363,7 @@ function WeightedOp({node,active,onHover,onLeave,onSelect,label="γ",graphId,wei
 }
 
 function AddCircle({node,active,onHover,onLeave,onSelect,graphId}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;graphId?:string}){
-  return <button data-graph-id={graphId} className={`add-circle ${active?"active":""}`} aria-label={node.title} title={node.title} onMouseEnter={()=>onHover(node)} onMouseLeave={onLeave} onFocus={()=>onHover(node)} onBlur={onLeave} onClick={()=>onSelect(node)}>+</button>;
+  return <button data-graph-id={graphId} className={`add-circle ${active?"active":""}`} aria-label={node.title} aria-pressed={active} title={node.title} onMouseEnter={()=>onHover(node)} onMouseLeave={onLeave} onFocus={()=>onHover(node)} onBlur={onLeave} onPointerDown={()=>onSelect(node)} onClick={event=>{if(event.detail===0)onSelect(node)}}>+</button>;
 }
 
 function RuntimeIORail({N}:{N:({id}:{id:string})=>ReactNode}){
@@ -420,7 +421,7 @@ function StageZoom({type,stage,g,active,onHover,onLeave,onSelect,onClose}:{type:
       {from:"mlp-u",to:"mlp-post"},{from:"mlp-wpost",to:"mlp-post",fromPort:"left",toPort:"right"},{from:"mlp-post",to:"mlp-uhat"},{from:"mlp-uhat",to:"mlp-gateup"},{from:"mlp-wgate",to:"mlp-gateup",fromPort:"left",toPort:"right"},{from:"mlp-wup",to:"mlp-gateup",fromPort:"left",toPort:"right"},{from:"mlp-gateup",to:"mlp-gate"},{from:"mlp-gateup",to:"mlp-up"},{from:"mlp-gate",to:"mlp-gate-act"},{from:"mlp-up",to:"mlp-up-act"},{from:"mlp-gate-act",to:"mlp-mul"},{from:"mlp-up-act",to:"mlp-mul"},{from:"mlp-mul",to:"mlp-activated"},{from:"mlp-activated",to:"mlp-down"},{from:"mlp-wdown",to:"mlp-down",fromPort:"left",toPort:"right"},{from:"mlp-down",to:"mlp-y"},
     ];
     return <section className="stage-zoom lesson-zoom"><header><div><span>GQA + MLP · L0–2</span><b>SwiGLU Graph：每条边都连接具体张量、权重与算子</b></div><button onClick={onClose}>收起 ×</button></header><div className="lesson-layout"><GraphSurface className="mlp-node-graph" edges={edges}>
-      <Tensor name="U" shape="[B,S,H]" graphId="mlp-u"/><N id="postnorm" graphId="mlp-post"/><Tensor name="γpost" shape="[H]" role="weight" graphId="mlp-wpost"/><Tensor name="Û" shape="[B,S,H]" graphId="mlp-uhat"/><N id="gateup" graphId="mlp-gateup"/><Tensor name="Wgate" shape="[H_dense,H]" role="weight" graphId="mlp-wgate"/><Tensor name="Wup" shape="[H_dense,H]" role="weight" graphId="mlp-wup"/><Tensor name="gate" shape="[B,S,H_dense]" graphId="mlp-gate"/><Tensor name="up" shape="[B,S,H_dense]" graphId="mlp-up"/><div className="mini-math" data-graph-id="mlp-gate-act">clamp → SiLU(1.702·gate)</div><div className="mini-math" data-graph-id="mlp-up-act">clamp → up + 1</div><button className="multiply-circle" data-graph-id="mlp-mul" onClick={()=>onSelect(g.swiglu)} onMouseEnter={()=>onHover(g.swiglu)} onMouseLeave={onLeave}>×</button><Tensor name="activated" shape="[B,S,H_dense]" graphId="mlp-activated"/><N id="down" graphId="mlp-down"/><Tensor name="Wdown" shape="[H,H_dense]" role="weight" graphId="mlp-wdown"/><Tensor name="Yffn" shape="[B,S,H]" graphId="mlp-y"/>
+      <Tensor name="U" shape="[B,S,H]" graphId="mlp-u"/><N id="postnorm" graphId="mlp-post"/><Tensor name="γpost" shape="[H]" role="weight" graphId="mlp-wpost"/><Tensor name="Û" shape="[B,S,H]" graphId="mlp-uhat"/><N id="gateup" graphId="mlp-gateup"/><Tensor name="Wgate" shape="[H_dense,H]" role="weight" graphId="mlp-wgate"/><Tensor name="Wup" shape="[H_dense,H]" role="weight" graphId="mlp-wup"/><Tensor name="gate" shape="[B,S,H_dense]" graphId="mlp-gate"/><Tensor name="up" shape="[B,S,H_dense]" graphId="mlp-up"/><div className="mini-math" data-graph-id="mlp-gate-act">clamp → SiLU(1.702·gate)</div><div className="mini-math" data-graph-id="mlp-up-act">clamp → up + 1</div><button className="multiply-circle" data-graph-id="mlp-mul" aria-pressed={active===g.swiglu.id} onPointerDown={()=>onSelect(g.swiglu)} onClick={event=>{if(event.detail===0)onSelect(g.swiglu)}} onMouseEnter={()=>onHover(g.swiglu)} onMouseLeave={onLeave}>×</button><Tensor name="activated" shape="[B,S,H_dense]" graphId="mlp-activated"/><N id="down" graphId="mlp-down"/><Tensor name="Wdown" shape="[H,H_dense]" role="weight" graphId="mlp-wdown"/><Tensor name="Yffn" shape="[B,S,H]" graphId="mlp-y"/>
     </GraphSurface><aside className="lesson-notes"><span>作用</span><h3>逐 token 扩维、门控，再投回 hidden size</h3><p>MLP 不混合 token。Gate 与 Up 从同一个 fused projection 并行分叉，随后在 × 节点汇合。</p><span>简化公式</span><code>MLP(x)=Wdown[SiLU(gate) ⊙ (up+1)]</code><p>每条箭头都从上游张量或权重的边界出发，并进入实际消费它的算子。</p></aside></div></section>;
   }
   if(stage==="ffn"){
@@ -525,8 +526,9 @@ function HelpModal({onClose}:{onClose:()=>void}){
 
 export default function Home(){
   const [layerType,setLayerType]=useState<LayerType>("sparse"); const [expanded,setExpanded]=useState<ExpandedStage>(null); const [tab,setTab]=useState<Tab>("io"); const [dark,setDark]=useState(false); const [help,setHelp]=useState(false);
-  const layer=layerType==="dense"?2:3; const graph=layerType==="dense"?denseGraph(layer):sparseGraph(layer); const [pinned,setPinned]=useState<OpNode|null>(null); const [hovered,setHovered]=useState<OpNode|null>(null); const active=pinned??hovered;
-  const changeLayerType=(next:LayerType)=>{setLayerType(next);setExpanded(null);setPinned(null);setHovered(null)};
+  const layer=layerType==="dense"?2:3; const graph=layerType==="dense"?denseGraph(layer):sparseGraph(layer); const [detail,setDetail]=useState<DetailState<OpNode>>({hovered:null,pinned:null}); const active=detail.pinned??detail.hovered;
+  const updateDetail=(event:DetailEvent<OpNode>)=>setDetail(state=>nextDetailState(state,event));
+  const changeLayerType=(next:LayerType)=>{setLayerType(next);setExpanded(null);updateDetail({type:"clear"})};
   return <main className={`atlas-app ${dark?"dark":""}`}><header className="app-header">
     <div className="brand-lockup"><span className="brand-glyph"><i/><i/><i/></span><div><b>模型结构概览</b></div></div>
     <label className="model-select"><span>MODEL</span><select aria-label="选择模型" value="minimax-m3" onChange={()=>undefined}>{MODEL_REGISTRY.map(m=><option key={m.id} value={m.id} disabled={!m.enabled}>{m.name}</option>)}</select></label>
@@ -536,6 +538,6 @@ export default function Home(){
   </header><div className="screen-grid"><section className="map-panel">
     <div className="model-overview"><div className="model-step">Text / Vision Inputs</div><Arrow/><div className="model-step">Embedding Fusion <code>[B,S,H]</code></div><Arrow/><div className="overview-stack"><b>Decoder ×60</b><span><i className="dense"/>L0–2 · GQA+MLP</span><span><i className="sparse"/>L3–59 · Sparse GQA+MoE</span></div><Arrow/><div className="model-step">Final RMSNorm <code>[B,S,H]</code></div><Arrow/><div className="model-step">LM Head <code>[B,S,V]</code></div></div>
     <LayerNavigator type={layerType} onChange={changeLayerType}/>
-    <section className="layer-canvas"><header><div><span>DECODER LAYER · 按结构类型展示</span><h1>{layerType==="dense"?"GQA + MLP · L0–L2 同构":"Sparse GQA + Top-4 MoE · L3–L59 同构"}</h1></div><div className="node-legend"><span><i className="tensor-swatch"/>TENSOR</span><span><i className="external-swatch"/>EXTERNAL</span><span><i className="weight-swatch"/>WEIGHT</span><span><i className="operator-swatch"/>OPERATOR</span><code>点击大模块展开 · 点击算子后右侧固定</code></div></header><DecoderDiagram type={layerType} g={graph} active={active?.id??""} expanded={expanded} onExpand={setExpanded} onHover={setHovered} onLeave={()=>setHovered(null)} onSelect={node=>{setPinned(node);setTab("io")}}/></section>
-  </section><DetailPanel node={active} tab={tab} setTab={setTab} pinned={Boolean(pinned)} onClear={()=>{setPinned(null);setHovered(null)}}/></div>{help&&<HelpModal onClose={()=>setHelp(false)}/>}</main>;
+    <section className="layer-canvas"><header><div><span>DECODER LAYER · 按结构类型展示</span><h1>{layerType==="dense"?"GQA + MLP · L0–L2 同构":"Sparse GQA + Top-4 MoE · L3–L59 同构"}</h1></div><div className="node-legend"><span><i className="tensor-swatch"/>TENSOR</span><span><i className="external-swatch"/>EXTERNAL</span><span><i className="weight-swatch"/>WEIGHT</span><span><i className="operator-swatch"/>OPERATOR</span><code>点击大模块展开 · 按下算子后右侧固定</code></div></header><DecoderDiagram type={layerType} g={graph} active={active?.id??""} expanded={expanded} onExpand={setExpanded} onHover={node=>updateDetail({type:"hover",node})} onLeave={()=>updateDetail({type:"leave"})} onSelect={node=>{updateDetail({type:"pin",node});setTab("io")}}/></section>
+  </section><DetailPanel node={active} tab={tab} setTab={setTab} pinned={Boolean(detail.pinned)} onClear={()=>updateDetail({type:"clear"})}/></div>{help&&<HelpModal onClose={()=>setHelp(false)}/>}</main>;
 }

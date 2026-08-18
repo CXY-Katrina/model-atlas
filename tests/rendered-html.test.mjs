@@ -107,7 +107,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /MODEL_REGISTRY/);
   assert.match(source, /尚未选择模块/);
   assert.match(source, /LayerType/);
-  assert.match(source, /const active=pinned\?\?hovered/);
+  assert.match(source, /const active=detail\.pinned\?\?detail\.hovered/);
+  assert.match(source, /onPointerDown=\{\(\)=>onSelect\(node\)\}/);
+  assert.match(source, /nextDetailState/);
   assert.match(source, /function AddCircle/);
   assert.match(source, /function WeightedOp/);
   assert.match(source, /function GraphSurface/);
