@@ -1,7 +1,8 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import katex from "katex";
+import { routeGraphEdge } from "./graph-routing";
 import { nextDetailState, type DetailEvent, type DetailState } from "./detail-selection";
 import { denseNodes, layerShard, sparseNodes, type Node, type Weight } from "./model-data";
 
@@ -293,9 +294,10 @@ function sparseGraph(layer: number): Record<string, OpNode> {
 
 function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:string;children:ReactNode}){
   const rootRef=useRef<HTMLDivElement>(null);
+  const markerId=`graph-arrow-${useId().replace(/:/g,"")}`;
   const serializedEdges=JSON.stringify(edges);
   const edgeKey=edges.map(edge=>`${edge.from}:${edge.fromPort??"bottom"}>${edge.to}:${edge.toPort??"top"}:${edge.route??"direct"}`).join("|");
-  const [paths,setPaths]=useState<Array<{d:string;tipX:number;tipY:number;angle:number}>>([]);
+  const [paths,setPaths]=useState<string[]>([]);
   useLayoutEffect(()=>{
     const root=rootRef.current;
     if(!root)return;
@@ -312,6 +314,11 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
     const measure=()=>{
       const rootRect=root.getBoundingClientRect();
       const currentEdges=JSON.parse(serializedEdges) as GraphEdge[];
+      const nodeRects=[...root.querySelectorAll<HTMLElement>("[data-graph-id]")].map(node=>node.getBoundingClientRect());
+      const obstacleBounds={
+        left:Math.min(...nodeRects.map(rect=>rect.left-rootRect.left)),
+        right:Math.max(...nodeRects.map(rect=>rect.right-rootRect.left)),
+      };
       const next=currentEdges.flatMap(edge=>{
         const source=root.querySelector<HTMLElement>(`[data-graph-id="${edge.from}"]`);
         const target=root.querySelector<HTMLElement>(`[data-graph-id="${edge.to}"]`);
@@ -319,21 +326,8 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
         const fromPort=edge.fromPort??"bottom"; const toPort=edge.toPort??"top";
         const [sx,sy]=point(source.getBoundingClientRect(),fromPort,rootRect);
         const [tx,ty]=point(target.getBoundingClientRect(),toPort,rootRect);
-        const angle=toPort.startsWith("top")?90:toPort==="left"?0:toPort==="right"?180:-90;
-        if(edge.route==="side-right"){
-          const side=Math.max(sx,tx)+52;
-          return [{d:`M ${sx} ${sy} C ${side} ${sy}, ${side} ${ty}, ${tx} ${ty}`,tipX:tx,tipY:ty,angle}];
-        }
-        if(edge.route==="side-left"){
-          const side=Math.min(sx,tx)-52;
-          return [{d:`M ${sx} ${sy} C ${side} ${sy}, ${side} ${ty}, ${tx} ${ty}`,tipX:tx,tipY:ty,angle}];
-        }
-        if(fromPort==="right"||fromPort==="left"||toPort==="right"||toPort==="left"){
-          const mid=(sx+tx)/2;
-          return [{d:`M ${sx} ${sy} C ${mid} ${sy}, ${mid} ${ty}, ${tx} ${ty}`,tipX:tx,tipY:ty,angle}];
-        }
-        const mid=(sy+ty)/2;
-        return [{d:`M ${sx} ${sy} C ${sx} ${mid}, ${tx} ${mid}, ${tx} ${ty}`,tipX:tx,tipY:ty,angle}];
+        const direction=edge.route??(fromPort==="right"||fromPort==="left"||toPort==="right"||toPort==="left"?"horizontal":"vertical");
+        return [routeGraphEdge({source:{x:sx,y:sy},target:{x:tx,y:ty},direction,obstacleBounds,clearance:24}).path];
       });
       setPaths(next);
     };
@@ -343,7 +337,7 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
     frame=requestAnimationFrame(measure);
     return()=>{cancelAnimationFrame(frame);observer.disconnect()};
   },[serializedEdges]);
-  return <div ref={rootRef} className={`graph-surface ${className}`}>{children}<svg className="graph-lines" aria-hidden="true">{paths.map((path,index)=><path key={`${edgeKey}-line-${index}`} d={path.d}/>)}</svg><svg className="graph-arrowheads" aria-hidden="true">{paths.map((path,index)=><g key={`${edgeKey}-arrow-${index}`} transform={`translate(${path.tipX} ${path.tipY}) rotate(${path.angle})`}><path d="M 0 0 L -8 -4.5 L -8 4.5 Z"/></g>)}</svg></div>;
+  return <div ref={rootRef} className={`graph-surface ${className}`}>{children}<svg className="graph-connectors" aria-hidden="true"><defs><marker id={markerId} markerWidth="9" markerHeight="9" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 8 4 L 0 8 Z"/></marker></defs>{paths.map((path,index)=><path key={`${edgeKey}-connector-${index}`} d={path} markerEnd={`url(#${markerId})`}/>)}</svg></div>;
 }
 
 function Op({node,active,onHover,onLeave,onSelect,graphId}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;graphId?:string}){
@@ -453,7 +447,7 @@ function DecoderDiagram({type,g,active,expanded,onExpand,onHover,onLeave,onSelec
   const p={active:false,onHover,onLeave,onSelect};
   const IW=({id,inputName,inputShape,label,inputGraphId,graphId,weightGraphId}:{id:string;inputName:string;inputShape:string;label?:string;inputGraphId:string;graphId:string;weightGraphId:string})=><InputWeightedOp node={g[id]} {...p} active={active===g[id].id} inputName={inputName} inputShape={inputShape} label={label} inputGraphId={inputGraphId} graphId={graphId} weightGraphId={weightGraphId}/>;
   const A=({id,graphId}:{id:string;graphId:string})=><AddCircle node={g[id]} {...p} active={active===g[id].id} graphId={graphId}/>;
-  const edges:GraphEdge[]=[{from:"main-x",to:"main-norm",toPort:"top-left"},{from:"main-win",to:"main-norm",toPort:"top-right"},{from:"main-norm",to:"main-attn"},{from:"main-attn",to:"main-add1"},{from:"main-x",to:"main-add1",fromPort:"right",toPort:"right",route:"side-right"},{from:"main-add1",to:"main-u"},{from:"main-u",to:"main-post",toPort:"top-left"},{from:"main-wpost",to:"main-post",toPort:"top-right"},{from:"main-post",to:"main-ffn"},{from:"main-ffn",to:"main-add2"},{from:"main-u",to:"main-add2",fromPort:"right",toPort:"right",route:"side-right"},{from:"main-add2",to:"main-out"}];
+  const edges:GraphEdge[]=[{from:"main-x",to:"main-norm",toPort:"top-left"},{from:"main-win",to:"main-norm",toPort:"top-right"},{from:"main-norm",to:"main-attn"},{from:"main-attn",to:"main-add1"},{from:"main-x",to:"main-add1",fromPort:"left",toPort:"left",route:"side-left"},{from:"main-add1",to:"main-u"},{from:"main-u",to:"main-post",toPort:"top-left"},{from:"main-wpost",to:"main-post",toPort:"top-right"},{from:"main-post",to:"main-ffn"},{from:"main-ffn",to:"main-add2"},{from:"main-u",to:"main-add2",fromPort:"left",toPort:"left",route:"side-left"},{from:"main-add2",to:"main-out"}];
   return <div className={`decoder-workbench ${expanded?"has-zoom":""}`}><GraphSurface className="decoder-column decoder-node-graph" edges={edges}>
     <IW id="norm" inputName="Xₗ · hidden_states" inputShape="[B,S,H]" label="γin" inputGraphId="main-x" graphId="main-norm" weightGraphId="main-win"/><button data-graph-id="main-attn" className="stage-summary attention-stage" onClick={()=>onExpand(expanded==="attention"?null:"attention")}><small>点击展开</small><b>{type==="dense"?"GQA + RoPE":"Sparse GQA + Indexer"}</b><span>{type==="dense"?"Q/K/V · causal mask · KV cache":"Top-16 blocks · causal mask · KV cache"}</span></button><A id={type==="dense"?"add1":"addattn"} graphId="main-add1"/><IW id="postnorm" inputName="U" inputShape="[B,S,H]" label="γpost" inputGraphId="main-u" graphId="main-post" weightGraphId="main-wpost"/><button data-graph-id="main-ffn" className="stage-summary ffn-stage" onClick={()=>onExpand(expanded==="ffn"?null:"ffn")}><small>点击展开</small><b>{type==="dense"?"SwiGLU MLP":"Top-4 MoE + Shared Expert"}</b><span>{type==="dense"?"Gate / Up 并行 → ⊙ → Down":"Routed 与 Shared 两路并行"}</span></button><A id={type==="dense"?"add2":"addout"} graphId="main-add2"/><Tensor name="Xₗ₊₁ · hidden_states" shape="[B,S,H]" graphId="main-out"/>
   </GraphSurface>{expanded&&<StageZoom type={type} stage={expanded} g={g} active={active} onHover={onHover} onLeave={onLeave} onSelect={onSelect} onClose={()=>onExpand(null)}/>}</div>;

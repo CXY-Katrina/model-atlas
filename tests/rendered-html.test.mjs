@@ -115,10 +115,13 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /toPort:"top-left"/);
   assert.match(source, /toPort:"top-right"/);
   assert.match(source, /function GraphSurface/);
+  assert.match(source, /routeGraphEdge/);
   assert.match(source, /data-graph-id/);
   assert.match(source, /ResizeObserver/);
-  assert.match(source, /graph-arrowheads/);
-  assert.match(source, /M 0 0 L -8 -4\.5 L -8 4\.5 Z/);
+  assert.match(source, /markerEnd/);
+  assert.doesNotMatch(source, /graph-arrowheads/);
+  assert.match(source, /from:"main-x",to:"main-add1",fromPort:"left",toPort:"left",route:"side-left"/);
+  assert.match(source, /from:"main-u",to:"main-add2",fromPort:"left",toPort:"left",route:"side-left"/);
   const graphNodes = new Set(
     [...source.matchAll(/(?:graphId|inputGraphId|weightGraphId|data-graph-id)="((?:main|mlp|moe|attn)-[^"]+)"/g)].map((match) => match[1]),
   );
@@ -161,8 +164,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.input-weighted-op/);
   assert.match(css, /\.co-input-row/);
   assert.match(css, /\.parallel-gate-up/);
-  assert.match(css, /\.graph-lines/);
-  assert.match(css, /\.graph-arrowheads/);
+  assert.match(css, /\.graph-connectors/);
+  assert.doesNotMatch(css, /\.graph-arrowheads/);
   assert.match(css, /\.decoder-node-graph/);
   assert.match(css, /\.connected-attention-graph/);
   assert.match(css, /\.mlp-node-graph/);
