@@ -169,6 +169,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.graph-connectors/);
   assert.doesNotMatch(css, /\.graph-arrowheads/);
   assert.match(css, /\.decoder-node-graph/);
+  assert.match(css, /\.decoder-node-graph>\.input-weighted-op\{[^}]*row-gap:18px/);
   assert.match(css, /\.connected-attention-graph/);
   assert.match(css, /\.mlp-node-graph/);
   assert.match(css, /\.moe-node-graph/);
