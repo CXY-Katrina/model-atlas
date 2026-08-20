@@ -188,6 +188,10 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.mlp-node-graph/);
   assert.match(css, /\.moe-node-graph/);
   assert.match(css, /\.shape-rows/);
+  assert.match(css, /\.tensor-node code\{font-size:6\.5px/);
+  assert.match(css, /\.stage-zoom \.graph-surface \.tensor-node code\{font-size:6\.5px/);
+  assert.match(css, /\.shape-rows code\{font:8\.5px/);
+  assert.match(css, /\.model-overview \.model-step code\{font-size:8px/);
   assert.match(css, /\.config-reference/);
   assert.match(css, /\.detail-formula\{overflow:hidden/);
   assert.doesNotMatch(css, /\.op-node\{[^}]*border-left/);
