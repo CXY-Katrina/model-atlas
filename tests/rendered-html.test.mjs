@@ -50,7 +50,7 @@ test("server-renders the MiniMax-M3 architecture workbench", async () => {
   assert.match(html, /WEIGHT/);
   assert.match(html, /Text \/ Vision Inputs/);
   assert.match(html, /Embedding Fusion/);
-  assert.match(html, /Final RMSNorm/);
+  assert.match(html, /Final Gemma RMSNorm/);
   assert.match(html, /LM Head/);
   assert.doesNotMatch(html, /QKV \+ Index Projection/);
   assert.doesNotMatch(html, /ATTENTION RUNTIME I\/O/);
@@ -112,8 +112,14 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /nextDetailState/);
   assert.match(source, /function AddCircle/);
   assert.match(source, /function InputWeightedOp/);
-  assert.match(source, /label="input_layernorm\.weight"/);
+  assert.match(source, /input_layernorm\.weight/);
   assert.match(source, /replaceAll\("6144","H"\)/);
+  assert.match(source, /function checkpointWeightName/);
+  assert.doesNotMatch(source, /label="γ(?:post|q|k)"/);
+  assert.doesNotMatch(source, /Tensor name="W(?:gate|up|down|router|routed|shared)"/);
+  assert.match(source, /mlp\.gate_proj\.weight/);
+  assert.match(source, /block_sparse_moe\.gate\.weight/);
+  assert.match(source, /block_sparse_moe\.experts\.\*\.\{w1,w3,w2\}\.weight/);
   assert.match(source, /title:"Gemma RMSNorm"/);
   assert.match(source, /title:"Post-attn Gemma RMSNorm"/);
   assert.doesNotMatch(source, /title:"RMSNorm"/);
