@@ -118,7 +118,7 @@ export function sparseNodes(layer: number): Node[] {
     {
       id:"sparse-proj", tone:"projection", kicker:`L${layer} · FIVE-WAY PROJECTION`, title:"主分支 + Index 分支融合投影",
       summary:"一次 GEMM 同时产生 Q/K/V 与 Qidx/Kidx；前者生成内容，后者只选 KV block。",
-      input:"RMSNorm(Xₗ)", inputShape:"[B,S,6144]", output:"Q|K|V|Qidx|Kidx", outputShape:"8192 | 512 | 512 | 512 | 128",
+      input:"GemmaRMSNorm(Xₗ)", inputShape:"[B,S,6144]", output:"Q|K|V|Qidx|Kidx", outputShape:"8192 | 512 | 512 | 512 | 128",
       formula:"[Q,K,V,Qidx,Kidx]=X̂·Wpackedᵀ", formulaNote:"共 9856 输出通道；M3 禁用 index V/O。",
       runtime:"MinimaxM3QKVParallelLinearWithIndexer", source:"nvidia/model.py · MiniMaxM3SparseAttention", sourceUrl:MODEL,
       code:`self.qkv_proj = MinimaxM3QKVParallelLinearWithIndexer(\n    6144, 128, 64, 4, total_idx_heads=4, idx_head_dim=128\n)\nqkv, _ = self.qkv_proj(hidden_states)`,
@@ -329,7 +329,7 @@ function Overview({chooseLayer,chooseVision}:{chooseLayer:(layer:number)=>void;c
       <div className="merge-arrows"><span>↘</span><code>replace visual placeholders</code><span>↙</span></div>
       <button className="overview-stage fusion-stage" onClick={()=>chooseLayer(0)}><span>FUSION</span><b>Unified token embeddings</b><code>[B,S,6144]</code></button><Arrow label="shared hidden width H=6144"/>
       <div className="decoder-stack"><button className="overview-stage dense-stage" onClick={()=>chooseLayer(0)}><span>L0–L2 · ×3</span><b>Dense GQA + Dense MLP</b><code>full causal history · ≈333.46M params/layer</code></button><div className="stack-arrow">↓ <code>[B,S,6144]</code></div><button className="overview-stage sparse-stage" onClick={()=>chooseLayer(3)}><span>L3–L59 · ×57</span><b>MSA + Top-4 MoE + Shared Expert</b><code>Top-16 blocks · ≈7.416B params/layer</code></button></div>
-      <Arrow label="X₆₀ [B,S,6144]"/><button className="overview-stage output-stage" onClick={()=>chooseLayer(59)}><span>OUTPUT</span><b>final RMSNorm → lm_head</b><code>[B,S,6144] → [B,S,200064]</code></button>
+      <Arrow label="X₆₀ [B,S,6144]"/><button className="overview-stage output-stage" onClick={()=>chooseLayer(59)}><span>OUTPUT</span><b>final Gemma RMSNorm → lm_head</b><code>[B,S,6144] → [B,S,200064]</code></button>
     </div>
   </section>;
 }

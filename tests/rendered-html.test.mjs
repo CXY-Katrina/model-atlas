@@ -114,6 +114,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /function InputWeightedOp/);
   assert.match(source, /label="input_layernorm\.weight"/);
   assert.match(source, /replaceAll\("6144","H"\)/);
+  assert.match(source, /title:"Gemma RMSNorm"/);
+  assert.match(source, /title:"Post-attn Gemma RMSNorm"/);
+  assert.doesNotMatch(source, /title:"RMSNorm"/);
   assert.match(source, /toPort:"top-left"/);
   assert.match(source, /toPort:"top-right"/);
   assert.match(source, /function GraphSurface/);
