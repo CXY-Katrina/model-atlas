@@ -29,5 +29,18 @@ test("direct routes keep the arrow on one continuous path", () => {
   });
 
   assert.equal(route.rail, null);
-  assert.match(route.path, /^M 120 60 C 120 105, 150 105, 150 150$/);
+  assert.match(route.path, /^M 120 60 C 120 98, 150 98, 150 136 L 150 150$/);
+  assert.match(route.path, /150 136 L 150 150$/, "the last segment must enter the arrowhead through the center of its horizontal base");
+});
+
+test("horizontal routes finish perpendicular to the arrowhead base", () => {
+  const route = routeGraphEdge({
+    source: { x: 60, y: 120 },
+    target: { x: 150, y: 150 },
+    direction: "horizontal",
+    obstacleBounds: { left: 0, right: 300 },
+    clearance: 24,
+  });
+
+  assert.equal(route.path, "M 60 120 C 98 120, 98 150, 136 150 L 150 150");
 });
