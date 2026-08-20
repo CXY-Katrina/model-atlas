@@ -109,6 +109,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /尚未选择模块/);
   assert.match(source, /LayerType/);
   assert.match(source, /const active=detail\.pinned\?\?detail\.hovered/);
+  assert.match(page, /aria-label="取消固定"[^>]*>❌<\/button>/);
+  assert.doesNotMatch(page, /已固定 · 取消/);
   assert.match(source, /onPointerDown=\{\(\)=>onSelect\(node\)\}/);
   assert.match(source, /nextDetailState/);
   assert.match(source, /function AddCircle/);
@@ -194,6 +196,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.model-overview \.model-step code\{font-size:8px/);
   assert.match(css, /\.config-reference/);
   assert.match(css, /\.detail-formula\{overflow:hidden/);
+  assert.match(css, /\.unpin-button\{[^}]*width:28px[^}]*height:28px/);
   assert.doesNotMatch(css, /\.op-node\{[^}]*border-left/);
 });
 
