@@ -170,6 +170,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.binding-weight/);
   assert.match(css, /\.binding-external/);
   assert.match(css, /\.decoder-column/);
+  assert.match(css, /\.layer-type-options button\{[^}]*align-content:center/);
   assert.match(css, /\.decoder-workbench\.has-zoom\{[^}]*grid-template-columns:360px minmax\(0,1fr\)/);
   assert.doesNotMatch(css, /\.decoder-workbench\.has-zoom\{[^}]*grid-template-columns:170px/);
   assert.match(css, /\.stage-zoom/);
