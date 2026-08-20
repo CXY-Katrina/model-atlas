@@ -112,6 +112,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /nextDetailState/);
   assert.match(source, /function AddCircle/);
   assert.match(source, /function InputWeightedOp/);
+  assert.match(source, /label="input_layernorm\.weight"/);
+  assert.match(source, /replaceAll\("6144","H"\)/);
   assert.match(source, /toPort:"top-left"/);
   assert.match(source, /toPort:"top-right"/);
   assert.match(source, /function GraphSurface/);
