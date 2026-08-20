@@ -118,6 +118,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.doesNotMatch(source, /label="γ(?:post|q|k)"/);
   assert.doesNotMatch(source, /Tensor name="W(?:gate|up|down|router|routed|shared)"/);
   assert.match(source, /mlp\.gate_proj\.weight/);
+  assert.doesNotMatch(page, /DECODER LAYER TYPE|Dense GQA · SwiGLU MLP|Indexer Attention · Top-4 MoE/);
   assert.match(source, /block_sparse_moe\.gate\.weight/);
   assert.match(source, /block_sparse_moe\.experts\.\*\.\{w1,w3,w2\}\.weight/);
   assert.match(source, /title:"Gemma RMSNorm"/);

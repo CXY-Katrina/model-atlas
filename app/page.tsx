@@ -460,7 +460,7 @@ function DecoderDiagram({type,g,active,expanded,onExpand,onHover,onLeave,onSelec
 /* eslint-enable react-hooks/static-components */
 
 function LayerNavigator({type,onChange}:{type:LayerType;onChange:(type:LayerType)=>void}){
-  return <div className="layer-nav layer-type-nav"><div className="layer-nav-head"><div><span>DECODER LAYER TYPE</span><b>{type==="dense"?"GQA + MLP":"Sparse GQA + MoE"}</b><small>{type==="dense"?"Dense GQA · SwiGLU MLP":"Indexer Attention · Top-4 MoE"}</small></div></div><div className="layer-type-options"><button className={type==="dense"?"active dense":"dense"} onClick={()=>onChange("dense")}><span>L0–L2</span><b>GQA + MLP</b><small>3 层共享同一实现</small></button><button className={type==="sparse"?"active sparse":"sparse"} onClick={()=>onChange("sparse")}><span>L3–L59</span><b>Sparse GQA + Top-4 MoE</b><small>57 层共享同一实现</small></button></div></div>;
+  return <div className="layer-nav layer-type-nav"><div className="layer-nav-head"><b>{type==="dense"?"GQA + MLP":"Sparse GQA + MoE"}</b></div><div className="layer-type-options"><button className={type==="dense"?"active dense":"dense"} onClick={()=>onChange("dense")}><span>L0–L2</span><b>GQA + MLP</b><small>3 层共享同一实现</small></button><button className={type==="sparse"?"active sparse":"sparse"} onClick={()=>onChange("sparse")}><span>L3–L59</span><b>Sparse GQA + Top-4 MoE</b><small>57 层共享同一实现</small></button></div></div>;
 }
 
 function LatexFormula({node}:{node:OpNode}){
