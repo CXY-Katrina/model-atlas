@@ -38,8 +38,9 @@ test("server-renders the MiniMax-M3 architecture workbench", async () => {
   assert.match(html, /edd4c81/);
   assert.match(html, /模型总参数量/);
   assert.match(html, /每 token 激活参数/);
-  assert.match(html, /Sparse GQA \+ Top-4 MoE/);
-  assert.match(html, /Sparse GQA \+ Indexer/);
+  assert.match(html, /MSA \+ Top-4 MoE/);
+  assert.match(html, />MSA</);
+  assert.doesNotMatch(html, /Sparse GQA/i);
   assert.match(html, /Top-4 MoE \+ Shared Expert/);
   assert.match(html, /L3–L59/);
   assert.match(html, /57 层共享同一实现/);
