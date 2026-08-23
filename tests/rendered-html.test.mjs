@@ -157,7 +157,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.decoder-node-graph/);
   assert.match(css, /\.decoder-node-graph>\.input-weighted-op\{[^}]*row-gap:clamp\(18px,2\.4vh,28px\)/);
   assert.match(css, /\.decoder-column\{[^}]*width:min\(680px,96%\)/);
-  assert.match(css, /\.decoder-node-graph \.co-input-row\{[^}]*minmax\(250px,1\.12fr\)/);
+  assert.match(css, /\.decoder-node-graph \.co-input-row\{[^}]*grid-template-columns:max-content max-content/);
+  assert.match(css, /\.decoder-node-graph \.co-input-row>\.tensor-node\{[^}]*width:max-content/);
+  assert.doesNotMatch(css, /\.decoder-node-graph>\.tensor-node\{[^}]*min-width:260px/);
   assert.match(css, /\.decoder-node-graph>\.stage-summary\{[^}]*width:max-content/);
   assert.match(css, /\.connected-attention-graph/);
   assert.match(css, /\.mlp-node-graph/);
