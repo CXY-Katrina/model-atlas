@@ -53,7 +53,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /简化 LATEX/);
   assert.match(source, /operatorname\{TopK\}_4/);
   assert.match(source, /theta_\{p,j\}/);
-  assert.match(source, /权重名称为什么与代码不同/);
+  assert.doesNotMatch(source, /权重名称为什么与代码不同/);
   assert.match(source, /SiluAndMulWithClamp/);
   assert.match(source, /self\.act_fn/);
   assert.match(source, /forward_native/);
@@ -117,6 +117,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /Nₕ\/TP/);
   assert.match(source, /E\/EP/);
   assert.match(source, /完整 config\.json/);
+  assert.match(source, /CONFIG_SYMBOLS/);
+  assert.match(source, /<th>参数<\/th><th>符号<\/th><th>值<\/th>/);
+  assert.doesNotMatch(source, /Shape · TP \/ EP/);
   assert.match(source, /sparse_attention_config/);
   assert.match(source, /vision_segment_max_frames/);
   assert.match(source, /image_grid_pinpoints/);

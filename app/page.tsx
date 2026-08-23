@@ -48,6 +48,66 @@ const CONFIG_GROUPS = [
   ]},
 ] as const;
 
+const CONFIG_SYMBOLS: Record<string,string> = {
+  "顶层多模态配置:image_seq_length":"S_img",
+  "顶层多模态配置:image_token_index":"t_img",
+  "顶层多模态配置:video_token_index":"t_video",
+  "顶层多模态配置:multimodal_projector_bias":"b_proj",
+  "顶层多模态配置:num_reward_heads":"N_reward",
+  "顶层多模态配置:projector_hidden_act":"φ_proj",
+  "顶层多模态配置:projector_hidden_size":"H",
+  "顶层多模态配置:vision_feature_layer":"L_feature",
+  "text_config:hidden_size":"H",
+  "text_config:intermediate_size":"H_expert",
+  "text_config:dense_intermediate_size":"H_dense",
+  "text_config:shared_intermediate_size":"H_shared",
+  "text_config:num_hidden_layers":"L",
+  "text_config:num_attention_heads":"Nₕ",
+  "text_config:num_key_value_heads":"Nₖᵥ",
+  "text_config:head_dim":"Dₕ",
+  "text_config:vocab_size":"V",
+  "text_config:max_position_embeddings":"S_max",
+  "text_config:rms_norm_eps":"ε_rms",
+  "text_config:rope_theta":"θ_base",
+  "text_config:rotary_dim":"Dᵣ",
+  "text_config:partial_rotary_factor":"Dᵣ/Dₕ",
+  "text_config:num_local_experts":"E",
+  "text_config:num_experts_per_tok":"K",
+  "text_config:n_shared_experts":"E_shared",
+  "text_config:num_mtp_modules":"N_mtp",
+  "text_config:num_nextn_predict_layers":"L_mtp",
+  "text_config:swiglu_alpha":"α",
+  "text_config:swiglu_limit":"c",
+  "text_config:routed_scaling_factor":"s_route",
+  "text_config.sparse_attention_config:sparse_index_dim":"D_idx",
+  "text_config.sparse_attention_config:sparse_num_index_heads":"N_idx",
+  "text_config.sparse_attention_config:sparse_topk_blocks":"K_block",
+  "text_config.sparse_attention_config:sparse_block_size":"B_block",
+  "text_config.sparse_attention_config:sparse_init_block":"B_init",
+  "text_config.sparse_attention_config:sparse_local_block":"B_local",
+  "vision_config:hidden_size":"Hᵥ",
+  "vision_config:num_attention_heads":"Nₕᵥ",
+  "vision_config:num_hidden_layers":"Lᵥ",
+  "vision_config:intermediate_size":"H_ffnᵥ",
+  "vision_config:patch_size":"P",
+  "vision_config:image_size":"R",
+  "vision_config:projection_dim":"H",
+  "vision_config:rope_theta":"θᵥ",
+  "vision_config:attention_dropout":"p_attn",
+  "vision_config:initializer_factor":"s_init",
+  "vision_config:initializer_range":"σ_init",
+  "vision_config:layer_norm_eps":"ε_ln",
+  "vision_config:num_channels":"C",
+  "vision_config:vocab_size":"Vᵥ",
+  "vision_config:vision_segment_max_frames":"F_max",
+  "图像 token 压缩（顶层与 vision_config 内相同）:spatial_merge_size":"Mₛ",
+  "图像 token 压缩（顶层与 vision_config 内相同）:temporal_patch_size":"Pₜ",
+};
+
+function configSymbol(group:string,key:string){
+  return CONFIG_SYMBOLS[`${group}:${key}`]??"—";
+}
+
 const SIMPLE_FORMULA: Partial<Record<OpKind,string>> = {
   norm:String.raw`y=\operatorname{Norm}(x)`,linear:String.raw`y=xW^{\mathsf T}`,split:String.raw`(a,b,\ldots)=\operatorname{Split}(x)`,rope:String.raw`q'=\operatorname{RoPE}(q,\mathrm{position})`,matmul:String.raw`y=a\,b^{\mathsf T}`,scale:String.raw`y=x/\sqrt{d_h}`,mask:String.raw`y=x+\mathrm{mask}`,softmax:String.raw`p=\operatorname{softmax}(x)`,activation:String.raw`y=g\,\sigma(1.702g)\,(u+1)`,route:String.raw`I=\operatorname{TopK}(\mathrm{score}(x))`,cache:String.raw`\mathrm{KV}[\mathrm{slot}]\leftarrow(K,V)`,add:String.raw`y=x+f(x)`,io:String.raw`y=x`,
 };
@@ -518,9 +578,7 @@ function DetailPanel({node,tab,setTab,pinned,onClear}:{node:OpNode|null;tab:Tab;
 }
 
 function HelpModal({onClose}:{onClose:()=>void}){
-  const [section,setSection]=useState<"shape"|"config">("shape");
-  const symbols=[["B","batch size"],["S","本轮 query 长度"],["T","含历史 cache 的 KV 长度"],["Nq","本轮全部 query tokens"],["H","hidden_size = 6144"],["Nₕ","query heads = 64"],["Nₖᵥ","KV heads = 4"],["Dₕ","head_dim = 128"],["Dᵣ","rotary_dim = 64"],["H_dense","dense FFN = 12288"],["H_expert","expert FFN = 3072"],["E","routed experts = 128"],["K","experts per token = 4"],["N_idx","index heads = 4"],["D_idx","index dim = 128"],["K_block","selected blocks = 16"],["TP","tensor parallel size"],["EP","expert parallel size"],["V","vocab_size = 200064"]];
-  return <div className="modal-backdrop" onMouseDown={onClose}><section className="help-modal reference-modal" onMouseDown={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label="模型参数与 Shape Reference"><header><div><span>REFERENCE</span><h2>模型参数与 Shape Reference</h2></div><button onClick={onClose} aria-label="关闭">×</button></header><nav className="reference-tabs"><button className={section==="shape"?"active":""} onClick={()=>setSection("shape")}>Shape · TP / EP</button><button className={section==="config"?"active":""} onClick={()=>setSection("config")}>完整 config.json</button></nav>{section==="shape"?<div className="reference-shape"><section><h3>Shape 符号</h3><div className="symbol-grid">{symbols.map(([symbol,meaning])=><div key={symbol}><b>{symbol}</b><span>{meaning}</span></div>)}</div></section><section><h3>全局 shape 与单 rank shape</h3><div className="parallel-examples"><div><code>Q: [B,Nₕ,S,Dₕ]</code><span>→ TP rank: [B,Nₕ/TP,S,Dₕ]</span></div><div><code>K/V: [B,Nₖᵥ,T,Dₕ]</code><span>→ Nₖᵥ/TP；TP 较大时可复制 KV heads</span></div><div><code>Routed experts: E=128</code><span>→ 每个 EP rank 约持有 E/EP 个 experts</span></div><div><code>Dense / shared MLP</code><span>→ 中间维按 TP 切分；不按 EP 路由</span></div></div></section><section><h3>权重名称为什么与代码不同？</h3><p className="reference-copy">权重文件保存的是训练时参数名；vLLM 为减少 kernel 次数，会把多个权重装载到一个运行时模块。它们数值一一对应，只是存储名称与执行模块名称不同。</p><div className="mapping-table"><div><code>q_proj · k_proj · v_proj</code><span>装载为</span><b>qkv_proj</b></div><div><code>gate_proj · up_proj</code><span>装载为</span><b>gate_up_proj</b></div><div><code>experts.w1 · w3</code><span>装载为</span><b>FusedMoE w13</b></div></div></section></div>:<div className="config-reference">{CONFIG_GROUPS.map(group=><section key={group.title}><h3>{group.title}</h3><table><tbody>{group.rows.map(([key,value])=><tr key={key}><th>{key}</th><td>{value}</td></tr>)}</tbody></table></section>)}</div>}</section></div>;
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="help-modal reference-modal" onMouseDown={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label="完整 config.json 参数与符号"><header><div><span>CONFIG REFERENCE</span><h2>完整 config.json · 参数与符号</h2></div><button onClick={onClose} aria-label="关闭">×</button></header><div className="config-reference">{CONFIG_GROUPS.map(group=><section key={group.title}><h3>{group.title}</h3><table><thead><tr><th>参数</th><th>符号</th><th>值</th></tr></thead><tbody>{group.rows.map(([key,value])=><tr key={key}><th scope="row">{key}</th><td className="config-symbol"><code>{configSymbol(group.title,key)}</code></td><td>{value}</td></tr>)}</tbody></table></section>)}</div></section></div>;
 }
 
 export default function Home(){
