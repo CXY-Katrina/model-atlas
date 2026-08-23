@@ -48,9 +48,9 @@ export function denseNodes(layer: number): Node[] {
   return [
     {
       id: "dense-norm", tone: "norm", kicker: `L${layer} · PRE-NORM`, title: "Gemma RMSNorm",
-      summary: "residual 为空时先保存 residual=hidden_states；否则先原地累加 residual+=hidden_states。随后对该 residual stream 执行带 (1+γ) 缩放的 Gemma RMSNorm。",
-      input: "hidden_states · residual?", inputShape: "[B,S,6144] · optional [B,S,6144]", output: "normalized · updated residual", outputShape: "[B,S,6144] ×2",
-      formula: "z = residual is None ? x : residual+x; y = z/√(mean(z²)+ε)⊙(1+γ)", formulaNote: "返回 normalized hidden_states；fused 分支同时返回原地更新后的 residual。ε=1e−6。",
+      summary: "图中 residual 沿旁路单独保留；此节点只对主分支 hidden_states 执行带 (1+γ) 缩放的 Gemma RMSNorm，并输出一个 normalized tensor。",
+      input: "hidden_states", inputShape: "[B,S,6144]", output: "normalized hidden_states", outputShape: "[B,S,6144]",
+      formula: "y = x/√(mean(x²)+ε)⊙(1+γ)", formulaNote: "图示把 residual add 与 Norm 拆开；vLLM 可在执行层融合 add + norm，但该节点的数学输出仍只有 normalized hidden_states。ε=1e−6。",
       runtime: "MiniMAXGemmaRMSNorm.forward → FlashInfer gemma_rmsnorm / gemma_fused_add_rmsnorm", source: "nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142", sourceUrl: MODEL,
       code: `if residual is None:\n    residual = hidden_states\n    hidden_states = self.input_layernorm(hidden_states)\nelse:\n    hidden_states, residual = self.input_layernorm(hidden_states, residual)`,
       weights: [{ key: key(layer,"input_layernorm.weight"), shape:"[6144]", dtype:"BF16", shard, params:"6,144" }],

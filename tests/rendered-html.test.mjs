@@ -67,6 +67,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /FLASHINFER_GEMMA_NORM_URL/);
   assert.match(source, /gemma_fused_add_rmsnorm\(x, residual/);
   assert.match(source, /node\.latex\?\?SIMPLE_FORMULA/);
+  assert.match(source, /图中 residual 沿旁路单独保留/);
+  assert.match(source, /output:\s*"normalized hidden_states", outputShape:\s*"\[B,S,6144\]"/);
+  assert.doesNotMatch(source, /output:"normalized · updated residual"|outputShape:"\[B,S,6144\] ×2"/);
   assert.match(source, /MergedColumnParallelLinear/);
   assert.match(source, /I\/O \+ 权重/);
   assert.match(source, /INPUT BINDINGS/);
