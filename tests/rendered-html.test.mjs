@@ -119,6 +119,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /完整 config\.json/);
   assert.match(source, /CONFIG_SYMBOLS/);
   assert.match(source, /<th>参数<\/th><th>符号<\/th><th>值<\/th>/);
+  assert.match(source, /className="config-tabs" role="tablist"/);
+  assert.match(source, /role="tabpanel"/);
   assert.doesNotMatch(source, /Shape · TP \/ EP/);
   assert.match(source, /sparse_attention_config/);
   assert.match(source, /vision_segment_max_frames/);
@@ -159,15 +161,19 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.mlp-node-graph/);
   assert.match(css, /\.moe-node-graph/);
   assert.match(css, /\.shape-rows/);
-  assert.match(css, /\.model-facts small\{[^}]*font-size:15px/);
-  assert.match(css, /\.tensor-node code\{font-size:15px/);
-  assert.match(css, /\.stage-zoom \.graph-surface \.tensor-node code\{font-size:15px/);
-  assert.match(css, /\.shape-rows code\{font:15px/);
-  assert.match(css, /\.model-overview \.model-step code\{font-size:15px/);
+  assert.match(css, /\.model-facts small\{[^}]*font-size:9px/);
+  assert.match(css, /\.tensor-node code\{font-size:9px/);
+  assert.match(css, /\.stage-zoom \.graph-surface \.tensor-node code\{font-size:9px/);
+  assert.match(css, /\.shape-rows code\{font:9px/);
+  assert.match(css, /\.model-overview \.model-step code\{font-size:9px/);
   const fixedPixelFontSizes = [...css.matchAll(/(?:font-size|font):(\d+(?:\.\d+)?)px/g)]
     .map((match) => Number(match[1]));
-  assert.ok(fixedPixelFontSizes.every((size) => size >= 15), "all fixed pixel font sizes should be at least 15px");
+  assert.ok(fixedPixelFontSizes.every((size) => size >= 9), "all fixed pixel font sizes should be at least 9px");
   assert.match(css, /\.config-reference/);
+  assert.match(css, /\.config-reference\{[^}]*overflow-x:hidden/);
+  assert.match(css, /\.config-reference table\{[^}]*table-layout:fixed/);
+  assert.match(css, /\.config-tabs\{[^}]*flex-wrap:wrap/);
+  assert.doesNotMatch(css, /font-weight:(?:750|800)/);
   assert.match(css, /\.detail-formula\{overflow:hidden/);
   assert.match(css, /\.unpin-button\{[^}]*width:28px[^}]*height:28px/);
   assert.doesNotMatch(css, /\.op-node\{[^}]*border-left/);
