@@ -92,6 +92,7 @@
 /* Keep the expanded-stage caption centered and the dense MLP graph horizontally compact. */
 .stage-zoom>header{align-items:center}.mlp-node-graph{width:min(600px,96%);gap:8px 6px;padding:8px 8px}
 .mlp-node-graph [data-graph-id="mlp-wdown"]{grid-area:9/5}
+.moe-node-graph [data-graph-id="moe-experts"]{grid-area:4/3}.moe-node-graph [data-graph-id="moe-routed"]{grid-area:5/3}
 .multiply-circle[aria-pressed="true"]{outline:2px solid #1f6c4d5c;border-color:var(--green)}
 
 /* Give evidence more room; symbolic and concrete shapes always use separate rows. */

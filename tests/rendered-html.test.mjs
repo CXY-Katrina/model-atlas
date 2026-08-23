@@ -150,7 +150,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.doesNotMatch(source, /title:"\+ MLP Residual"/);
   assert.doesNotMatch(page, /DECODER LAYER TYPE|Dense GQA · SwiGLU MLP|Indexer Attention · Top-4 MoE/);
   assert.match(source, /block_sparse_moe\.gate\.weight/);
-  assert.match(source, /block_sparse_moe\.experts\.\*\.\{w1,w3,w2\}\.weight/);
+  assert.match(source, /name="routed expert weights · w1\/w3\/w2"/);
   assert.match(source, /title:"Gemma RMSNorm"/);
   assert.match(source, /title:"Post-attn Gemma RMSNorm"/);
   assert.doesNotMatch(source, /title:"RMSNorm"/);
@@ -237,6 +237,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.multiply-circle\[aria-pressed="true"\]\{[^}]*outline:2px solid #1f6c4d5c[^}]*border-color:var\(--green\)/);
   assert.match(css, /\.mlp-node-graph \[data-graph-id="mlp-wdown"\]\{grid-area:9\/5\}/);
   assert.match(css, /\.moe-node-graph/);
+  assert.match(css, /\.moe-node-graph \[data-graph-id="moe-experts"\]\{grid-area:4\/3\}/);
   assert.match(css, /\.shape-rows/);
   assert.match(css, /\.shape-rows code\{[^}]*white-space:normal[^}]*overflow:visible[^}]*text-overflow:clip[^}]*overflow-wrap:anywhere/);
   assert.match(css, /@media\(min-width:1160px\)\{\.screen-grid\{grid-template-columns:minmax\(680px,1fr\) 460px\}\}/);
@@ -281,6 +282,10 @@ test("routes the MoE hidden tensor into the shared expert without crossing its w
     source,
     /\{from:"moe-u",to:"moe-shared",route:"side-right",fromPort:"right",toPort:"right"\}/,
   );
+  assert.match(source, /\{from:"moe-u",to:"moe-experts",toPort:"top-right"\}/);
+  assert.doesNotMatch(source, /\{from:"moe-u",to:"moe-experts",route:"side-left"/);
+  assert.match(source, /name="shared expert weights ×3" shape="gate \/ up \/ down"/);
+  assert.doesNotMatch(source, /name="block_sparse_moe\.shared_experts\.\{gate_proj,up_proj,down_proj\}\.weight"/);
 
   const edgeBlock = source.match(/const edges:GraphEdge\[\]=\[\s*\{from:"moe-u"([\s\S]*?)\n\s*\];/)?.[0] ?? "";
   const artifacts = new Set([
