@@ -3,62 +3,27 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import katex from "katex";
 
-async function render() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+test("builds a static GitHub Pages entry", async () => {
+  const [html, builtHtml, main, page] = await Promise.all([
+    readFile(new URL("../index.html", import.meta.url), "utf8"),
+    readFile(new URL("../dist/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../app/main.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+  ]);
 
-  return worker.fetch(
-    new Request("http://localhost/", {
-      headers: { accept: "text/html" },
-    }),
-    {
-      ASSETS: {
-        fetch: async () => new Response("Not found", { status: 404 }),
-      },
-    },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
-  );
-}
-
-test("server-renders the MiniMax-M3 architecture workbench", async () => {
-  const response = await render();
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-
-  const html = await response.text();
-  assert.match(html, /MiniMax-M3/);
-  assert.match(html, /模型结构概览/);
-  assert.match(html, /CODE ↗/);
-  assert.match(html, /WEIGHTS ↗/);
-  assert.match(html, /vLLM @/);
-  assert.match(html, /edd4c81/);
-  assert.match(html, /模型总参数量/);
-  assert.match(html, /每 token 激活参数/);
-  assert.match(html, /MSA \+ Top-4 MoE/);
-  assert.match(html, />MSA</);
-  assert.doesNotMatch(html, /Sparse GQA/i);
-  assert.match(html, /Top-4 MoE \+ Shared Expert/);
-  assert.match(html, /L3–L59/);
-  assert.match(html, /57 层共享同一实现/);
-  assert.match(html, /尚未选择模块/);
-  assert.match(html, /OPERATOR/);
-  assert.match(html, /TENSOR/);
-  assert.match(html, /EXTERNAL/);
-  assert.match(html, /WEIGHT/);
-  assert.match(html, /Text \/ Vision Inputs/);
-  assert.match(html, /Embedding Fusion/);
-  assert.match(html, /Final Gemma RMSNorm/);
-  assert.match(html, /LM Head/);
-  assert.doesNotMatch(html, /QKV \+ Index Projection/);
-  assert.doesNotMatch(html, /ATTENTION RUNTIME I\/O/);
-  assert.match(html, /查看参数和符号说明/);
+  assert.match(html, /<html lang="zh-CN">/);
+  assert.match(html, /<div id="root"><\/div>/);
+  assert.match(html, /Model Atlas · MiniMax-M3/);
   assert.match(html, /og-tensor-operator-map\.png/);
-  assert.doesNotMatch(html, /一屏看完整结构|ARCHITECTURE × CODE × WEIGHTS|hover 预览 · click 固定/);
-  assert.doesNotMatch(html, /Building your site|SkeletonPreview|codex-preview/);
+  assert.match(main, /createRoot/);
+  assert.match(main, /katex\/dist\/katex\.min\.css/);
+  assert.match(page, /MiniMax-M3/);
+  assert.match(page, /模型总参数量/);
+  assert.match(page, /Embedding Fusion/);
+  assert.match(page, /MSA \+ Top-4 MoE/);
+  assert.match(builtHtml, /\.\/assets\/index-[^"']+\.js/);
+  assert.match(builtHtml, /\.\/assets\/index-[^"']+\.css/);
+  assert.doesNotMatch(`${html}\n${builtHtml}\n${main}`, /_next|vinext|wrangler|cloudflare/i);
 });
 
 test("keeps code, checkpoint, formula, and shape evidence together", async () => {
@@ -190,10 +155,14 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.mlp-node-graph/);
   assert.match(css, /\.moe-node-graph/);
   assert.match(css, /\.shape-rows/);
-  assert.match(css, /\.tensor-node code\{font-size:6\.5px/);
-  assert.match(css, /\.stage-zoom \.graph-surface \.tensor-node code\{font-size:6\.5px/);
-  assert.match(css, /\.shape-rows code\{font:8\.5px/);
-  assert.match(css, /\.model-overview \.model-step code\{font-size:8px/);
+  assert.match(css, /\.model-facts small\{[^}]*font-size:15px/);
+  assert.match(css, /\.tensor-node code\{font-size:15px/);
+  assert.match(css, /\.stage-zoom \.graph-surface \.tensor-node code\{font-size:15px/);
+  assert.match(css, /\.shape-rows code\{font:15px/);
+  assert.match(css, /\.model-overview \.model-step code\{font-size:15px/);
+  const fixedPixelFontSizes = [...css.matchAll(/(?:font-size|font):(\d+(?:\.\d+)?)px/g)]
+    .map((match) => Number(match[1]));
+  assert.ok(fixedPixelFontSizes.every((size) => size >= 15), "all fixed pixel font sizes should be at least 15px");
   assert.match(css, /\.config-reference/);
   assert.match(css, /\.detail-formula\{overflow:hidden/);
   assert.match(css, /\.unpin-button\{[^}]*width:28px[^}]*height:28px/);

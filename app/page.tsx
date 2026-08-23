@@ -1,5 +1,3 @@
-"use client";
-
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import katex from "katex";
 import { routeGraphEdge } from "./graph-routing";
@@ -17,7 +15,7 @@ type OpNode = Node & { kind: OpKind; latex?: string; codeSections?: CodeSection[
 type LayerType = "dense" | "sparse";
 type ExpandedStage = "attention" | "ffn" | null;
 type EdgePort = "top" | "top-left" | "top-right" | "right" | "bottom" | "left";
-type GraphEdge = { from: string; to: string; fromPort?: EdgePort; toPort?: EdgePort; route?: "direct" | "side-left" | "side-right" };
+type GraphEdge = { from: string; to: string; fromPort?: EdgePort; toPort?: EdgePort; route?: "side-left" | "side-right" };
 
 const VLLM_COMMIT = "edd4c8176cfd98ece8a29beda574378c42971967";
 const CODE_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/models/minimax_m3/nvidia/model.py`;
@@ -531,7 +529,7 @@ export default function Home(){
   const updateDetail=(event:DetailEvent<OpNode>)=>setDetail(state=>nextDetailState(state,event));
   const changeLayerType=(next:LayerType)=>{setLayerType(next);setExpanded(null);updateDetail({type:"clear"})};
   return <main className={`atlas-app ${dark?"dark":""}`}><header className="app-header">
-    <div className="brand-lockup"><span className="brand-glyph"><i/><i/><i/></span><div><b>模型结构概览</b></div></div>
+    <div className="brand-lockup"><span className="brand-glyph"><i/><i/><i/></span><div><b>Model Atlas</b></div></div>
     <label className="model-select"><span>MODEL</span><select aria-label="选择模型" value="minimax-m3" onChange={()=>undefined}>{MODEL_REGISTRY.map(m=><option key={m.id} value={m.id} disabled={!m.enabled}>{m.name}</option>)}</select></label>
     <nav className="resource-links"><a href={CODE_URL} target="_blank" rel="noreferrer"><b>CODE ↗</b><small>vLLM @ {VLLM_COMMIT.slice(0,7)}</small></a><a href={WEIGHTS_URL} target="_blank" rel="noreferrer"><b>WEIGHTS ↗</b><small>Hugging Face · 59 shards</small></a></nav>
     <div className="model-facts"><span><b>428B</b><small>模型总参数量</small></span><span><b>23B</b><small>每 token 激活参数</small></span><span><b>1M</b><small>最大上下文 token</small></span><span><b>869 GB</b><small>BF16 checkpoint</small></span></div>
