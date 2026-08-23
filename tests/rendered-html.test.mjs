@@ -20,7 +20,8 @@ test("builds a static GitHub Pages entry", async () => {
   assert.match(page, /MiniMax-M3/);
   assert.match(page, /模型总参数量/);
   assert.match(page, /Embedding Fusion/);
-  assert.match(page, /MSA \+ Top-4 MoE/);
+  assert.match(page, /MiniMax Sparse Attention \+ Top-4 MoE/);
+  assert.doesNotMatch(page, /Top-16 blocks · causal mask · KV cache|Routed 与 Shared 两路并行|Gate \/ Up 并行 → ⊙ → Down/);
   assert.match(builtHtml, /\.\/assets\/index-[^"']+\.js/);
   assert.match(builtHtml, /\.\/assets\/index-[^"']+\.css/);
   assert.doesNotMatch(`${html}\n${builtHtml}\n${main}`, /_next|vinext|wrangler|cloudflare/i);
