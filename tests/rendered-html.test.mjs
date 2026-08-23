@@ -197,6 +197,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.layer-type-options button\{[^}]*align-content:center/);
   assert.match(css, /\.decoder-workbench\.has-zoom\{[^}]*grid-template-columns:minmax\(440px,\.85fr\) minmax\(0,2fr\)/);
   assert.match(css, /\.stage-zoom/);
+  assert.match(css, /\.stage-zoom>header\{align-items:center\}/);
   assert.match(css, /\.parallel-experts/);
   assert.match(css, /\.add-circle/);
   assert.match(css, /\.weighted-op/);
@@ -216,7 +217,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.decoder-node-graph>\.stage-summary\{[^}]*width:max-content/);
   assert.match(css, /\.connected-attention-graph/);
   assert.match(css, /\.mlp-node-graph/);
-  assert.match(css, /\.mlp-node-graph\{[^}]*width:min\(850px,96%\)[^}]*grid-template-rows:repeat\(10,minmax\(32px,1fr\)\)[^}]*gap:8px 14px/);
+  assert.match(css, /\.mlp-node-graph\{width:min\(700px,96%\);gap:8px 10px;padding:8px 10px\}/);
   assert.match(css, /\.mlp-node-graph>\[data-graph-id\]\{[^}]*width:max-content[^}]*max-width:260px/);
   assert.match(css, /\.stage-overview-panel\{grid-template-rows:auto minmax\(0,1fr\) 28px\}/);
   assert.match(css, /\.stage-formula-section code\{white-space:pre-line\}/);
@@ -224,6 +225,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.moe-node-graph/);
   assert.match(css, /\.shape-rows/);
   assert.match(css, /\.shape-rows code\{[^}]*white-space:normal[^}]*overflow:visible[^}]*text-overflow:clip[^}]*overflow-wrap:anywhere/);
+  assert.match(css, /@media\(min-width:1160px\)\{\.screen-grid\{grid-template-columns:minmax\(680px,1fr\) 460px\}\}/);
+  assert.match(css, /\.binding,\.output-binding article\{container-type:inline-size\}/);
+  assert.match(css, /@container \(max-width:430px\)\{\.shape-rows\{grid-template-columns:1fr\}\}/);
   assert.match(css, /\.model-facts small\{[^}]*font-size:12px/);
   assert.match(css, /\.tensor-node code\{font-size:12px/);
   assert.match(css, /\.stage-zoom \.graph-surface \.tensor-node code\{font-size:12px/);
