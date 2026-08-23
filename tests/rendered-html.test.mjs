@@ -78,7 +78,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /尚未选择模块/);
   assert.match(source, /LayerType/);
   assert.match(source, /const active=detail\.pinned\?\?detail\.hovered/);
-  assert.match(page, /aria-label="取消固定"[^>]*>❌<\/button>/);
+  assert.match(page, /aria-label="取消固定"[^>]*>×<\/button>/);
   assert.doesNotMatch(page, /已固定 · 取消/);
   assert.match(source, /onPointerDown=\{\(\)=>onSelect\(node\)\}/);
   assert.match(source, /nextDetailState/);
@@ -118,8 +118,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /L3–L59/);
   assert.match(source, /同一个 Û 同时进入 Router、Routed Experts 与 Shared Expert/);
   assert.match(source, /symbolicShape/);
-  assert.match(source, /Nₕ\/TP/);
-  assert.match(source, /E\/EP/);
+  assert.doesNotMatch(source, /CURRENT OPERATOR|className=\{`io-operator/);
+  assert.match(source, /<i>SHAPE<\/i><code title=\{shape\}>/);
   assert.match(source, /完整 config\.json/);
   assert.match(source, /CONFIG_SYMBOLS/);
   assert.match(source, /<th>参数<\/th><th>符号<\/th><th>值<\/th>/);

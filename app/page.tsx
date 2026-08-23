@@ -531,20 +531,8 @@ function symbolicShape(shape:string){
   return shape.replaceAll("[B,64,S,128]","[B,Nₕ,S,Dₕ]").replaceAll("[B,64,S,T]","[B,Nₕ,S,T]").replaceAll("[B,4,S,128]","[B,Nₖᵥ,S,Dₕ]").replaceAll("[B,4,T,128]","[B,Nₖᵥ,T,Dₕ]").replaceAll("[B,S,12288]","[B,S,H_dense]").replaceAll("[B,S,6144]","[B,S,H]").replaceAll("[B,S,8192]","[B,S,Nₕ·Dₕ]").replaceAll("[B,S,9216]","[B,S,(Nₕ+2Nₖᵥ)·Dₕ]").replaceAll("[B,S,9856]","[B,S,QKV+Index]").replaceAll("200064","V");
 }
 
-function localShape(shape:string,node:OpNode,binding?:IoBinding){
-  if(binding?.kind==="weight"){
-    if(binding.label.includes("experts."))return `${shape} · 每个 EP rank 约持有 E/EP 个 experts`;
-    if(binding.label.includes("q_proj")||binding.label.includes("gate_proj")||binding.label.includes("up_proj"))return `${shape} · 输出维按 TP 切分`;
-    if(binding.label.includes("o_proj")||binding.label.includes("down_proj"))return `${shape} · 输入维按 TP 切分`;
-  }
-  if(/Q|heads|q_proj|8192|64/.test(`${binding?.label??""} ${shape}`))return `${shape} · 本 rank 使用 Nₕ/TP 个 Q heads`;
-  if(/K|V|kv|512/.test(`${binding?.label??""} ${shape}`))return `${shape} · 逻辑上 Nₖᵥ/TP；TP>Nₖᵥ 时可复制 KV heads`;
-  if(node.id==="s-experts"||node.id==="s-router")return `${shape} · E/EP 个专家由本 EP rank 持有`;
-  return `${shape} · TP/EP 不改变逻辑全局 shape`;
-}
-
-function ShapeRows({shape,node,binding}:{shape:string;node:OpNode;binding?:IoBinding}){
-  return <div className="shape-rows"><span><i>符号</i><code>{symbolicShape(shape)}</code></span><span><i>全局实际</i><code>{shape}</code></span><span><i>并行局部</i><code>{localShape(shape,node,binding)}</code></span></div>;
+function ShapeRows({shape}:{shape:string}){
+  return <div className="shape-rows"><span><i>SHAPE</i><code title={shape}>{symbolicShape(shape)}</code></span></div>;
 }
 
 function bindingsFor(node:OpNode):IoBinding[]{
@@ -556,7 +544,7 @@ function bindingsFor(node:OpNode):IoBinding[]{
 function IoView({node}:{node:OpNode}){
   const bindings=bindingsFor(node);
   const labels:Record<BindingKind,string>={upstream:"上游张量",external:"外部输入",weight:"权重输入"};
-  return <div className="io-binding-view"><section className="binding-list"><header><span>INPUT BINDINGS</span><b>{bindings.length} 路输入</b></header>{bindings.map((binding,index)=><article className={`binding binding-${binding.kind}`} key={`${binding.kind}-${binding.label}-${index}`}><div><span>{labels[binding.kind]}</span></div><b>{binding.label}</b><ShapeRows shape={binding.shape} node={node} binding={binding}/><p><i>来自</i>{binding.from}</p>{binding.note&&<small>{binding.note}</small>}</article>)}</section><div className={`io-operator op-${node.kind}`}><span>CURRENT OPERATOR</span><b>{node.title}</b><code>{node.runtime}</code></div><section className="output-binding"><header><span>OUTPUT BINDING</span><b>1 路产物</b></header><article><div><span>计算产物</span></div><b>{node.output}</b><ShapeRows shape={node.outputShape} node={node}/><p><i>送往</i>{NEXT_BY_ID[node.id]??"图中下游模块"}</p></article></section></div>;
+  return <div className="io-binding-view"><section className="binding-list"><header><span>INPUT BINDINGS</span><b>{bindings.length} 路输入</b></header>{bindings.map((binding,index)=><article className={`binding binding-${binding.kind}`} key={`${binding.kind}-${binding.label}-${index}`}><div><span>{labels[binding.kind]}</span></div><b>{binding.label}</b><ShapeRows shape={binding.shape}/><p><i>来自</i>{binding.from}</p>{binding.note&&<small>{binding.note}</small>}</article>)}</section><section className="output-binding"><header><span>OUTPUT BINDING</span><b>1 路产物</b></header><article><div><span>计算产物</span></div><b>{node.output}</b><ShapeRows shape={node.outputShape}/><p><i>送往</i>{NEXT_BY_ID[node.id]??"图中下游模块"}</p></article></section></div>;
 }
 
 function CodeView({node}:{node:OpNode}){
@@ -570,7 +558,7 @@ function CodeView({node}:{node:OpNode}){
 function DetailPanel({node,tab,setTab,pinned,onClear}:{node:OpNode|null;tab:Tab;setTab:(t:Tab)=>void;pinned:boolean;onClear:()=>void}){
   const tabs:[Tab,string][]=[["io","I/O + 权重"],["formula","公式"],["code","代码"]];
   if(!node)return <aside className="detail-panel detail-empty"><div><span>MODULE DETAIL</span><b>尚未选择模块</b><p>点击左侧任一运算模块后，可在这里查看固定的 I/O、权重、公式和 forward 代码。</p></div></aside>;
-  return <aside className="detail-panel"><header className="detail-header"><div><span>{node.kicker}</span><h2>{node.title}</h2></div>{pinned?<button className="unpin-button" aria-label="取消固定" title="取消固定" onClick={onClear}>❌</button>:<i className={`kind-dot op-${node.kind}`}/>}<p>{node.summary}</p><code>{node.runtime}</code></header><div className="detail-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div><div className={`detail-content detail-${tab}`}>
+  return <aside className="detail-panel"><header className="detail-header"><div><span>{node.kicker}</span><h2>{node.title}</h2></div>{pinned?<button className="unpin-button" aria-label="取消固定" title="取消固定" onClick={onClear}>×</button>:<i className={`kind-dot op-${node.kind}`}/>}<p>{node.summary}</p><code>{node.runtime}</code></header><div className="detail-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div><div className={`detail-content detail-${tab}`}>
     {tab==="io"&&<IoView node={node}/>}
     {tab==="formula"&&<div className="formula-view"><span>作用</span><div className="formula-purpose">{node.summary}</div><span>简化 LATEX</span><LatexFormula node={node}/><div className="formula-implementation"><b>一句话解释</b><p>{FORMULA_NOTE[node.kind]??node.formulaNote}</p></div><div className="formula-terms"><span><b>x / a / b</b>输入张量</span><span><b>y / p</b>输出张量</span><span><b>W</b>权重矩阵</span><span><b>dₕ</b>head_dim = 128</span></div></div>}
     {tab==="code"&&<CodeView node={node}/>}
