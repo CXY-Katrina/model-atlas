@@ -22,6 +22,9 @@ const CODE_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/
 const WEIGHTS_URL = "https://huggingface.co/MiniMaxAI/MiniMax-M3";
 const RUNNER_URL = "https://github.com/vllm-project/vllm/blob/main/vllm/v1/worker/gpu_model_runner.py";
 const ACTIVATION_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/model_executor/layers/activation.py`;
+const NORM_FORWARD_URL = `${CODE_URL}#L130-L142`;
+const DECODER_FORWARD_URL = `${CODE_URL}#L752-L778`;
+const FLASHINFER_GEMMA_NORM_URL = "https://docs.flashinfer.ai/generated/flashinfer.norm.gemma_rmsnorm.html";
 
 const MODEL_REGISTRY = [
   { id: "minimax-m3", name: "MiniMax-M3", enabled: true },
@@ -123,7 +126,7 @@ const LATEX_BY_ID: Record<string,string> = {
   "s-attnmeta":String.raw`\begin{aligned}q_b&=\mathrm{query\_start\_loc}_{b+1}-\mathrm{query\_start\_loc}_b\\c_b&=\mathrm{seq\_len}_b-q_b\\M_{b,i,j}&=\begin{cases}0,&0\le j\le c_b+i\\-\infty,&\text{otherwise}\end{cases}\end{aligned}`,
   "d-slots":String.raw`\begin{aligned}\ell&=\left\lfloor p/\mathrm{block\_size}\right\rfloor,\quad o=p\bmod \mathrm{block\_size}\\b_{\mathrm{phys}}&=\mathrm{block\_table}[r,\ell]\\\mathrm{slot}(r,p)&=b_{\mathrm{phys}}\cdot\mathrm{block\_size}+o\end{aligned}`,
   "s-slots":String.raw`\begin{aligned}\ell&=\left\lfloor p/\mathrm{block\_size}\right\rfloor,\quad o=p\bmod \mathrm{block\_size}\\b_{\mathrm{phys}}&=\mathrm{block\_table}[r,\ell]\\\mathrm{slot}(r,p)&=b_{\mathrm{phys}}\cdot\mathrm{block\_size}+o\end{aligned}`,
-  "d-norm":String.raw`\begin{aligned}\operatorname{rms}(x)&=\sqrt{\frac1{6144}\sum_{j=1}^{6144}x_j^2+\varepsilon}\\\hat x_j&=\frac{x_j}{\operatorname{rms}(x)}(1+\gamma_j),\qquad \varepsilon=10^{-6}\end{aligned}`,
+  "d-norm":String.raw`\begin{aligned}z&=\begin{cases}x,&r=\varnothing\\r+x,&r\ne\varnothing\end{cases},\qquad r'=z\\\operatorname{RMS}(z)&=\sqrt{\frac1H\sum_{j=1}^{H}z_j^2+\varepsilon}\\y_i&=\frac{z_i}{\operatorname{RMS}(z)}(1+\gamma_i),\qquad \varepsilon=10^{-6}\\\operatorname{return}&\ (y,r')\end{aligned}`,
   "d-qkv":String.raw`\begin{aligned}Z&=\hat X\,[W_Q^\top\mid W_K^\top\mid W_V^\top]\\Z&\in\mathbb R^{B\times S\times(8192+512+512)}\end{aligned}`,
   "d-split":String.raw`\begin{aligned}Q&=Z_{:,:,0:8192}\in\mathbb R^{B\times64\times S\times128}\\K&=Z_{:,:,8192:8704}\in\mathbb R^{B\times4\times S\times128}\\V&=Z_{:,:,8704:9216}\in\mathbb R^{B\times4\times S\times128}\end{aligned}`,
   "d-qnorm":String.raw`\tilde Q_{b,h,s,:}=\frac{Q_{b,h,s,:}}{\sqrt{\frac1{128}\lVert Q_{b,h,s,:}\rVert_2^2+\varepsilon}}\odot(1+\gamma_Q)`,
@@ -138,12 +141,13 @@ const LATEX_BY_ID: Record<string,string> = {
   "d-pv":String.raw`O_{b,h,i,m}=\sum_{j=0}^{T-1}P_{b,h,i,j}\,V_{b,\lfloor h/16\rfloor,j,m}`,
   "d-oproj":String.raw`Y_{\mathrm{attn}}=\operatorname{Concat}_{h=1}^{64}(O_h)W_O^\top\in\mathbb R^{B\times S\times6144}`,
   "d-add1":String.raw`U=X_l+Y_{\mathrm{attn}}`,
-  "d-postnorm":String.raw`\hat U=\operatorname{RMSNorm}(U)=\frac{U}{\sqrt{\operatorname{mean}(U^2)+\varepsilon}}\odot(1+\gamma_{\mathrm{post}})`,
+  "d-postnorm":String.raw`\begin{aligned}U&=X_l+Y_{\mathrm{attn}}\\\operatorname{RMS}(U)&=\sqrt{\frac1H\sum_{j=1}^{H}U_j^2+\varepsilon}\\\hat U_i&=\frac{U_i}{\operatorname{RMS}(U)}(1+\gamma_{\mathrm{post},i})\end{aligned}`,
   "d-gateup":String.raw`\begin{aligned}G&=\hat U W_{\mathrm{gate}}^\top\\R&=\hat U W_{\mathrm{up}}^\top,\qquad G,R\in\mathbb R^{B\times S\times12288}\end{aligned}`,
   "d-swiglu":String.raw`\begin{aligned}\bar G&=\min(G,7),\qquad \bar U=\operatorname{clip}(U,-7,7)\\H&=\bar G\odot\sigma(1.702\,\bar G)\odot(\bar U+1)\end{aligned}`,
   "d-down":String.raw`Y_{\mathrm{ffn}}=HW_{\mathrm{down}}^\top\in\mathbb R^{B\times S\times6144}`,
   "d-add2":String.raw`X_{l+1}=U+Y_{\mathrm{ffn}}`,
-  "s-norm":String.raw`\hat X=\frac{X}{\sqrt{\operatorname{mean}(X^2)+\varepsilon}}\odot(1+\gamma),\qquad\varepsilon=10^{-6}`,
+  "s-norm":String.raw`\begin{aligned}z&=\begin{cases}x,&r=\varnothing\\r+x,&r\ne\varnothing\end{cases},\qquad r'=z\\\operatorname{RMS}(z)&=\sqrt{\frac1H\sum_{j=1}^{H}z_j^2+\varepsilon}\\y_i&=\frac{z_i}{\operatorname{RMS}(z)}(1+\gamma_i),\qquad \varepsilon=10^{-6}\\\operatorname{return}&\ (y,r')\end{aligned}`,
+  "s-postnorm":String.raw`\begin{aligned}U&=X_l+Y_{\mathrm{attn}}\\\operatorname{RMS}(U)&=\sqrt{\frac1H\sum_{j=1}^{H}U_j^2+\varepsilon}\\\hat U_i&=\frac{U_i}{\operatorname{RMS}(U)}(1+\gamma_{\mathrm{post},i})\end{aligned}`,
   "s-packed":String.raw`Z=\hat X[W_Q^\top\mid W_K^\top\mid W_V^\top\mid W_{Q_i}^\top\mid W_{K_i}^\top]\in\mathbb R^{B\times S\times9856}`,
   "s-split":String.raw`Z\longrightarrow(Q_{8192},K_{512},V_{512},Q^{\mathrm{idx}}_{512},K^{\mathrm{idx}}_{128})`,
   "s-idxnorm":String.raw`\tilde Q^{\mathrm{idx}}=\operatorname{RMSNorm}(Q^{\mathrm{idx}}),\qquad\tilde K^{\mathrm{idx}}=\operatorname{RMSNorm}(K^{\mathrm{idx}})`,
@@ -167,6 +171,35 @@ const LATEX_BY_ID: Record<string,string> = {
   "s-sum":String.raw`Y_{\mathrm{moe}}=\sum_{e\in\mathcal E}\hat w_eE_e(U)+E_{\mathrm{shared}}(U)`,
   "s-addout":String.raw`X_{l+1}=U+Y_{\mathrm{moe}}`,
 };
+
+const NORM_SECTIONS: CodeSection[] = [
+  {stage:"1 · FORWARD",title:"MiniMAXGemmaRMSNorm.forward：选择普通或 fused kernel",location:"nvidia/model.py · L130–142",url:NORM_FORWARD_URL,code:`def forward(self, x, residual=None):
+    from flashinfer.norm import gemma_fused_add_rmsnorm, gemma_rmsnorm
+    if residual is None:
+        return gemma_rmsnorm(x, self.weight, self.variance_epsilon)
+    # mutates x and residual in place
+    gemma_fused_add_rmsnorm(x, residual, self.weight, self.variance_epsilon)
+    return x, residual`},
+  {stage:"2 · RESIDUAL",title:"MiniMaxM3DecoderLayer.forward：residual 的创建与更新位置",location:"nvidia/model.py · L752–778",url:DECODER_FORWARD_URL,code:`if residual is None:
+    residual = hidden_states
+    hidden_states = self.input_layernorm(hidden_states)
+else:
+    hidden_states, residual = self.input_layernorm(hidden_states, residual)
+
+hidden_states = self.self_attn(...)
+hidden_states, residual = fused_allreduce_gemma_rms_norm(
+    hidden_states, residual, self.post_attention_layernorm
+)`},
+  {stage:"3 · ENTER",title:"FlashInfer gemma_rmsnorm：kernel 的实际数学定义",location:"flashinfer.norm.gemma_rmsnorm",url:FLASHINFER_GEMMA_NORM_URL,code:`RMS(x) = sqrt(mean(x²) + eps)
+out[i] = (x[i] / RMS(x)) * (weight[i] + 1)`},
+];
+
+const NORM_SYMBOLS: CodeSymbol[] = [
+  {symbol:"x / hidden_states",resolvesTo:"待归一化分支",meaning:"首个分支直接归一化 x；fused 分支先把 x 加入 residual。"},
+  {symbol:"residual",resolvesTo:"残差累加器 r′",meaning:"首次为空时保存当前 hidden_states；后续 fused 调用原地更新为 residual + x。"},
+  {symbol:"self.weight",resolvesTo:"γ",meaning:"checkpoint 保存 γ；Gemma kernel 实际使用 γ+1 作为逐元素缩放。"},
+  {symbol:"self.variance_epsilon",resolvesTo:"ε=10⁻⁶",meaning:"计算 RMS 时用于数值稳定。"},
+];
 
 const MLP_SECTIONS: CodeSection[] = [
   {stage:"2 · CALL",title:"MiniMaxM3MLP.forward：调用顺序",location:"nvidia/model.py · L165–171",url:`${CODE_URL}#L165-L171`,code:`def forward(self, x):
@@ -237,11 +270,16 @@ const MOE_SYMBOLS: CodeSymbol[] = [
 ];
 
 const CODE_BY_ID: Record<string, CodeDetail> = {};
+for(const id of ["d-norm","d-postnorm","s-norm","s-postnorm"]) CODE_BY_ID[id]={sections:NORM_SECTIONS,symbols:NORM_SYMBOLS};
 for(const id of ["d-gateup","d-swiglu","d-down","s-shared"]) CODE_BY_ID[id]={sections:MLP_SECTIONS,symbols:MLP_SYMBOLS};
 for(const id of ["d-qkv","d-split","d-qnorm","d-knorm","d-ropeq","d-ropek","d-cache","d-qk","d-scale","d-mask","d-softmax","d-pv","d-oproj","s-packed","s-split","s-mainnorm","s-rope","s-cache","s-select","s-qk","s-scale","s-mask","s-softmax","s-pv","s-oproj"]) CODE_BY_ID[id]={sections:ATTENTION_SECTIONS,symbols:ATTENTION_SYMBOLS};
 for(const id of ["s-router","s-experts","s-shared","s-sum"]) CODE_BY_ID[id]={sections:id==="s-shared"?[...MOE_SECTIONS,...MLP_SECTIONS]:MOE_SECTIONS,symbols:id==="s-shared"?[...MOE_SYMBOLS,...MLP_SYMBOLS]:MOE_SYMBOLS};
 
 const INPUT_OVERRIDES: Record<string, IoBinding[]> = {
+  "d-norm":[{kind:"upstream",label:"hidden_states",shape:"[B,S,6144]",from:"当前 decoder layer 输入 / 前一层 FFN 输出"},{kind:"upstream",label:"residual（可为空）",shape:"optional [B,S,6144]",from:"残差累加器；为空时在 DecoderLayer.forward 中保存当前 hidden_states"}],
+  "s-norm":[{kind:"upstream",label:"hidden_states",shape:"[B,S,6144]",from:"当前 decoder layer 输入 / 前一层 FFN 输出"},{kind:"upstream",label:"residual（可为空）",shape:"optional [B,S,6144]",from:"残差累加器；非空时 fused kernel 原地执行 residual += hidden_states"}],
+  "d-postnorm":[{kind:"upstream",label:"Attention 输出 hidden_states",shape:"[B,S,6144]",from:"O Projection 输出"},{kind:"upstream",label:"residual stream Xₗ",shape:"[B,S,6144]",from:"input_layernorm 保留并持续更新的 residual"}],
+  "s-postnorm":[{kind:"upstream",label:"Sparse Attention 输出 hidden_states",shape:"[B,S,6144]",from:"O Projection 输出"},{kind:"upstream",label:"residual stream Xₗ",shape:"[B,S,6144]",from:"input_layernorm 保留并持续更新的 residual"}],
   "d-input":[{kind:"external",label:"Xₗ · hidden_states",shape:"[B,S,6144]",from:"上一 decoder layer；L0 时来自 embedding fusion"}],
   "s-input":[{kind:"external",label:"Xₗ · hidden_states",shape:"[B,S,6144]",from:"上一 decoder layer 输出"}],
   "d-position":[{kind:"external",label:"num_computed_tokens + query offsets",shape:"[B] + [Nq]",from:"vLLM GPUModelRunner 请求调度状态"}],
@@ -289,7 +327,7 @@ function denseGraph(layer: number): Record<string, OpNode> {
     position: cloneOp(attn,{id:"d-position",kind:"route",title:"Build Position IDs",kicker:"vLLM RUNTIME I/O",input:"num_computed_tokens + query offsets",inputShape:"[B] + [Nq]",output:"positions",outputShape:"[Nq]",formula:"position(req,i)=num_computed_tokens[req]+i",formulaNote:"positions 不是模型权重，也不是在 Attention 内凭空产生；由 vLLM runner 根据每个请求已计算 token 数和本轮 query 偏移生成。",source:"gpu_model_runner.py · _prepare_inputs",sourceUrl:RUNNER_URL,weights:[]}),
     attnmeta: cloneOp(attn,{id:"d-attnmeta",kind:"mask",title:"Build Attention Metadata",kicker:"vLLM RUNTIME I/O",input:"query_start_loc, seq_lens, causal=True",inputShape:"[B+1] · [B] · bool",output:"implicit causal / padding layout",outputShape:"backend metadata; 非稠密 [S,T]",formula:"valid(req,q,k)=(k<seq_len[req]) ∧ (k≤context_len[req]+q)",formulaNote:"优化推理中通常不会真的构造 [S,T] mask；causal、query_start_loc 与 seq_lens 被后端内核直接消费。",source:"gpu_model_runner.py · CommonAttentionMetadata",sourceUrl:RUNNER_URL,weights:[]}),
     slots: cloneOp(attn,{id:"d-slots",kind:"route",title:"Resolve KV Slots",kicker:"vLLM RUNTIME I/O",input:"positions + block_table",inputShape:"[Nq] + [B,Nblocks]",output:"slot_mapping + block_table",outputShape:"[Nq] + [B,Nblocks]",formula:"slot=block_table[req,⌊position/block_size⌋]·block_size+(position mod block_size)",formulaNote:"slot_mapping 决定新 K/V 写到哪个物理槽；block_table 决定 Attention 从哪些物理 pages 读取。",source:"gpu_model_runner.py · compute_slot_mapping",sourceUrl:RUNNER_URL,weights:[]}),
-    norm: cloneOp(norm,{id:"d-norm",kind:"norm",title:"Gemma RMSNorm"}),
+    norm: cloneOp(norm,{id:"d-norm",kind:"norm",title:"Gemma RMSNorm",source:"nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142",sourceUrl:NORM_FORWARD_URL}),
     qkv: cloneOp(qkv,{id:"d-qkv",kind:"linear",title:"QKV Projection"}),
     split: cloneOp(qkv,{id:"d-split",kind:"split",title:"Split Q / K / V",input:"packed qkv",inputShape:"[B,S,9216]",output:"Q · K · V",outputShape:"8192 · 512 · 512",formula:"split(qkv,[8192,512,512],dim=-1)",formulaNote:"checkpoint 中三块矩阵分离；vLLM 运行时一次 GEMM 后切分。",weights:[]}),
     qnorm: cloneOp(attn,{id:"d-qnorm",kind:"norm",title:"Q RMSNorm",input:"Q",inputShape:"[B,64,S,128]",output:"Q̃",outputShape:"[B,64,S,128]",formula:"Q̃=Q/√(mean(Q²)+ε)⊙(1+γq)",weights:attn.weights.filter(w=>w.key.includes("q_norm"))}),
@@ -304,7 +342,7 @@ function denseGraph(layer: number): Record<string, OpNode> {
     pv: cloneOp(attn,{id:"d-pv",kind:"matmul",title:"P × V",input:"P,V",inputShape:"[B,64,S,T] · [B,4,T,128]",output:"heads",outputShape:"[B,S,8192]",formula:"Oₕ=PₕV⌊h/16⌋",weights:[]}),
     oproj: cloneOp(out,{id:"d-oproj",kind:"linear",title:"O Projection"}),
     add1: cloneOp(out,{id:"d-add1",kind:"add",title:"+ Attention Residual",input:"Yattn + residual",inputShape:"2 × [B,S,6144]",output:"U",outputShape:"[B,S,6144]",formula:"U=residual+Yattn",weights:[]}),
-    postnorm: cloneOp(norm,{id:"d-postnorm",kind:"norm",title:"Post-attn Gemma RMSNorm",input:"U",inputShape:"[B,S,6144]",output:"Û",outputShape:"[B,S,6144]",weights:[postNorm]}),
+    postnorm: cloneOp(norm,{id:"d-postnorm",kind:"norm",title:"Post-attn Gemma RMSNorm",summary:"将 Attention 输出加到 residual stream 得到 U；返回 Gemma RMSNorm(U) 作为 FFN 输入，同时保留更新后的 residual=U。",input:"Yattn · residual Xₗ",inputShape:"2 × [B,S,6144]",output:"Û · residual U",outputShape:"2 × [B,S,6144]",source:"nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142",sourceUrl:NORM_FORWARD_URL,weights:[postNorm]}),
     gateup: cloneOp(mlp,{id:"d-gateup",kind:"linear",title:"Gate + Up Projection",output:"gate · up",outputShape:"2 × [B,S,12288]",weights:mlp.weights.filter(w=>!w.key.includes("down_proj"))}),
     swiglu: cloneOp(mlp,{id:"d-swiglu",kind:"activation",title:"SwiGLU-OAI",input:"gate,up",inputShape:"2 × [B,S,12288]",output:"activated",outputShape:"[B,S,12288]",weights:[]}),
     down: cloneOp(mlp,{id:"d-down",kind:"linear",title:"Down Projection",input:"activated",inputShape:"[B,S,12288]",output:"Yffn",outputShape:"[B,S,6144]",weights:mlp.weights.filter(w=>w.key.includes("down_proj"))}),
@@ -323,7 +361,7 @@ function sparseGraph(layer: number): Record<string, OpNode> {
     position:cloneOp(attn,{id:"s-position",kind:"route",title:"Build Position IDs",kicker:"vLLM RUNTIME I/O",input:"num_computed_tokens + query offsets",inputShape:"[B] + [Nq]",output:"positions",outputShape:"[Nq]",formula:"position(req,i)=num_computed_tokens[req]+i",formulaNote:"positions 由 vLLM runner 在模型 forward 之前构造，再传给 MiniMax-M3 的 fused QKNorm + RoPE kernel。",source:"gpu_model_runner.py · _prepare_inputs",sourceUrl:RUNNER_URL,weights:[]}),
     attnmeta:cloneOp(attn,{id:"s-attnmeta",kind:"mask",title:"Build Attention Metadata",kicker:"vLLM RUNTIME I/O",input:"query_start_loc, seq_lens, causal=True",inputShape:"[B+1] · [B] · bool",output:"implicit causal / padding layout",outputShape:"backend metadata; 非稠密 [S,T]",formula:"valid(req,q,k)=(k<seq_len[req]) ∧ (k≤context_len[req]+q)",formulaNote:"同一份边界元数据同时约束 indexer 的 block selection 和 main sparse attention。",source:"gpu_model_runner.py · CommonAttentionMetadata",sourceUrl:RUNNER_URL,weights:[]}),
     slots:cloneOp(attn,{id:"s-slots",kind:"route",title:"Resolve KV Slots",kicker:"vLLM RUNTIME I/O",input:"positions + block_table",inputShape:"[Nq] + [B,Nblocks]",output:"slot_mapping + block_table",outputShape:"[Nq] + [B,Nblocks]",formula:"slot=block_table[req,⌊position/block_size⌋]·block_size+(position mod block_size)",formulaNote:"slot_mapping 用于 K/V 写入；block_table 把 indexer 选出的逻辑 block id 翻译为物理 page。",source:"gpu_model_runner.py · compute_slot_mapping",sourceUrl:RUNNER_URL,weights:[]}),
-    norm:cloneOp(normBase,{id:"s-norm",kind:"norm",title:"Gemma RMSNorm",input:"Xₗ",inputShape:"[B,S,6144]",output:"X̂",outputShape:"[B,S,6144]",weights:[inputNorm]}),
+    norm:cloneOp(normBase,{id:"s-norm",kind:"norm",title:"Gemma RMSNorm",source:"nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142",sourceUrl:NORM_FORWARD_URL,weights:[inputNorm]}),
     packed:cloneOp(packed,{id:"s-packed",kind:"linear",title:"QKV + Index Projection"}),
     split:cloneOp(packed,{id:"s-split",kind:"split",title:"Split 5 outputs",input:"packed projection",inputShape:"[B,S,9856]",output:"Q/K/V · Qidx/Kidx",outputShape:"8192/512/512 · 512/128",formula:"split(x,[8192,512,512,512,128],dim=-1)",weights:[]}),
     idxnorm:cloneOp(indexer,{id:"s-idxnorm",kind:"norm",title:"Index Q/K Norm",input:"Qidx,Kidx",inputShape:"[B,S,4,128] · [B,T,1,128]",output:"Q̃idx,K̃idx",outputShape:"same",weights:indexer.weights}),
@@ -341,7 +379,7 @@ function sparseGraph(layer: number): Record<string, OpNode> {
     pv:cloneOp(attn,{id:"s-pv",kind:"matmul",title:"P × selected V",input:"P, selected V",inputShape:"probabilities · KV pages",output:"heads",outputShape:"[B,S,8192]",weights:[]}),
     oproj:cloneOp(attn,{id:"s-oproj",kind:"linear",title:"O Projection",input:"heads",inputShape:"[B,S,8192]",output:"Yattn",outputShape:"[B,S,6144]",weights:attn.weights.filter(w=>w.key.includes("o_proj"))}),
     addattn:cloneOp(combine,{id:"s-addattn",kind:"add",title:"+ Attention Residual",input:"Yattn + residual",inputShape:"2 × [B,S,6144]",output:"U",outputShape:"[B,S,6144]",weights:[]}),
-    postnorm:cloneOp(normBase,{id:"s-postnorm",kind:"norm",title:"Post-attn Gemma RMSNorm",input:"U",inputShape:"[B,S,6144]",output:"Û",outputShape:"[B,S,6144]",weights:[postNorm]}),
+    postnorm:cloneOp(normBase,{id:"s-postnorm",kind:"norm",title:"Post-attn Gemma RMSNorm",summary:"将 Sparse Attention 输出加到 residual stream 得到 U；返回 Gemma RMSNorm(U) 作为 MoE 输入，同时保留更新后的 residual=U。",input:"Yattn · residual Xₗ",inputShape:"2 × [B,S,6144]",output:"Û · residual U",outputShape:"2 × [B,S,6144]",source:"nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142",sourceUrl:NORM_FORWARD_URL,weights:[postNorm]}),
     router:cloneOp(router,{id:"s-router",kind:"route",title:"FP32 Router → Top-4",input:"Û",inputShape:"[B,S,6144]"}),
     experts:cloneOp(experts,{id:"s-experts",kind:"activation",title:"Routed Experts ×4",input:"Û + expert ids + weights",inputShape:"[B,S,6144] + 2×[B,S,4]"}),
     shared:cloneOp(shared,{id:"s-shared",kind:"activation",title:"Shared Expert ×1",input:"Û",inputShape:"[B,S,6144]"}),
@@ -512,7 +550,7 @@ function DecoderDiagram({type,g,active,expanded,onExpand,onHover,onLeave,onSelec
   const A=({id,graphId}:{id:string;graphId:string})=><AddCircle node={g[id]} {...p} active={active===g[id].id} graphId={graphId}/>;
   const edges:GraphEdge[]=[{from:"main-x",to:"main-norm",toPort:"top-left"},{from:"main-win",to:"main-norm",toPort:"top-right"},{from:"main-norm",to:"main-attn"},{from:"main-attn",to:"main-add1"},{from:"main-x",to:"main-add1",fromPort:"left",toPort:"left",route:"side-left"},{from:"main-add1",to:"main-u"},{from:"main-u",to:"main-post",toPort:"top-left"},{from:"main-wpost",to:"main-post",toPort:"top-right"},{from:"main-post",to:"main-ffn"},{from:"main-ffn",to:"main-add2"},{from:"main-u",to:"main-add2",fromPort:"left",toPort:"left",route:"side-left"},{from:"main-add2",to:"main-out"}];
   return <div className={`decoder-workbench ${expanded?"has-zoom":""}`}><GraphSurface className="decoder-column decoder-node-graph" edges={edges}>
-    <IW id="norm" inputName="Xₗ · hidden_states" inputShape="[B,S,H]" inputGraphId="main-x" graphId="main-norm" weightGraphId="main-win"/><button data-graph-id="main-attn" className="stage-summary attention-stage" onClick={()=>onExpand(expanded==="attention"?null:"attention")}><small>点击展开</small><b>{type==="dense"?"GQA + Partial RoPE":"MiniMax Sparse Attention + Partial RoPE"}</b></button><A id={type==="dense"?"add1":"addattn"} graphId="main-add1"/><IW id="postnorm" inputName="U" inputShape="[B,S,H]" inputGraphId="main-u" graphId="main-post" weightGraphId="main-wpost"/><button data-graph-id="main-ffn" className="stage-summary ffn-stage" onClick={()=>onExpand(expanded==="ffn"?null:"ffn")}><small>点击展开</small><b>{type==="dense"?"SwiGLU-OAI MLP":"Top-4 MoE + Shared Expert"}</b></button><A id={type==="dense"?"add2":"addout"} graphId="main-add2"/><Tensor name="Xₗ₊₁ · hidden_states" shape="[B,S,H]" graphId="main-out"/>
+    <IW id="norm" inputName="Xₗ · hidden_states / residual stream" inputShape="[B,S,H]" inputGraphId="main-x" graphId="main-norm" weightGraphId="main-win"/><button data-graph-id="main-attn" className="stage-summary attention-stage" onClick={()=>onExpand(expanded==="attention"?null:"attention")}><small>点击展开</small><b>{type==="dense"?"GQA + Partial RoPE":"MiniMax Sparse Attention + Partial RoPE"}</b></button><A id={type==="dense"?"add1":"addattn"} graphId="main-add1"/><IW id="postnorm" inputName="U · updated residual stream" inputShape="[B,S,H]" inputGraphId="main-u" graphId="main-post" weightGraphId="main-wpost"/><button data-graph-id="main-ffn" className="stage-summary ffn-stage" onClick={()=>onExpand(expanded==="ffn"?null:"ffn")}><small>点击展开</small><b>{type==="dense"?"SwiGLU-OAI MLP":"Top-4 MoE + Shared Expert"}</b></button><A id={type==="dense"?"add2":"addout"} graphId="main-add2"/><Tensor name="Xₗ₊₁ · hidden_states" shape="[B,S,H]" graphId="main-out"/>
   </GraphSurface>{expanded&&<StageZoom type={type} stage={expanded} g={g} active={active} onHover={onHover} onLeave={onLeave} onSelect={onSelect} onClose={()=>onExpand(null)}/>}</div>;
 }
 /* eslint-enable react-hooks/static-components */
@@ -522,7 +560,7 @@ function LayerNavigator({type,onChange}:{type:LayerType;onChange:(type:LayerType
 }
 
 function LatexFormula({node}:{node:OpNode}){
-  const formula=SIMPLE_FORMULA[node.kind]??String.raw`y=f(x)`;
+  const formula=node.latex??SIMPLE_FORMULA[node.kind]??String.raw`y=f(x)`;
   const html=katex.renderToString(formula,{displayMode:true,throwOnError:false,strict:"ignore",output:"htmlAndMathml"});
   return <div className="latex-render" aria-label={`${node.title} 简化公式`} dangerouslySetInnerHTML={{__html:html}}/>;
 }
@@ -551,7 +589,7 @@ function CodeView({node}:{node:OpNode}){
   const sections=(node.codeSections??[]).filter(section=>/forward|CALL|ENTER|PROJECT|ATTEND|ROUTE|SHARED/.test(`${section.title} ${section.stage}`));
   return <div className="code-view">
     <a className="code-source" href={pinSource(node.sourceUrl)} target="_blank" rel="noreferrer"><span>PINNED SOURCE · {VLLM_COMMIT.slice(0,7)}</span><b>{node.source}</b><i>↗</i></a>
-    {sections.length?<section className="code-call-chain"><header><span>FORWARD ONLY</span><b>仅保留 forward / forward_native</b></header>{sections.map((section,index)=><article className="code-section" key={`${node.id}-${section.stage}-${index}`}><header><div><span>{section.stage}</span><b>{section.title}</b><small>{section.location}</small></div>{section.url&&<a href={section.url} target="_blank" rel="noreferrer" aria-label={`打开 ${section.title} 固定源码`}>↗</a>}</header><pre><code>{section.code}</code></pre></article>)}</section>:<div className="code-empty"><b>此节点没有独立 forward</b><p>它由所在模块的 forward 调度，或只是一个数学拆解步骤。</p></div>}
+    {sections.length?<section className="code-call-chain"><header><span>IMPLEMENTATION TRACE</span><b>forward → fused kernel → 数学定义</b></header>{sections.map((section,index)=><article className="code-section" key={`${node.id}-${section.stage}-${index}`}><header><div><span>{section.stage}</span><b>{section.title}</b><small>{section.location}</small></div>{section.url&&<a href={section.url} target="_blank" rel="noreferrer" aria-label={`打开 ${section.title} 固定源码`}>↗</a>}</header><pre><code>{section.code}</code></pre></article>)}</section>:<div className="code-empty"><b>此节点没有独立 forward</b><p>它由所在模块的 forward 调度，或只是一个数学拆解步骤。</p></div>}
   </div>;
 }
 
@@ -560,7 +598,7 @@ function DetailPanel({node,tab,setTab,pinned,onClear}:{node:OpNode|null;tab:Tab;
   if(!node)return <aside className="detail-panel detail-empty"><div><span>MODULE DETAIL</span><b>尚未选择模块</b><p>点击左侧任一运算模块后，可在这里查看固定的 I/O、权重、公式和 forward 代码。</p></div></aside>;
   return <aside className="detail-panel"><header className="detail-header"><div><span>{node.kicker}</span><h2>{node.title}</h2></div>{pinned?<button className="unpin-button" aria-label="取消固定" title="取消固定" onClick={onClear}>×</button>:<i className={`kind-dot op-${node.kind}`}/>}<p>{node.summary}</p><code>{node.runtime}</code></header><div className="detail-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div><div className={`detail-content detail-${tab}`}>
     {tab==="io"&&<IoView node={node}/>}
-    {tab==="formula"&&<div className="formula-view"><span>作用</span><div className="formula-purpose">{node.summary}</div><span>简化 LATEX</span><LatexFormula node={node}/><div className="formula-implementation"><b>一句话解释</b><p>{FORMULA_NOTE[node.kind]??node.formulaNote}</p></div><div className="formula-terms"><span><b>x / a / b</b>输入张量</span><span><b>y / p</b>输出张量</span><span><b>W</b>权重矩阵</span><span><b>dₕ</b>head_dim = 128</span></div></div>}
+    {tab==="formula"&&<div className="formula-view"><span>作用</span><div className="formula-purpose">{node.summary}</div><span>实际公式</span><LatexFormula node={node}/><div className="formula-implementation"><b>一句话解释</b><p>{node.formulaNote??FORMULA_NOTE[node.kind]}</p></div><div className="formula-terms"><span><b>x / a / b</b>输入张量</span><span><b>y / p</b>输出张量</span><span><b>W</b>权重矩阵</span><span><b>dₕ</b>head_dim = 128</span></div></div>}
     {tab==="code"&&<CodeView node={node}/>}
     </div><footer>vLLM @ {VLLM_COMMIT.slice(0,7)} · official safetensors</footer></aside>;
 }

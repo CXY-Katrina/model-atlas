@@ -54,7 +54,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /Apply Causal \/ Pad Bounds/);
   assert.match(source, /katex\.renderToString/);
   assert.match(source, /LATEX_BY_ID/);
-  assert.match(source, /简化 LATEX/);
+  assert.match(source, /实际公式/);
   assert.match(source, /operatorname\{TopK\}_4/);
   assert.match(source, /theta_\{p,j\}/);
   assert.doesNotMatch(source, /权重名称为什么与代码不同/);
@@ -62,7 +62,11 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /self\.act_fn/);
   assert.match(source, /forward_native/);
   assert.match(source, /torch\.clamp\(x\[\.\.\., :d\], max=self\.swiglu_limit\)/);
-  assert.match(source, /FORWARD ONLY/);
+  assert.match(source, /IMPLEMENTATION TRACE/);
+  assert.match(source, /NORM_FORWARD_URL.*#L130-L142/);
+  assert.match(source, /FLASHINFER_GEMMA_NORM_URL/);
+  assert.match(source, /gemma_fused_add_rmsnorm\(x, residual/);
+  assert.match(source, /node\.latex\?\?SIMPLE_FORMULA/);
   assert.match(source, /MergedColumnParallelLinear/);
   assert.match(source, /I\/O \+ 权重/);
   assert.match(source, /INPUT BINDINGS/);
@@ -131,7 +135,6 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /sparse_attention_config/);
   assert.match(source, /vision_segment_max_frames/);
   assert.match(source, /image_grid_pinpoints/);
-  assert.match(source, /forward \/ forward_native/);
   assert.match(css, /height:100svh/);
   assert.match(css, /overflow:hidden/);
   assert.match(css, /--font-geist-sans:Consolas,"Microsoft YaHei",monospace;--font-geist-mono:Consolas,"Microsoft YaHei",monospace/);
