@@ -113,6 +113,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /data-graph-id="mlp-up-act"[\s\S]{0,600}clamp → Ū⁽ʳ⁾ \+ β/);
   assert.match(source, /className="mini-math activation-step"/);
   assert.match(source, /title:"SiluAndMulWithClamp · SwiGLU-OAI"/);
+  assert.match(source, /<Tensor name="Z⁽ʳ⁾" shape="\[B,S,H_dense\/TP\]" graphId="mlp-activated"\/>/);
+  assert.doesNotMatch(source, /Z⁽ʳ⁾ · activated⁽ʳ⁾/);
   assert.match(source, /CODE_BY_ID\["d-swiglu"\]=\{sections:SWIGLU_SECTIONS,symbols:SWIGLU_SYMBOLS\}/);
   assert.doesNotMatch(source, /graphId="mlp-post"|graphId="mlp-wpost"|graphId="mlp-u"/);
   assert.doesNotMatch(source, /className="lesson-notes"/);
@@ -231,6 +233,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.stage-formula-section code\{white-space:pre-line\}/);
   assert.match(css, /\.activation-step\{cursor:pointer\}/);
   assert.match(css, /\.multiply-circle\[aria-pressed="true"\]\{[^}]*outline:2px solid #1f6c4d5c[^}]*border-color:var\(--green\)/);
+  assert.match(css, /\.mlp-node-graph \[data-graph-id="mlp-wdown"\]\{grid-area:9\/5\}/);
   assert.match(css, /\.moe-node-graph/);
   assert.match(css, /\.shape-rows/);
   assert.match(css, /\.shape-rows code\{[^}]*white-space:normal[^}]*overflow:visible[^}]*text-overflow:clip[^}]*overflow-wrap:anywhere/);
