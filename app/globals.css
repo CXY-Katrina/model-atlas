@@ -94,10 +94,9 @@
 .mlp-node-graph [data-graph-id="mlp-wdown"]{grid-area:9/5}
 .multiply-circle[aria-pressed="true"]{outline:2px solid #1f6c4d5c;border-color:var(--green)}
 
-/* Give evidence more room; stack symbolic and concrete shapes when a card is still narrow. */
+/* Give evidence more room; symbolic and concrete shapes always use separate rows. */
 @media(min-width:1160px){.screen-grid{grid-template-columns:minmax(680px,1fr) 460px}}
-.binding,.output-binding article{container-type:inline-size}
-@container (max-width:430px){.shape-rows{grid-template-columns:1fr}}
+.shape-rows{grid-template-columns:1fr}.shape-rows code{white-space:nowrap;overflow-wrap:normal!important}
 
 /* Expanded-stage guidance belongs in the persistent right rail, not inside the graph. */
 .stage-overview-panel{grid-template-rows:auto minmax(0,1fr) 28px}.stage-overview-header{padding:20px 18px 16px;border-bottom:1px solid var(--line)}.stage-overview-header>span,.stage-overview-body section>span{font:12px var(--font-geist-mono);letter-spacing:.1em;color:var(--green)}.stage-overview-header h2{font-size:24px;line-height:1.15;letter-spacing:-.035em;margin:7px 0 9px}.stage-overview-header p{font-size:12px;line-height:1.6;color:var(--muted);margin:0}.stage-overview-body{min-height:0;overflow:auto;padding:16px;display:grid;align-content:start;gap:10px;scrollbar-width:thin}.stage-overview-body section{border:1px solid var(--line);border-radius:9px;background:var(--field);padding:11px;display:grid;gap:8px}.stage-overview-body code{font:12px/1.65 var(--font-geist-mono);color:var(--ink);white-space:normal;overflow-wrap:anywhere}.stage-formula-section code{white-space:pre-line}.stage-overview-body p{font-size:12px;line-height:1.55;color:var(--muted);margin:0}.stage-parameters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.stage-parameters article{min-width:0;border:1px solid var(--line);border-radius:7px;background:var(--paper);padding:8px;display:grid;grid-template-columns:1fr auto;gap:3px 7px}.stage-parameters b,.stage-parameters strong{font:700 12px var(--font-geist-mono)}.stage-parameters b{color:var(--green)}.stage-parameters small{grid-column:1/-1;min-width:0;font:12px/1.35 var(--font-geist-mono);color:var(--muted);overflow-wrap:anywhere}

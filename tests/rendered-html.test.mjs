@@ -240,8 +240,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.shape-rows/);
   assert.match(css, /\.shape-rows code\{[^}]*white-space:normal[^}]*overflow:visible[^}]*text-overflow:clip[^}]*overflow-wrap:anywhere/);
   assert.match(css, /@media\(min-width:1160px\)\{\.screen-grid\{grid-template-columns:minmax\(680px,1fr\) 460px\}\}/);
-  assert.match(css, /\.binding,\.output-binding article\{container-type:inline-size\}/);
-  assert.match(css, /@container \(max-width:430px\)\{\.shape-rows\{grid-template-columns:1fr\}\}/);
+  assert.match(css, /\.shape-rows\{grid-template-columns:1fr\}\.shape-rows code\{white-space:nowrap;overflow-wrap:normal!important\}/);
+  assert.doesNotMatch(css, /container-type:inline-size|@container \(max-width:430px\)/);
   assert.match(css, /\.model-facts small\{[^}]*font-size:12px/);
   assert.match(css, /\.tensor-node code\{font-size:12px/);
   assert.match(css, /\.stage-zoom \.graph-surface \.tensor-node code\{font-size:12px/);
