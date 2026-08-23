@@ -123,6 +123,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /forward \/ forward_native/);
   assert.match(css, /height:100svh/);
   assert.match(css, /overflow:hidden/);
+  assert.match(css, /--font-geist-sans:Consolas,"Microsoft YaHei",monospace;--font-geist-mono:Consolas,"Microsoft YaHei",monospace/);
   assert.match(css, /\.tensor-node/);
   assert.match(css, /tensor artifact → compute operator → tensor artifact/);
   assert.match(css, /\.runtime-io/);
