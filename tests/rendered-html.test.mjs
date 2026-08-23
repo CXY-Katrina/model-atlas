@@ -247,8 +247,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.moe-node-graph \[data-graph-id="moe-experts"\]\{grid-area:4\/3\}/);
   assert.match(css, /\.moe-node-graph \[data-graph-id="moe-sum"\]\{grid-area:6\/4\}/);
   assert.match(css, /\.moe-node-graph \[data-graph-id="moe-y"\]\{grid-area:7\/4\}/);
-  assert.match(css, /\.stage-zoom \.moe-node-graph :is\(\.tensor-node,\.op-node\)\{min-height:72px;max-height:none;padding:12px 16px;gap:5px\}/);
-  assert.match(css, /\.stage-zoom \.moe-node-graph \.tensor-weight\{width:240px;max-width:100%;min-height:82px;padding:14px 18px\}/);
+  assert.match(css, /\.stage-zoom \.moe-node-graph\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\);gap:14px clamp\(16px,1\.5vw,28px\);padding:10px clamp\(18px,2vw,42px\)\}/);
+  assert.match(css, /\.stage-zoom \.moe-node-graph :is\(\.tensor-node,\.op-node\)\{min-height:50px;max-height:none;padding:7px 10px;gap:3px\}/);
+  assert.match(css, /\.stage-zoom \.moe-node-graph \.tensor-weight\{width:220px;max-width:100%;min-height:64px;padding:9px 14px\}/);
   assert.match(css, /\.shape-rows/);
   assert.match(css, /\.shape-rows code\{[^}]*white-space:normal[^}]*overflow:visible[^}]*text-overflow:clip[^}]*overflow-wrap:anywhere/);
   assert.match(css, /@media\(min-width:1160px\)\{\.screen-grid\{grid-template-columns:minmax\(680px,1fr\) 460px\}\}/);
