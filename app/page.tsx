@@ -22,6 +22,7 @@ const CODE_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/
 const WEIGHTS_URL = "https://huggingface.co/MiniMaxAI/MiniMax-M3";
 const RUNNER_URL = "https://github.com/vllm-project/vllm/blob/main/vllm/v1/worker/gpu_model_runner.py";
 const ACTIVATION_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/model_executor/layers/activation.py`;
+const LINEAR_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/model_executor/layers/linear.py`;
 const NORM_FORWARD_URL = `${CODE_URL}#L130-L142`;
 const DECODER_FORWARD_URL = `${CODE_URL}#L752-L778`;
 const FLASHINFER_GEMMA_NORM_URL = "https://docs.flashinfer.ai/generated/flashinfer.norm.gemma_rmsnorm.html";
@@ -38,7 +39,7 @@ const CONFIG_GROUPS = [
     ["architectures","MiniMaxM3SparseForConditionalGeneration"],["auto_map.AutoConfig","configuration_minimax_m3_vl.MiniMaxM3VLConfig"],["model_type","minimax_m3_vl"],["torch_dtype","bfloat16"],["transformers_version","4.52.4"],["image_seq_length","576"],["image_token_index","200025"],["video_token_index","200026"],["multimodal_projector_bias","true"],["num_reward_heads","0"],["process_image_mode","dynamic_res"],["projector_hidden_act","gelu"],["projector_hidden_size","6144"],["vision_feature_layer","−1"],["vision_feature_select_strategy","full"],["image_grid_pinpoints","336…2016（步长 336）的 6×6 全组合"],
   ]},
   {title:"text_config",rows:[
-    ["architectures","MiniMaxM3SparseForCausalLM"],["hidden_size","6144"],["intermediate_size","3072"],["dense_intermediate_size","12288"],["shared_intermediate_size","3072"],["num_hidden_layers","60"],["num_attention_heads","64"],["num_key_value_heads","4"],["head_dim","128"],["vocab_size","200064"],["max_position_embeddings","1048576"],["rms_norm_eps","1e−6"],["use_gemma_norm","true"],["attention_output_gate","false"],["rope_theta","5000000"],["rotary_dim","64"],["partial_rotary_factor","0.5"],["hidden_act","swigluoai"],["use_qk_norm","true"],["qk_norm_type","per_head"],["tie_word_embeddings","false"],["num_local_experts","128"],["num_experts_per_tok","4"],["n_shared_experts","1"],["scoring_func","sigmoid"],["use_routing_bias","true"],["moe_layer_freq","L0–2: 0 · L3–59: 1"],["num_mtp_modules","7"],["num_nextn_predict_layers","1"],["swiglu_alpha","1.702"],["swiglu_limit","7.0"],["routed_scaling_factor","2.0"],
+    ["architectures","MiniMaxM3SparseForCausalLM"],["hidden_size","6144"],["intermediate_size","3072"],["dense_intermediate_size","12288"],["shared_intermediate_size","3072"],["num_hidden_layers","60"],["num_attention_heads","64"],["num_key_value_heads","4"],["head_dim","128"],["vocab_size","200064"],["max_position_embeddings","1048576"],["rms_norm_eps","1e−6"],["use_gemma_norm","true"],["attention_output_gate","false"],["rope_theta","5000000"],["rotary_dim","64"],["partial_rotary_factor","0.5"],["hidden_act","swigluoai"],["use_qk_norm","true"],["qk_norm_type","per_head"],["tie_word_embeddings","false"],["num_local_experts","128"],["num_experts_per_tok","4"],["n_shared_experts","1"],["scoring_func","sigmoid"],["use_routing_bias","true"],["moe_layer_freq","L0–2: 0 · L3–59: 1"],["num_mtp_modules","7"],["num_nextn_predict_layers","1"],["swiglu_alpha","1.702"],["swiglu_beta","1.0"],["swiglu_limit","7.0"],["routed_scaling_factor","2.0"],
   ]},
   {title:"text_config.sparse_attention_config",rows:[
     ["use_sparse_attention","true"],["sparse_index_dim","128"],["sparse_num_index_heads","4"],["sparse_topk_blocks","16"],["sparse_block_size","128"],["sparse_disable_index_value","L0–2: 0 · L3–59: 1"],["sparse_score_type","max"],["sparse_init_block","0"],["sparse_local_block","1"],["sparse_attention_freq","L0–2: 0 · L3–59: 1"],
@@ -80,6 +81,7 @@ const CONFIG_SYMBOLS: Record<string,string> = {
   "text_config:num_mtp_modules":"N_mtp",
   "text_config:num_nextn_predict_layers":"L_mtp",
   "text_config:swiglu_alpha":"α",
+  "text_config:swiglu_beta":"β",
   "text_config:swiglu_limit":"c",
   "text_config:routed_scaling_factor":"s_route",
   "text_config.sparse_attention_config:sparse_index_dim":"D_idx",
@@ -146,6 +148,14 @@ const FORMULA_TERMS_BY_ID: Partial<Record<string,readonly FormulaTerm[]>> = {
   "d-knorm":[["K","Key heads"],["K̃","归一化后的 K"],["Dₕ","head_dim = 128"],["γK","k_norm.weight"],["ε","10⁻⁶"]],
   "s-mainnorm":[["Q / K","主 Attention 的 Q/K"],["Q̃ / K̃","归一化后的 Q/K"],["Dₕ","head_dim = 128"],["γQ / γK","Q/K norm weights"],["ε","10⁻⁶"]],
   "s-idxnorm":[["Qidx / Kidx","Indexer Q/K"],["Q̃idx / K̃idx","归一化后的 Indexer Q/K"],["Didx","index_dim = 128"],["ε","10⁻⁶"]],
+  "d-gateup":[["Û","归一化输入 · [B,S,H]"],["Wgate⁽ʳ⁾","当前 TP rank 的 gate 权重"],["Wup⁽ʳ⁾","当前 TP rank 的 up 权重"],["G⁽ʳ⁾","当前 rank 的 gate 投影"],["U⁽ʳ⁾","当前 rank 的 up 投影"],["H","hidden_size = 6144"],["H_dense","dense_intermediate_size = 12288"],["TP","tensor parallel size"]],
+  "d-gatesplit":[["X⁽ʳ⁾","当前 rank 的 packed gate_up"],["G⁽ʳ⁾","前 H_dense/TP 个通道"],["U⁽ʳ⁾","后 H_dense/TP 个通道"],["H_dense","dense_intermediate_size = 12288"],["TP","tensor parallel size"]],
+  "d-swiglu":[["G⁽ʳ⁾","当前 rank 的 gate 分片"],["U⁽ʳ⁾","当前 rank 的 up 分片"],["Ḡ⁽ʳ⁾ / Ū⁽ʳ⁾","clamp 后的两个分片"],["α","swiglu_alpha = 1.702"],["β","swiglu_beta = 1.0"],["c","swiglu_limit = 7.0"],["Z⁽ʳ⁾","当前 rank 的激活输出"]],
+  "d-qk":[["Qᵣ","当前 rank 的 rotated Q"],["Kᵣ","当前 rank 的 rotated / visible K"],["Nₕ/TP","每 rank 的 query heads = 64/TP"],["Nₖᵥ,rank","每 rank KV heads = max(1,4/TP)"],["Dₕ","head_dim = 128"],["A","当前 rank 的 attention scores"]],
+  "d-pv":[["P","当前 rank 的 attention probability"],["V","当前 rank 的 visible V"],["Nₕ/TP","每 rank 的 query heads = 64/TP"],["Nₖᵥ,rank","每 rank KV heads = max(1,4/TP)"],["O","当前 rank 的 context heads"]],
+  "s-idxscore":[["Q̃idx","当前 rank 的 normalized Index Q"],["K̃idx","共享 / 复制的 normalized Index K"],["N_idx,rank","max(1,4/TP)"],["D_idx","index_dim = 128"],["Sidx","当前 rank 的 token scores"]],
+  "s-qk":[["Qᵣ","当前 rank 的 rotated Q"],["K𝒮","当前 rank 选中的 K pages"],["Nₕ/TP","每 rank 的 query heads = 64/TP"],["Ksel","最多 16×128 个候选 token"],["A","当前 rank 的 sparse scores"]],
+  "s-pv":[["P","当前 rank 的 sparse probability"],["V𝒮","当前 rank 选中的 V pages"],["Nₕ/TP","每 rank 的 query heads = 64/TP"],["O","当前 rank 的 context heads · 8192/TP"]],
 };
 
 function formulaTerms(node:OpNode){
@@ -175,8 +185,9 @@ const LATEX_BY_ID: Record<string,string> = {
   "d-oproj":String.raw`Y_{\mathrm{attn}}=\operatorname{Concat}_{h=1}^{64}(O_h)W_O^\top\in\mathbb R^{B\times S\times6144}`,
   "d-add1":String.raw`U=X_l+Y_{\mathrm{attn}}`,
   "d-postnorm":String.raw`\begin{aligned}\operatorname{RMS}(U)&=\sqrt{\frac1H\sum_{j=1}^{H}U_j^2+\varepsilon}\\\hat U_i&=\frac{U_i}{\operatorname{RMS}(U)}(1+\gamma_{\mathrm{post},i})\end{aligned}`,
-  "d-gateup":String.raw`\begin{aligned}G&=\hat U W_{\mathrm{gate}}^\top\\R&=\hat U W_{\mathrm{up}}^\top,\qquad G,R\in\mathbb R^{B\times S\times12288}\end{aligned}`,
-  "d-swiglu":String.raw`\begin{aligned}\bar G&=\min(G,7),\qquad \bar U=\operatorname{clip}(U,-7,7)\\H&=\bar G\odot\sigma(1.702\,\bar G)\odot(\bar U+1)\end{aligned}`,
+  "d-gateup":String.raw`\begin{aligned}H&=6144,\qquad H_{\mathrm{dense}}=12288\\G^{(r)}&=\hat U\left(W_{\mathrm{gate}}^{(r)}\right)^\top\\U^{(r)}&=\hat U\left(W_{\mathrm{up}}^{(r)}\right)^\top\\G^{(r)},U^{(r)}&\in\mathbb R^{B\times S\times(H_{\mathrm{dense}}/TP)}\end{aligned}`,
+  "d-gatesplit":String.raw`\begin{aligned}X^{(r)}&\in\mathbb R^{B\times S\times(2H_{\mathrm{dense}}/TP)},\qquad H_{\mathrm{dense}}=12288\\G^{(r)}&=X^{(r)}_{:,:,\,0:H_{\mathrm{dense}}/TP}\\U^{(r)}&=X^{(r)}_{:,:,\,H_{\mathrm{dense}}/TP:2H_{\mathrm{dense}}/TP}\end{aligned}`,
+  "d-swiglu":String.raw`\begin{aligned}c&=7.0,\qquad\alpha=1.702,\qquad\beta=1.0\\\bar G^{(r)}&=\min(G^{(r)},c)\\\bar U^{(r)}&=\operatorname{clip}(U^{(r)},-c,c)\\Z^{(r)}&=\bar G^{(r)}\odot\sigma(\alpha\bar G^{(r)})\odot(\bar U^{(r)}+\beta)\end{aligned}`,
   "d-down":String.raw`Y_{\mathrm{ffn}}=HW_{\mathrm{down}}^\top\in\mathbb R^{B\times S\times6144}`,
   "d-add2":String.raw`X_{l+1}=U+Y_{\mathrm{ffn}}`,
   "s-norm":String.raw`\begin{aligned}\operatorname{RMS}(x)&=\sqrt{\frac1H\sum_{j=1}^{H}x_j^2+\varepsilon}\\y_i&=\frac{x_i}{\operatorname{RMS}(x)}(1+\gamma_i),\qquad \varepsilon=10^{-6}\end{aligned}`,
@@ -258,6 +269,46 @@ const MLP_SYMBOLS: CodeSymbol[] = [
   {symbol:"swiglu_limit / alpha / beta",resolvesTo:"7.0 / 1.702 / 1.0",meaning:"来自 MiniMax-M3 config，并直接传入激活算子。"},
 ];
 
+const GATE_UP_SECTIONS: CodeSection[] = [
+  {stage:"1 · INIT",title:"MiniMaxM3MLP.__init__：创建 fused column-parallel 投影",location:"nvidia/model.py · L157–163",url:`${CODE_URL}#L157-L163`,code:`self.gate_up_proj = MergedColumnParallelLinear(
+    config.hidden_size,              # H = 6144
+    [intermediate_size] * 2,         # 2 × H_dense, H_dense = 12288
+    bias=False,
+    prefix=f"{prefix}.gate_up_proj",
+)`},
+  {stage:"2 · CALL",title:"MiniMaxM3MLP.forward：只调用 gate_up_proj",location:"nvidia/model.py · L184–185",url:`${CODE_URL}#L184-L185`,code:`def forward(self, x: torch.Tensor) -> torch.Tensor:
+    gate_up, _ = self.gate_up_proj(x)`},
+  {stage:"3 · ENTER",title:"ColumnParallelLinear：按 TP 切输出维并执行 GEMM",location:"linear.py · L460–467, L569–587",url:`${LINEAR_URL}#L460-L587`,code:`self.output_size_per_partition = divide(output_size, self.tp_size)
+self.output_partition_sizes = [
+    divide(output_size, self.tp_size) for output_size in self.output_sizes
+]
+
+output_parallel = self.quant_method.apply(self, input_, bias)
+output = output_parallel  # gather_output=False`},
+];
+
+const GATE_UP_SYMBOLS: CodeSymbol[] = [
+  {symbol:"x / Û",resolvesTo:"[B,S,H], H=6144",meaning:"每个 TP rank 都读取完整 hidden 输入。"},
+  {symbol:"output_sizes",resolvesTo:"[H_dense,H_dense]",meaning:"gate 与 up 的全局宽度各为 H_dense=12288。"},
+  {symbol:"output_partition_sizes",resolvesTo:"[H_dense/TP,H_dense/TP]",meaning:"MergedColumnParallelLinear 沿输出维切分，每 rank 只产生两块局部投影。"},
+  {symbol:"gate_up",resolvesTo:"[B,S,2H_dense/TP]",meaning:"这里只产生 packed 线性投影；Split、clamp 和 sigmoid 属于后续节点。"},
+];
+
+const SWIGLU_SECTIONS: CodeSection[] = [MLP_SECTIONS[1]];
+const SWIGLU_SYMBOLS: CodeSymbol[] = [MLP_SYMBOLS[1],MLP_SYMBOLS[3]];
+
+const DOWN_SECTIONS: CodeSection[] = [
+  {stage:"1 · INIT",title:"MiniMaxM3MLP.__init__：创建 row-parallel down projection",location:"nvidia/model.py · L164–170",url:`${CODE_URL}#L164-L170`,code:`self.down_proj = RowParallelLinear(
+    intermediate_size,       # H_dense = 12288
+    config.hidden_size,      # H = 6144
+    bias=False,
+    reduce_results=reduce_results,
+    prefix=f"{prefix}.down_proj",
+)`},
+  {stage:"2 · CALL",title:"MiniMaxM3MLP.forward：调用 down_proj",location:"nvidia/model.py · L187",url:`${CODE_URL}#L187`,code:`x, _ = self.down_proj(x)`},
+];
+const DOWN_SYMBOLS: CodeSymbol[] = [MLP_SYMBOLS[2]];
+
 const ATTENTION_SECTIONS: CodeSection[] = [
   {stage:"1 · PROJECT",title:"Attention.forward：packed QKV 投影",location:"nvidia/model.py · MiniMaxM3Attention.forward",url:CODE_URL,code:`qkv, _ = self.qkv_proj(hidden_states)
 ops.fused_minimax_m3_qknorm_rope_kv_insert(
@@ -304,7 +355,10 @@ const MOE_SYMBOLS: CodeSymbol[] = [
 
 const CODE_BY_ID: Record<string, CodeDetail> = {};
 for(const id of ["d-norm","d-postnorm","s-norm","s-postnorm"]) CODE_BY_ID[id]={sections:NORM_SECTIONS,symbols:NORM_SYMBOLS};
-for(const id of ["d-gateup","d-swiglu","d-down","s-shared"]) CODE_BY_ID[id]={sections:MLP_SECTIONS,symbols:MLP_SYMBOLS};
+CODE_BY_ID["d-gateup"]={sections:GATE_UP_SECTIONS,symbols:GATE_UP_SYMBOLS};
+CODE_BY_ID["d-swiglu"]={sections:SWIGLU_SECTIONS,symbols:SWIGLU_SYMBOLS};
+CODE_BY_ID["d-down"]={sections:DOWN_SECTIONS,symbols:DOWN_SYMBOLS};
+CODE_BY_ID["s-shared"]={sections:MLP_SECTIONS,symbols:MLP_SYMBOLS};
 for(const id of ["d-qkv","d-split","d-qnorm","d-knorm","d-ropeq","d-ropek","d-cache","d-qk","d-scale","d-mask","d-softmax","d-pv","d-oproj","s-packed","s-split","s-mainnorm","s-rope","s-cache","s-select","s-qk","s-scale","s-mask","s-softmax","s-pv","s-oproj"]) CODE_BY_ID[id]={sections:ATTENTION_SECTIONS,symbols:ATTENTION_SYMBOLS};
 for(const id of ["s-router","s-experts","s-shared","s-sum"]) CODE_BY_ID[id]={sections:id==="s-shared"?[...MOE_SECTIONS,...MLP_SECTIONS]:MOE_SECTIONS,symbols:id==="s-shared"?[...MOE_SYMBOLS,...MLP_SYMBOLS]:MOE_SYMBOLS};
 
@@ -320,16 +374,16 @@ const INPUT_OVERRIDES: Record<string, IoBinding[]> = {
   "d-ropeq":[{kind:"upstream",label:"Q̃",shape:"[B,64,S,128]",from:"Q RMSNorm 输出"},{kind:"external",label:"positions",shape:"[Nq]",from:"Build Position IDs 输出"}],
   "d-ropek":[{kind:"upstream",label:"K̃",shape:"[B,4,S,128]",from:"K RMSNorm 输出"},{kind:"external",label:"positions",shape:"[Nq]",from:"Build Position IDs 输出"}],
   "d-cache":[{kind:"upstream",label:"Kᵣ",shape:"[B,4,S,128]",from:"Partial RoPE (K) 输出"},{kind:"upstream",label:"V",shape:"[B,4,S,128]",from:"Split Q / K / V 输出"},{kind:"external",label:"slot_mapping + block_table",shape:"[Nq] + [B,Nblocks]",from:"Resolve KV Slots 输出"}],
-  "d-qk":[{kind:"upstream",label:"Qᵣ",shape:"[B,64,S,128]",from:"Partial RoPE (Q) 输出"},{kind:"upstream",label:"visible K",shape:"[B,4,T,128]",from:"Paged KV Cache 输出"}],
-  "d-mask":[{kind:"upstream",label:"scaled scores",shape:"[B,64,S,T]",from:"Scale 1/√128 输出"},{kind:"external",label:"causal / padding bounds",shape:"runtime metadata",from:"Build Attention Metadata 输出"}],
-  "d-pv":[{kind:"upstream",label:"attention probability P",shape:"[B,64,S,T]",from:"Softmax 输出"},{kind:"upstream",label:"visible V",shape:"[B,4,T,128]",from:"Paged KV Cache 输出"}],
+  "d-qk":[{kind:"upstream",label:"Qᵣ (TP-local)",shape:"[B,64/TP,S,128]",from:"Partial RoPE (Q) 输出"},{kind:"upstream",label:"visible K (TP-local / replicated)",shape:"[B,max(1,4/TP),T,128]",from:"Paged KV Cache 输出"}],
+  "d-mask":[{kind:"upstream",label:"scaled local scores",shape:"[B,64/TP,S,T]",from:"Scale 1/√128 输出"},{kind:"external",label:"causal / padding bounds",shape:"runtime metadata",from:"Build Attention Metadata 输出"}],
+  "d-pv":[{kind:"upstream",label:"local attention probability P",shape:"[B,64/TP,S,T]",from:"Softmax 输出"},{kind:"upstream",label:"visible V (TP-local / replicated)",shape:"[B,max(1,4/TP),T,128]",from:"Paged KV Cache 输出"}],
   "s-rope":[{kind:"upstream",label:"Q̃ · K̃",shape:"Q/K unchanged",from:"Main Q/K Norm 输出"},{kind:"external",label:"positions",shape:"[Nq]",from:"Build Position IDs 输出"}],
   "s-cache":[{kind:"upstream",label:"Kᵣ · V",shape:"KV pages",from:"Partial RoPE 与 Split 5 outputs"},{kind:"external",label:"slot_mapping + block_table",shape:"[Nq] + [B,Nblocks]",from:"Resolve KV Slots 输出"}],
-  "s-topk":[{kind:"upstream",label:"block scores",shape:"[B,4,S,Nblocks]",from:"Block Max 输出"},{kind:"external",label:"local / init priority",shape:"logical block flags",from:"Indexer 配置：local_blocks=1, init_blocks=0"}],
-  "s-select":[{kind:"upstream",label:"logical block ids",shape:"[B,S,4,16]",from:"Top-16 Blocks 输出"},{kind:"upstream",label:"paged K · V",shape:"KV pages",from:"Paged KV Cache 输出"},{kind:"external",label:"block_table",shape:"[B,Nblocks]",from:"KV cache manager"}],
-  "s-qk":[{kind:"upstream",label:"Qᵣ",shape:"[B,64,S,128]",from:"Partial RoPE 输出"},{kind:"upstream",label:"selected K",shape:"≤16 pages/group",from:"Select KV Pages 输出"}],
-  "s-mask":[{kind:"upstream",label:"scaled selected scores",shape:"[B,64,S,Ksel]",from:"Scale 1/√128 输出"},{kind:"external",label:"causal / padding bounds",shape:"runtime metadata",from:"Build Attention Metadata 输出"}],
-  "s-pv":[{kind:"upstream",label:"selected attention P",shape:"[B,64,S,Ksel]",from:"Softmax 输出"},{kind:"upstream",label:"selected V",shape:"≤16 pages/group",from:"Select KV Pages 输出"}],
+  "s-topk":[{kind:"upstream",label:"local block scores",shape:"[B,max(1,4/TP),S,Nblocks]",from:"Block Max 输出"},{kind:"external",label:"local / init priority",shape:"logical block flags",from:"Indexer 配置：local_blocks=1, init_blocks=0"}],
+  "s-select":[{kind:"upstream",label:"local logical block ids",shape:"[B,S,max(1,4/TP),16]",from:"Top-16 Blocks 输出"},{kind:"upstream",label:"paged K · V",shape:"KV pages",from:"Paged KV Cache 输出"},{kind:"external",label:"block_table",shape:"[B,Nblocks]",from:"KV cache manager"}],
+  "s-qk":[{kind:"upstream",label:"Qᵣ (TP-local)",shape:"[B,64/TP,S,128]",from:"Partial RoPE 输出"},{kind:"upstream",label:"selected K (local KV groups)",shape:"≤16 pages/local group",from:"Select KV Pages 输出"}],
+  "s-mask":[{kind:"upstream",label:"scaled local selected scores",shape:"[B,64/TP,S,Ksel]",from:"Scale 1/√128 输出"},{kind:"external",label:"causal / padding bounds",shape:"runtime metadata",from:"Build Attention Metadata 输出"}],
+  "s-pv":[{kind:"upstream",label:"local selected attention P",shape:"[B,64/TP,S,Ksel]",from:"Softmax 输出"},{kind:"upstream",label:"selected V (local KV groups)",shape:"≤16 pages/local group",from:"Select KV Pages 输出"}],
   "s-router":[{kind:"upstream",label:"post-attn normalized hidden Û",shape:"[B,S,6144]",from:"Post-attn RMSNorm 输出"}],
   "s-experts":[{kind:"upstream",label:"normalized hidden + router logits",shape:"[B,S,6144] + [B,S,128]",from:"Post-attn RMSNorm 与 FP32 Router 输出"}],
   "s-shared":[{kind:"upstream",label:"all normalized tokens Û",shape:"[B,S,6144]",from:"Post-attn RMSNorm 输出；不经过 Top-K"}],
@@ -364,18 +418,18 @@ function denseGraph(layer: number): Record<string, OpNode> {
     ropeq: cloneOp(attn,{id:"d-ropeq",kind:"rope",title:"Partial RoPE (Q)",input:"Q̃ + positions",inputShape:"[B,64,S,128] + [S]",output:"Qᵣ",outputShape:"[B,64,S,128]",formula:"Qᵣ[:64]=RoPE(Q̃[:64],pos); Qᵣ[64:]=Q̃[64:]",weights:[]}),
     ropek: cloneOp(attn,{id:"d-ropek",kind:"rope",title:"Partial RoPE (K)",input:"K̃ + positions",inputShape:"[B,4,T,128] + [T]",output:"Kᵣ",outputShape:"[B,4,T,128]",formula:"Kᵣ[:64]=RoPE(K̃[:64],pos); Kᵣ[64:]=K̃[64:]",weights:[]}),
     cache: cloneOp(attn,{id:"d-cache",kind:"cache",title:"Paged KV Cache",input:"Kᵣ,V + block table",inputShape:"[T,4,128] ×2",output:"visible K,V",outputShape:"[B,4,T,128] ×2",formula:"slot = block_table[seq, logical_block] + offset",formulaNote:"Dense 层读取完整可见历史；block table 决定物理 page。",weights:[]}),
-    qk: cloneOp(attn,{id:"d-qk",kind:"matmul",title:"Q × Kᵀ",input:"Qᵣ,Kᵣ",inputShape:"[B,64,S,128] · [B,4,T,128]",output:"scores",outputShape:"[B,64,S,T]",formula:"A=QᵣKᵣᵀ",weights:[]}),
-    scale: cloneOp(attn,{id:"d-scale",kind:"scale",title:"Scale 1/√128",input:"A",inputShape:"[B,64,S,T]",output:"scaled scores",outputShape:"[B,64,S,T]",formula:"A←A/√128",weights:[]}),
-    mask: cloneOp(attn,{id:"d-mask",kind:"mask",title:"Apply Causal / Pad Bounds",input:"scores + attention metadata",inputShape:"[B,64,S,T] + runtime metadata",output:"masked scores",outputShape:"[B,64,S,T]",formula:"Aᵢⱼ←valid(i,j) ? Aᵢⱼ : −∞",formulaNote:"图中把 mask 画成逻辑算子；vLLM 后端实际以 causal、seq_lens 和 query_start_loc 实现，不物化完整 mask 矩阵。",weights:[]}),
-    softmax: cloneOp(attn,{id:"d-softmax",kind:"softmax",title:"Softmax",input:"masked scores",inputShape:"[B,64,S,T]",output:"attention prob",outputShape:"[B,64,S,T]",formula:"P=softmax(A,dim=-1)",weights:[]}),
-    pv: cloneOp(attn,{id:"d-pv",kind:"matmul",title:"P × V",input:"P,V",inputShape:"[B,64,S,T] · [B,4,T,128]",output:"heads",outputShape:"[B,S,8192]",formula:"Oₕ=PₕV⌊h/16⌋",weights:[]}),
+    qk: cloneOp(attn,{id:"d-qk",kind:"matmul",title:"Q × Kᵀ",input:"Qᵣ,Kᵣ",inputShape:"[B,64/TP,S,128] · [B,max(1,4/TP),T,128]",output:"local scores",outputShape:"[B,64/TP,S,T]",formula:"A=QᵣKᵣᵀ",formulaNote:"单个 TP rank 只计算 64/TP 个 query heads；KV heads 为 max(1,4/TP)，当 TP>4 时按 vLLM 规则复制。",weights:[]}),
+    scale: cloneOp(attn,{id:"d-scale",kind:"scale",title:"Scale 1/√128",input:"A",inputShape:"[B,64/TP,S,T]",output:"scaled scores",outputShape:"[B,64/TP,S,T]",formula:"A←A/√128",weights:[]}),
+    mask: cloneOp(attn,{id:"d-mask",kind:"mask",title:"Apply Causal / Pad Bounds",input:"scores + attention metadata",inputShape:"[B,64/TP,S,T] + runtime metadata",output:"masked scores",outputShape:"[B,64/TP,S,T]",formula:"Aᵢⱼ←valid(i,j) ? Aᵢⱼ : −∞",formulaNote:"图中把 mask 画成逻辑算子；vLLM 后端实际以 causal、seq_lens 和 query_start_loc 实现，不物化完整 mask 矩阵。head 维为单 TP rank 的 64/TP。",weights:[]}),
+    softmax: cloneOp(attn,{id:"d-softmax",kind:"softmax",title:"Softmax",input:"masked scores",inputShape:"[B,64/TP,S,T]",output:"attention prob",outputShape:"[B,64/TP,S,T]",formula:"P=softmax(A,dim=-1)",weights:[]}),
+    pv: cloneOp(attn,{id:"d-pv",kind:"matmul",title:"P × V",input:"P,V",inputShape:"[B,64/TP,S,T] · [B,max(1,4/TP),T,128]",output:"local heads",outputShape:"[B,S,8192/TP]",formula:"Oₕ=PₕV⌊h/16⌋",formulaNote:"P × V 在每个 TP rank 上独立计算，得到 (64/TP)×128=8192/TP 的局部 attention 宽度，再交给 RowParallel O Projection。",weights:[]}),
     oproj: cloneOp(out,{id:"d-oproj",kind:"linear",title:"O Projection"}),
     add1: cloneOp(out,{id:"d-add1",kind:"add",title:"+ Attention Residual",input:"Yattn + residual",inputShape:"2 × [B,S,6144]",output:"U",outputShape:"[B,S,6144]",formula:"U=residual+Yattn",weights:[]}),
     postnorm: cloneOp(norm,{id:"d-postnorm",kind:"norm",title:"Post-attn Gemma RMSNorm",summary:"输入 U 已由上游 Add 节点计算完成；此节点只执行 Gemma RMSNorm(U)，输出唯一的 Û 作为 FFN 输入。",formulaNote:"U 是上游 Add 的单一输出；本节点只计算 RMS(U) 与 (1+γpost) 缩放，不重复执行 residual add。",input:"U",inputShape:"[B,S,6144]",output:"Û",outputShape:"[B,S,6144]",source:"nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142",sourceUrl:NORM_FORWARD_URL,weights:[postNorm]}),
-    gateup: cloneOp(mlp,{id:"d-gateup",kind:"linear",title:"Gate + Up Projection",output:"packed gate_up",outputShape:"[B,S,24576]",weights:mlp.weights.filter(w=>!w.key.includes("down_proj"))}),
-    gatesplit: cloneOp(mlp,{id:"d-gatesplit",kind:"split",title:"Split Gate / Up",input:"packed gate_up",inputShape:"[B,S,24576]",output:"gate · up",outputShape:"2 × [B,S,12288]",formula:"(gate,up)=split(gate_up,2,dim=-1)",formulaNote:"fused projection 先产生连续的 gate_up 张量；本节点沿最后一维等分成 gate 和 up，不执行额外计算。",weights:[]}),
-    swiglu: cloneOp(mlp,{id:"d-swiglu",kind:"activation",title:"SwiGLU-OAI",input:"gate,up",inputShape:"2 × [B,S,12288]",output:"activated",outputShape:"[B,S,12288]",weights:[]}),
-    down: cloneOp(mlp,{id:"d-down",kind:"linear",title:"Down Projection",input:"activated",inputShape:"[B,S,12288]",output:"Yffn",outputShape:"[B,S,6144]",weights:mlp.weights.filter(w=>w.key.includes("down_proj"))}),
+    gateup: cloneOp(mlp,{id:"d-gateup",kind:"linear",kicker:"DENSE FFN · H=6144 · H_dense=12288",title:"Gate + Up Projection",summary:"MergedColumnParallelLinear 让每个 TP rank 读取完整 Û，并分别计算局部 gate/up 投影；这里只做线性 GEMM。",input:"Û",inputShape:"[B,S,6144]",output:"packed gate_up (TP-local)",outputShape:"[B,S,24576/TP]",formulaNote:"Wgate⁽ʳ⁾ 与 Wup⁽ʳ⁾ 都沿输出维切分；本节点不执行 Split、clamp、SiLU 或逐元素乘。",runtime:"MergedColumnParallelLinear · gate_up_proj",weights:mlp.weights.filter(w=>!w.key.includes("down_proj"))}),
+    gatesplit: cloneOp(mlp,{id:"d-gatesplit",kind:"split",kicker:"DENSE FFN · TP-LOCAL SPLIT",title:"Split Gate / Up",summary:"把当前 TP rank 的 packed gate_up 沿最后一维等分为 G⁽ʳ⁾ 和 U⁽ʳ⁾；不含权重，也不改变数值。",input:"packed gate_up (TP-local)",inputShape:"[B,S,24576/TP]",output:"G⁽ʳ⁾ · U⁽ʳ⁾",outputShape:"2 × [B,S,12288/TP]",formula:"(G⁽ʳ⁾,U⁽ʳ⁾)=split(gate_up⁽ʳ⁾,2,dim=-1)",formulaNote:"本节点只切分 view：前 H_dense/TP 个通道是 gate，后 H_dense/TP 个通道是 up；clamp 与 sigmoid 属于下一 SwiGLU-OAI 节点。",runtime:"SiluAndMulWithClamp · fused input slicing",source:"activation.py · SiluAndMulWithClamp.forward_native",sourceUrl:`${ACTIVATION_URL}#L214-L218`,weights:[]}),
+    swiglu: cloneOp(mlp,{id:"d-swiglu",kind:"activation",kicker:"DENSE FFN · TP-LOCAL ACTIVATION",title:"SiluAndMulWithClamp · SwiGLU-OAI",summary:"对当前 TP rank 的 G⁽ʳ⁾/U⁽ʳ⁾ 分片执行 gate 上界截断、up 双边截断、sigmoid、+β 与逐元素乘；不执行线性投影。",input:"G⁽ʳ⁾,U⁽ʳ⁾",inputShape:"2 × [B,S,12288/TP]",output:"Z⁽ʳ⁾ · activated⁽ʳ⁾",outputShape:"[B,S,12288/TP]",formulaNote:"forward_native 先以 c=7 截断两个分支，再计算 Ḡ⁽ʳ⁾⊙σ(αḠ⁽ʳ⁾)⊙(Ū⁽ʳ⁾+β)；α=1.702，β=1.0。",runtime:"SiluAndMulWithClamp.forward_native",source:"activation.py · SiluAndMulWithClamp.forward_native · L214–218",sourceUrl:`${ACTIVATION_URL}#L214-L218`,weights:[]}),
+    down: cloneOp(mlp,{id:"d-down",kind:"linear",kicker:"DENSE FFN · ROW PARALLEL · H=6144",title:"Down Projection",summary:"RowParallelLinear 消费每个 TP rank 的局部 activated 分片，将 H_dense/TP 投回 H，并归并各 rank 的部分结果。",input:"activated⁽ʳ⁾",inputShape:"[B,S,12288/TP]",output:"Yffn",outputShape:"[B,S,6144]",formulaNote:"本节点只执行 down projection；输入宽度为 H_dense/TP，输出隐藏宽度 H=6144。",weights:mlp.weights.filter(w=>w.key.includes("down_proj"))}),
     add2: cloneOp(mlp,{id:"d-add2",kind:"add",title:"+ MLP Residual",input:"Yffn + U",inputShape:"2 × [B,S,6144]",output:"Xₗ₊₁",outputShape:"[B,S,6144]",formula:"Xₗ₊₁=U+MLP(RMSNorm(U))",weights:[]}),
   };
 }
@@ -395,18 +449,18 @@ function sparseGraph(layer: number): Record<string, OpNode> {
     packed:cloneOp(packed,{id:"s-packed",kind:"linear",title:"QKV + Index Projection"}),
     split:cloneOp(packed,{id:"s-split",kind:"split",title:"Split 5 outputs",input:"packed projection",inputShape:"[B,S,9856]",output:"Q/K/V · Qidx/Kidx",outputShape:"8192/512/512 · 512/128",formula:"split(x,[8192,512,512,512,128],dim=-1)",weights:[]}),
     idxnorm:cloneOp(indexer,{id:"s-idxnorm",kind:"norm",title:"Index Q/K Norm",input:"Qidx,Kidx",inputShape:"[B,S,4,128] · [B,T,1,128]",output:"Q̃idx,K̃idx",outputShape:"same",weights:indexer.weights}),
-    idxscore:cloneOp(indexer,{id:"s-idxscore",kind:"matmul",title:"Index Q × Kᵀ",input:"Q̃idx,K̃idx",inputShape:"[B,4,S,128] · [B,1,T,128]",output:"token scores",outputShape:"[B,4,S,T]",weights:[]}),
-    blockmax:cloneOp(indexer,{id:"s-blockmax",kind:"route",title:"Block Max (128 tokens)",input:"causal token scores",inputShape:"[B,4,S,T]",output:"block scores",outputShape:"[B,4,S,⌈T/128⌉]",weights:[]}),
-    topk:cloneOp(topk,{id:"s-topk",kind:"route",title:"Top-16 Blocks",input:"block scores + local priority",inputShape:"[B,4,S,Nblocks]",output:"logical block ids",outputShape:"[B,S,4,16]"}),
+    idxscore:cloneOp(indexer,{id:"s-idxscore",kind:"matmul",title:"Index Q × Kᵀ",input:"Q̃idx,K̃idx",inputShape:"[B,max(1,4/TP),S,128] · [B,1,T,128]",output:"local token scores",outputShape:"[B,max(1,4/TP),S,T]",formulaNote:"Index Q 与 KV heads 采用相同 TP 切分：每 rank 为 max(1,4/TP) heads；单个 Index K head 在需要时复制。",weights:[]}),
+    blockmax:cloneOp(indexer,{id:"s-blockmax",kind:"route",title:"Block Max (128 tokens)",input:"causal token scores",inputShape:"[B,max(1,4/TP),S,T]",output:"block scores",outputShape:"[B,max(1,4/TP),S,⌈T/128⌉]",weights:[]}),
+    topk:cloneOp(topk,{id:"s-topk",kind:"route",title:"Top-16 Blocks",input:"block scores + local priority",inputShape:"[B,max(1,4/TP),S,Nblocks]",output:"logical block ids",outputShape:"[B,S,max(1,4/TP),16]"}),
     mainnorm:cloneOp(attn,{id:"s-mainnorm",kind:"norm",title:"Main Q/K Norm",input:"Q,K",inputShape:"[B,64,S,128] · [B,4,T,128]",output:"Q̃,K̃",outputShape:"same",weights:attn.weights.filter(w=>w.key.includes("_norm"))}),
     rope:cloneOp(attn,{id:"s-rope",kind:"rope",title:"Partial RoPE",input:"Q̃,K̃ + positions",inputShape:"Q/K + [S]",output:"Qᵣ,Kᵣ",outputShape:"Q/K unchanged",weights:[]}),
     cache:cloneOp(attn,{id:"s-cache",kind:"cache",title:"Paged KV Cache",input:"Kᵣ,V + block table",inputShape:"KV pages + [B,Nblocks]",output:"paged K,V",outputShape:"[Npages,128,4,128] ×2",formula:"physical_page=block_table[logical_block]",weights:[]}),
     select:cloneOp(attn,{id:"s-select",kind:"route",title:"Select KV Pages",input:"paged K,V + Top-16 block ids",inputShape:"KV pages + [B,S,4,16]",output:"selected K,V",outputShape:"≤2048 KV tokens / group",formula:"physical_page=block_table[logical_top16]",weights:[]}),
-    qk:cloneOp(attn,{id:"s-qk",kind:"matmul",title:"Q × selected Kᵀ",input:"Qᵣ, selected K",inputShape:"[B,64,S,128] · ≤16×128",output:"sparse scores",outputShape:"[B,64,S,≤2048]",weights:[]}),
-    scale:cloneOp(attn,{id:"s-scale",kind:"scale",title:"Scale 1/√128",input:"scores",inputShape:"[B,64,S,≤2048]",output:"scaled scores",outputShape:"same",weights:[]}),
-    mask:cloneOp(attn,{id:"s-mask",kind:"mask",title:"Apply Causal / Pad Bounds",input:"scores + attention metadata",inputShape:"sparse scores + runtime metadata",output:"masked scores",outputShape:"same",formula:"Aᵢⱼ←valid_sparse(i,j) ? Aᵢⱼ : −∞",formulaNote:"Top-16 只决定候选 KV blocks；causal/padding 边界仍会在最终 Attention kernel 内再次约束可见 token。",weights:[]}),
-    softmax:cloneOp(attn,{id:"s-softmax",kind:"softmax",title:"Softmax",input:"masked scores",inputShape:"[B,64,S,≤2048]",output:"probabilities",outputShape:"same",weights:[]}),
-    pv:cloneOp(attn,{id:"s-pv",kind:"matmul",title:"P × selected V",input:"P, selected V",inputShape:"probabilities · KV pages",output:"heads",outputShape:"[B,S,8192]",weights:[]}),
+    qk:cloneOp(attn,{id:"s-qk",kind:"matmul",title:"Q × selected Kᵀ",input:"Qᵣ, selected K",inputShape:"[B,64/TP,S,128] · ≤16 pages/local KV group",output:"local sparse scores",outputShape:"[B,64/TP,S,≤2048]",formulaNote:"单 rank 只持有 64/TP 个 query heads；selected K 按本 rank 的 max(1,4/TP) KV groups 提供。",weights:[]}),
+    scale:cloneOp(attn,{id:"s-scale",kind:"scale",title:"Scale 1/√128",input:"scores",inputShape:"[B,64/TP,S,≤2048]",output:"scaled scores",outputShape:"same",weights:[]}),
+    mask:cloneOp(attn,{id:"s-mask",kind:"mask",title:"Apply Causal / Pad Bounds",input:"scores + attention metadata",inputShape:"[B,64/TP,S,≤2048] + runtime metadata",output:"masked scores",outputShape:"same",formula:"Aᵢⱼ←valid_sparse(i,j) ? Aᵢⱼ : −∞",formulaNote:"Top-16 只决定候选 KV blocks；causal/padding 边界仍会在最终 Attention kernel 内再次约束可见 token。head 维为单 TP rank 的 64/TP。",weights:[]}),
+    softmax:cloneOp(attn,{id:"s-softmax",kind:"softmax",title:"Softmax",input:"masked scores",inputShape:"[B,64/TP,S,≤2048]",output:"probabilities",outputShape:"same",weights:[]}),
+    pv:cloneOp(attn,{id:"s-pv",kind:"matmul",title:"P × selected V",input:"P, selected V",inputShape:"[B,64/TP,S,≤2048] · selected V pages",output:"local heads",outputShape:"[B,S,8192/TP]",formulaNote:"P × selected V 在每个 TP rank 上输出 8192/TP 的局部 attention 宽度，再进入 RowParallel O Projection。",weights:[]}),
     oproj:cloneOp(attn,{id:"s-oproj",kind:"linear",title:"O Projection",input:"heads",inputShape:"[B,S,8192]",output:"Yattn",outputShape:"[B,S,6144]",weights:attn.weights.filter(w=>w.key.includes("o_proj"))}),
     addattn:cloneOp(combine,{id:"s-addattn",kind:"add",title:"+ Attention Residual",input:"Yattn + residual",inputShape:"2 × [B,S,6144]",output:"U",outputShape:"[B,S,6144]",weights:[]}),
     postnorm:cloneOp(normBase,{id:"s-postnorm",kind:"norm",title:"Post-attn Gemma RMSNorm",summary:"输入 U 已由上游 Add 节点计算完成；此节点只执行 Gemma RMSNorm(U)，输出唯一的 Û 作为 MoE 输入。",formulaNote:"U 是上游 Add 的单一输出；本节点只计算 RMS(U) 与 (1+γpost) 缩放，不重复执行 residual add。",input:"U",inputShape:"[B,S,6144]",output:"Û",outputShape:"[B,S,6144]",source:"nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142",sourceUrl:NORM_FORWARD_URL,weights:[postNorm]}),
@@ -547,15 +601,15 @@ function StageZoom({type,stage,g,active,onHover,onLeave,onSelect,onClose}:{type:
     const edges:GraphEdge[]=[
       {from:"mlp-uhat",to:"mlp-gateup",toPort:"top"},{from:"mlp-wgate",to:"mlp-gateup",toPort:"top-left"},{from:"mlp-wup",to:"mlp-gateup",toPort:"top-right"},{from:"mlp-gateup",to:"mlp-packed"},{from:"mlp-packed",to:"mlp-split"},{from:"mlp-split",to:"mlp-gate"},{from:"mlp-split",to:"mlp-up"},{from:"mlp-gate",to:"mlp-gate-act"},{from:"mlp-up",to:"mlp-up-act"},{from:"mlp-gate-act",to:"mlp-mul"},{from:"mlp-up-act",to:"mlp-mul"},{from:"mlp-mul",to:"mlp-activated"},{from:"mlp-activated",to:"mlp-down"},{from:"mlp-wdown",to:"mlp-down",fromPort:"left",toPort:"right"},{from:"mlp-down",to:"mlp-y"},
     ];
-    return <section className="stage-zoom lesson-zoom"><header><div><span>SWIGLU-OAI MLP · L0–2</span><b>SwiGLU-OAI MLP</b></div><button onClick={onClose}>收起 ×</button></header><GraphSurface className="mlp-node-graph" edges={edges}>
-      <Tensor name="Û" shape="[B,S,H]" graphId="mlp-uhat"/><Tensor name="mlp.gate_proj.weight" shape="[H_dense,H]" role="weight" graphId="mlp-wgate"/><N id="gateup" graphId="mlp-gateup"/><Tensor name="mlp.up_proj.weight" shape="[H_dense,H]" role="weight" graphId="mlp-wup"/><Tensor name="packed gate_up" shape="[B,S,2H_dense]" graphId="mlp-packed"/><N id="gatesplit" graphId="mlp-split"/><Tensor name="gate" shape="[B,S,H_dense]" graphId="mlp-gate"/><Tensor name="up" shape="[B,S,H_dense]" graphId="mlp-up"/><div className="mini-math" data-graph-id="mlp-gate-act">clamp → SiLU(α·gate)</div><div className="mini-math" data-graph-id="mlp-up-act">clamp → up + β</div><button className="multiply-circle" data-graph-id="mlp-mul" aria-pressed={active===g.swiglu.id} onPointerDown={()=>onSelect(g.swiglu)} onClick={event=>{if(event.detail===0)onSelect(g.swiglu)}} onMouseEnter={()=>onHover(g.swiglu)} onMouseLeave={onLeave}>×</button><Tensor name="activated" shape="[B,S,H_dense]" graphId="mlp-activated"/><N id="down" graphId="mlp-down"/><Tensor name="mlp.down_proj.weight" shape="[H,H_dense]" role="weight" graphId="mlp-wdown"/><Tensor name="Yffn" shape="[B,S,H]" graphId="mlp-y"/>
+    return <section className="stage-zoom lesson-zoom"><header><span>SWIGLU-OAI MLP · L0–2</span><button onClick={onClose}>收起 ×</button></header><GraphSurface className="mlp-node-graph" edges={edges}>
+      <Tensor name="Û" shape="[B,S,H]" graphId="mlp-uhat"/><Tensor name="mlp.gate_proj.weight⁽ʳ⁾" shape="[H_dense/TP,H]" role="weight" graphId="mlp-wgate"/><N id="gateup" graphId="mlp-gateup"/><Tensor name="mlp.up_proj.weight⁽ʳ⁾" shape="[H_dense/TP,H]" role="weight" graphId="mlp-wup"/><Tensor name="packed gate_up⁽ʳ⁾" shape="[B,S,2H_dense/TP]" graphId="mlp-packed"/><N id="gatesplit" graphId="mlp-split"/><Tensor name="G⁽ʳ⁾ · gate" shape="[B,S,H_dense/TP]" graphId="mlp-gate"/><Tensor name="U⁽ʳ⁾ · up" shape="[B,S,H_dense/TP]" graphId="mlp-up"/><button type="button" className="mini-math activation-step" data-graph-id="mlp-gate-act" aria-pressed={active===g.swiglu.id} onPointerDown={()=>onSelect(g.swiglu)} onClick={event=>{if(event.detail===0)onSelect(g.swiglu)}} onMouseEnter={()=>onHover(g.swiglu)} onMouseLeave={onLeave}>clamp → Ḡ⁽ʳ⁾·σ(αḠ⁽ʳ⁾)</button><button type="button" className="mini-math activation-step" data-graph-id="mlp-up-act" aria-pressed={active===g.swiglu.id} onPointerDown={()=>onSelect(g.swiglu)} onClick={event=>{if(event.detail===0)onSelect(g.swiglu)}} onMouseEnter={()=>onHover(g.swiglu)} onMouseLeave={onLeave}>clamp → Ū⁽ʳ⁾ + β</button><button className="multiply-circle" data-graph-id="mlp-mul" aria-pressed={active===g.swiglu.id} onPointerDown={()=>onSelect(g.swiglu)} onClick={event=>{if(event.detail===0)onSelect(g.swiglu)}} onMouseEnter={()=>onHover(g.swiglu)} onMouseLeave={onLeave}>×</button><Tensor name="Z⁽ʳ⁾ · activated⁽ʳ⁾" shape="[B,S,H_dense/TP]" graphId="mlp-activated"/><N id="down" graphId="mlp-down"/><Tensor name="mlp.down_proj.weight⁽ʳ⁾" shape="[H,H_dense/TP]" role="weight" graphId="mlp-wdown"/><Tensor name="Yffn" shape="[B,S,H]" graphId="mlp-y"/>
     </GraphSurface></section>;
   }
   if(stage==="ffn"){
     const edges:GraphEdge[]=[
       {from:"moe-u",to:"moe-router"},{from:"moe-wrouter",to:"moe-router",fromPort:"right",toPort:"left"},{from:"moe-router",to:"moe-ids"},{from:"moe-router",to:"moe-rweights"},{from:"moe-u",to:"moe-experts",route:"side-left",fromPort:"left",toPort:"left"},{from:"moe-ids",to:"moe-experts"},{from:"moe-rweights",to:"moe-experts"},{from:"moe-wexperts",to:"moe-experts",fromPort:"right",toPort:"left"},{from:"moe-experts",to:"moe-routed"},{from:"moe-u",to:"moe-shared",fromPort:"bottom",toPort:"top"},{from:"moe-wshared",to:"moe-shared",fromPort:"left",toPort:"right"},{from:"moe-shared",to:"moe-shared-out"},{from:"moe-routed",to:"moe-sum"},{from:"moe-shared-out",to:"moe-sum"},{from:"moe-sum",to:"moe-y"},
     ];
-    return <section className="stage-zoom lesson-zoom"><header><div><span>TOP-4 MOE · L3–59</span><b>同一个 Û 同时进入 Router、Routed Experts 与 Shared Expert</b></div><button onClick={onClose}>收起 ×</button></header><GraphSurface className="moe-node-graph" edges={edges}><Tensor name="Û" shape="[B,S,H]" graphId="moe-u"/><Tensor name="block_sparse_moe.gate.weight · e_score_correction_bias" shape="[E,H] · [E]" role="weight" graphId="moe-wrouter"/><N id="router" graphId="moe-router"/><Tensor name="expert ids" shape="[B,S,K]" graphId="moe-ids"/><Tensor name="router weights" shape="[B,S,K]" graphId="moe-rweights"/><Tensor name="block_sparse_moe.experts.*.{w1,w3,w2}.weight" shape="E × expert weights" role="weight" graphId="moe-wexperts"/><N id="experts" graphId="moe-experts"/><Tensor name="weighted routed output" shape="[B,S,H]" graphId="moe-routed"/><N id="shared" graphId="moe-shared"/><Tensor name="block_sparse_moe.shared_experts.{gate_proj,up_proj,down_proj}.weight" shape="shared MLP weights" role="weight" graphId="moe-wshared"/><Tensor name="shared output" shape="[B,S,H]" graphId="moe-shared-out"/><N id="sum" graphId="moe-sum"/><Tensor name="Ymoe" shape="[B,S,H]" graphId="moe-y"/></GraphSurface></section>;
+    return <section className="stage-zoom lesson-zoom"><header><span>TOP-4 MOE + SHARED EXPERT · L3–59</span><button onClick={onClose}>收起 ×</button></header><GraphSurface className="moe-node-graph" edges={edges}><Tensor name="Û" shape="[B,S,H]" graphId="moe-u"/><Tensor name="block_sparse_moe.gate.weight · e_score_correction_bias" shape="[E,H] · [E]" role="weight" graphId="moe-wrouter"/><N id="router" graphId="moe-router"/><Tensor name="expert ids" shape="[B,S,K]" graphId="moe-ids"/><Tensor name="router weights" shape="[B,S,K]" graphId="moe-rweights"/><Tensor name="block_sparse_moe.experts.*.{w1,w3,w2}.weight" shape="E × expert weights" role="weight" graphId="moe-wexperts"/><N id="experts" graphId="moe-experts"/><Tensor name="weighted routed output" shape="[B,S,H]" graphId="moe-routed"/><N id="shared" graphId="moe-shared"/><Tensor name="block_sparse_moe.shared_experts.{gate_proj,up_proj,down_proj}.weight" shape="shared MLP weights" role="weight" graphId="moe-wshared"/><Tensor name="shared output" shape="[B,S,H]" graphId="moe-shared-out"/><N id="sum" graphId="moe-sum"/><Tensor name="Ymoe" shape="[B,S,H]" graphId="moe-y"/></GraphSurface></section>;
   }
   const dense=type==="dense";
   const ids=dense?{project:"qkv",split:"split",qnorm:"qnorm",knorm:"knorm",ropeq:"ropeq",ropek:"ropek"}:{project:"packed",split:"split",qnorm:"mainnorm",knorm:"mainnorm",ropeq:"rope",ropek:"rope"};
@@ -564,7 +618,7 @@ function StageZoom({type,stage,g,active,onHover,onLeave,onSelect,onClose}:{type:
     {from:"attn-x",to:"attn-project",fromPort:"right",toPort:"left"},{from:"attn-project",to:"attn-packed",fromPort:"right",toPort:"left"},{from:"attn-packed",to:"attn-split",fromPort:"right",toPort:"left"},{from:"attn-split",to:"attn-q"},{from:"attn-split",to:"attn-k"},{from:"attn-split",to:"attn-v"},{from:"attn-q",to:"attn-qnorm",toPort:"top-left"},{from:"attn-wq",to:"attn-qnorm",toPort:"top-right"},{from:"attn-qnorm",to:"attn-qt"},{from:"attn-qt",to:"attn-qrope"},{from:"attn-posq",to:"attn-qrope",fromPort:"left",toPort:"right"},{from:"attn-qrope",to:"attn-qr"},{from:"attn-k",to:"attn-knorm",toPort:"top-left"},{from:"attn-wk",to:"attn-knorm",toPort:"top-right"},{from:"attn-knorm",to:"attn-kt"},{from:"attn-kt",to:"attn-krope"},{from:"attn-posk",to:"attn-krope",fromPort:"left",toPort:"right"},{from:"attn-krope",to:"attn-kr"},{from:"attn-kr",to:"attn-cache"},{from:"attn-v",to:"attn-cache"},{from:"attn-cache-meta",to:"attn-cache",fromPort:"left",toPort:"right"},{from:"attn-cache",to:"attn-paged-k"},{from:"attn-cache",to:"attn-paged-v"},{from:"attn-qr",to:"attn-qk"},{from:keyId,to:"attn-qk"},{from:"attn-qk",to:"attn-scale",fromPort:"right",toPort:"left"},{from:"attn-scale",to:"attn-scaled",fromPort:"right",toPort:"left"},{from:"attn-scaled",to:"attn-mask",fromPort:"right",toPort:"left"},{from:"attn-bounds",to:"attn-mask"},{from:"attn-mask",to:"attn-softmax",fromPort:"right",toPort:"left"},{from:"attn-softmax",to:"attn-p",fromPort:"right",toPort:"left"},{from:"attn-p",to:"attn-pv",fromPort:"right",toPort:"left"},{from:valueId,to:"attn-pv"},{from:"attn-pv",to:"attn-heads",fromPort:"right",toPort:"left"},{from:"attn-heads",to:"attn-oproj",fromPort:"right",toPort:"left"},{from:"attn-oproj",to:"attn-y",fromPort:"right",toPort:"left"},
     ...(!dense?[{from:"attn-split",to:"attn-qidx"},{from:"attn-split",to:"attn-kidx"},{from:"attn-qidx",to:"attn-idxnorm"},{from:"attn-kidx",to:"attn-idxnorm"},{from:"attn-idxnorm",to:"attn-idxscore",fromPort:"right" as EdgePort,toPort:"left" as EdgePort},{from:"attn-idxbounds",to:"attn-idxscore"},{from:"attn-idxscore",to:"attn-blockmax",fromPort:"right" as EdgePort,toPort:"left" as EdgePort},{from:"attn-blockmax",to:"attn-topk",fromPort:"right" as EdgePort,toPort:"left" as EdgePort},{from:"attn-topk",to:"attn-topids",fromPort:"right" as EdgePort,toPort:"left" as EdgePort},{from:"attn-topids",to:"attn-select"},{from:"attn-paged-k",to:"attn-select"},{from:"attn-paged-v",to:"attn-select"},{from:"attn-select",to:"attn-selected-k",fromPort:"right" as EdgePort,toPort:"left" as EdgePort},{from:"attn-select",to:"attn-selected-v",fromPort:"right" as EdgePort,toPort:"left" as EdgePort}] : []),
   ];
-  return <section className="stage-zoom lesson-zoom attention-lesson"><header><div><span>{dense?"GQA + PARTIAL ROPE · L0–2":"MINIMAX SPARSE ATTENTION + PARTIAL ROPE · L3–59"}</span><b>{dense?"GQA + Partial RoPE":"MiniMax Sparse Attention + Partial RoPE"}</b></div><button onClick={onClose}>收起 ×</button></header><GraphSurface className="attention-flowchart connected-attention-graph" edges={edges}>
+  return <section className="stage-zoom lesson-zoom attention-lesson"><header><span>{dense?"GQA + PARTIAL ROPE · L0–2":"MINIMAX SPARSE ATTENTION + PARTIAL ROPE · L3–59"}</span><button onClick={onClose}>收起 ×</button></header><GraphSurface className="attention-flowchart connected-attention-graph" edges={edges}>
     <div className="compact-chain"><Tensor name="X̂" shape="[B,S,H]" graphId="attn-x"/><N id={ids.project} graphId="attn-project"/><Tensor name="packed" shape={dense?"[B,S,9216]":"[B,S,9856]"} graphId="attn-packed"/><N id={ids.split} graphId="attn-split"/></div>
     {!dense&&<div className="index-ribbon"><div className="multi-source"><Tensor name="Qidx" shape="[B,S,4,128]" graphId="attn-qidx"/><Tensor name="Kidx" shape="[B,T,1,128]" graphId="attn-kidx"/></div><N id="idxnorm" graphId="attn-idxnorm"/><N id="idxscore" graphId="attn-idxscore"/><Tensor name="causal bounds" shape="runtime" role="side" graphId="attn-idxbounds"/><N id="blockmax" graphId="attn-blockmax"/><N id="topk" graphId="attn-topk"/><Tensor name="Top-16 block ids" shape="[B,S,4,16]" graphId="attn-topids"/></div>}
     <div className="qkv-lanes"><section><header>Q PATH</header><IW id={ids.qnorm} inputName="Q" inputShape="[B,Nₕ,S,Dₕ]" inputGraphId="attn-q" graphId="attn-qnorm" weightGraphId="attn-wq"/><div className="two-source"><Tensor name="Q̃" shape="same" graphId="attn-qt"/><Tensor name="positions" shape="[Nq]" role="side" graphId="attn-posq"/></div><N id={ids.ropeq} graphId="attn-qrope"/><Tensor name="Qᵣ" shape="[B,Nₕ,S,Dₕ]" graphId="attn-qr"/></section><section><header>K PATH</header><IW id={ids.knorm} inputName="K" inputShape="[B,Nₖᵥ,S,Dₕ]" weightIndex={dense?0:1} inputGraphId="attn-k" graphId="attn-knorm" weightGraphId="attn-wk"/><div className="two-source"><Tensor name="K̃" shape="same" graphId="attn-kt"/><Tensor name="positions" shape="[Nq]" role="side" graphId="attn-posk"/></div><N id={ids.ropek} graphId="attn-krope"/><Tensor name="Kᵣ" shape="[B,Nₖᵥ,S,Dₕ]" graphId="attn-kr"/></section><section><header>V + KV CACHE</header><Tensor name="V" shape="[B,Nₖᵥ,S,Dₕ]" graphId="attn-v"/><Tensor name="slot_mapping · block_table" shape="runtime" role="side" graphId="attn-cache-meta"/><N id="cache" graphId="attn-cache"/><div className="two-source"><Tensor name="paged K" shape="KV pages" graphId="attn-paged-k"/><Tensor name="paged V" shape="KV pages" graphId="attn-paged-v"/></div></section></div>
@@ -596,7 +650,38 @@ function LatexFormula({node}:{node:OpNode}){
 }
 
 function symbolicShape(shape:string){
-  return shape.replaceAll("[B,64,S,128]","[B,Nₕ,S,Dₕ]").replaceAll("[B,64,S,T]","[B,Nₕ,S,T]").replaceAll("[B,4,S,128]","[B,Nₖᵥ,S,Dₕ]").replaceAll("[B,4,T,128]","[B,Nₖᵥ,T,Dₕ]").replaceAll("[B,S,12288]","[B,S,H_dense]").replaceAll("[B,S,6144]","[B,S,H]").replaceAll("[B,S,8192]","[B,S,Nₕ·Dₕ]").replaceAll("[B,S,9216]","[B,S,(Nₕ+2Nₖᵥ)·Dₕ]").replaceAll("[B,S,9856]","[B,S,QKV+Index]").replaceAll("12288","H_dense").replaceAll("6144","H").replaceAll("8192","Nₕ·Dₕ").replaceAll("9216","(Nₕ+2Nₖᵥ)·Dₕ").replaceAll("9856","QKV+Index").replaceAll("200064","V");
+  return shape
+    .replaceAll("[B,64/TP,S,128]","[B,Nₕ/TP,S,Dₕ]")
+    .replaceAll("[B,max(1,4/TP),T,128]","[B,Nₖᵥ,rank,T,Dₕ]")
+    .replaceAll("[B,max(1,4/TP),S,128]","[B,N_idx,rank,S,D_idx]")
+    .replaceAll("[B,64/TP,S,T]","[B,Nₕ/TP,S,T]")
+    .replaceAll("[B,64/TP,S,Ksel]","[B,Nₕ/TP,S,Ksel]")
+    .replaceAll("[B,64/TP,S,≤2048]","[B,Nₕ/TP,S,Ksel]")
+    .replaceAll("[B,S,8192/TP]","[B,S,Nₕ·Dₕ/TP]")
+    .replaceAll("[B,64,S,128]","[B,Nₕ,S,Dₕ]")
+    .replaceAll("[B,64,S,T]","[B,Nₕ,S,T]")
+    .replaceAll("[B,4,S,128]","[B,Nₖᵥ,S,Dₕ]")
+    .replaceAll("[B,4,T,128]","[B,Nₖᵥ,T,Dₕ]")
+    .replaceAll("[B,S,24576/TP]","[B,S,2H_dense/TP]")
+    .replaceAll("[B,S,12288/TP]","[B,S,H_dense/TP]")
+    .replaceAll("[B,S,24576]","[B,S,2H_dense]")
+    .replaceAll("[B,S,12288]","[B,S,H_dense]")
+    .replaceAll("[B,S,6144]","[B,S,H]")
+    .replaceAll("[B,S,8192]","[B,S,Nₕ·Dₕ]")
+    .replaceAll("[B,S,9216]","[B,S,(Nₕ+2Nₖᵥ)·Dₕ]")
+    .replaceAll("[B,S,9856]","[B,S,QKV+Index]")
+    .replaceAll("24576/TP","2H_dense/TP")
+    .replaceAll("12288/TP","H_dense/TP")
+    .replaceAll("8192/TP","Nₕ·Dₕ/TP")
+    .replaceAll("max(1,4/TP)","Nₖᵥ,rank")
+    .replaceAll("64/TP","Nₕ/TP")
+    .replaceAll("24576","2H_dense")
+    .replaceAll("12288","H_dense")
+    .replaceAll("6144","H")
+    .replaceAll("8192","Nₕ·Dₕ")
+    .replaceAll("9216","(Nₕ+2Nₖᵥ)·Dₕ")
+    .replaceAll("9856","QKV+Index")
+    .replaceAll("200064","V");
 }
 
 function ShapeRows({shape}:{shape:string}){
@@ -605,7 +690,10 @@ function ShapeRows({shape}:{shape:string}){
 
 function bindingsFor(node:OpNode):IoBinding[]{
   const dataInputs=INPUT_OVERRIDES[node.id]??[{kind:node.kind==="io"?"external":"upstream",label:node.input,shape:node.inputShape,from:node.kind==="io"?"模型调用方 / runtime":"图中紧邻的上游模块输出"}];
-  const weightInputs=node.weights.map(weight=>({kind:"weight" as const,label:weight.key,shape:`${weight.dtype} · ${weight.shape}`,from:weight.runtime?`checkpoint → ${weight.runtime}`:`checkpoint · ${weight.shard}`,note:weight.params?`${weight.params} parameters`:undefined}));
+  const weightInputs=node.weights.map(weight=>{
+    const tpShape=node.id==="d-gateup"?weight.shape.replace("[12288,6144]","[12288/TP,6144]"):node.id==="d-down"?weight.shape.replace("[6144,12288]","[6144,12288/TP]"):null;
+    return {kind:"weight" as const,label:weight.key,shape:tpShape?`${weight.dtype} · TP shard ${tpShape} · checkpoint ${weight.shape}`:`${weight.dtype} · ${weight.shape}`,from:weight.runtime?`checkpoint → ${weight.runtime}`:`checkpoint · ${weight.shard}`,note:weight.params?`${weight.params} parameters`:undefined};
+  });
   return [...dataInputs,...weightInputs];
 }
 
@@ -616,22 +704,23 @@ function IoView({node}:{node:OpNode}){
 }
 
 function CodeView({node}:{node:OpNode}){
-  const sections=(node.codeSections??[]).filter(section=>/forward|CALL|ENTER|PROJECT|ATTEND|ROUTE|SHARED/.test(`${section.title} ${section.stage}`));
+  const sections=(node.codeSections??[]).filter(section=>/forward|INIT|CALL|ENTER|PROJECT|ATTEND|ROUTE|SHARED/.test(`${section.title} ${section.stage}`));
   return <div className="code-view">
     <a className="code-source" href={pinSource(node.sourceUrl)} target="_blank" rel="noreferrer"><span>PINNED SOURCE · {VLLM_COMMIT.slice(0,7)}</span><b>{node.source}</b><i>↗</i></a>
     {sections.length?<section className="code-call-chain"><header><span>IMPLEMENTATION TRACE</span><b>forward → fused kernel → 数学定义</b></header>{sections.map((section,index)=><article className="code-section" key={`${node.id}-${section.stage}-${index}`}><header><div><span>{section.stage}</span><b>{section.title}</b><small>{section.location}</small></div>{section.url&&<a href={section.url} target="_blank" rel="noreferrer" aria-label={`打开 ${section.title} 固定源码`}>↗</a>}</header><pre><code>{section.code}</code></pre></article>)}</section>:<div className="code-empty"><b>此节点没有独立 forward</b><p>它由所在模块的 forward 调度，或只是一个数学拆解步骤。</p></div>}
   </div>;
 }
 
-type StageOverview = { kicker:string; title:string; summary:string; flow:string; formula:string; notes:string[]; parameters:readonly (readonly [string,string,string])[] };
+type StageOverview = { kicker:string; title:string; summary:string; flow:string; formula:string; formulaNote?:string; notes:string[]; parameters:readonly (readonly [string,string,string])[] };
 
 function stageOverview(type:LayerType,stage:Exclude<ExpandedStage,null>):StageOverview{
   if(type==="dense"&&stage==="ffn")return {
     kicker:"DENSE FFN · L0–L2",title:"SwiGLU-OAI MLP",summary:"逐 token 扩维、门控，再投回 hidden size。",
-    flow:"Û → Gate + Up Projection → Split → SwiGLU-OAI → Down Projection → Yffn",
-    formula:"ḡ=min(g,c) · ū=clip(u,−c,c) · h=ḡ·σ(αḡ)·(ū+β)",
+    flow:"Û → TP-local Gate + Up Projection → Split → SwiGLU-OAI → RowParallel Down Projection → Yffn",
+    formula:"H = 6144，H_dense = 12288\nG⁽ʳ⁾ = Û (W_gate⁽ʳ⁾)ᵀ\nU⁽ʳ⁾ = Û (W_up⁽ʳ⁾)ᵀ\nḠ⁽ʳ⁾ = min(G⁽ʳ⁾, c)\nŪ⁽ʳ⁾ = clip(U⁽ʳ⁾, −c, c)\nZ⁽ʳ⁾ = Ḡ⁽ʳ⁾ ⊙ σ(αḠ⁽ʳ⁾) ⊙ (Ū⁽ʳ⁾ + β)\nYffn = Σᵣ Z⁽ʳ⁾ (W_down⁽ʳ⁾)ᵀ",
+    formulaNote:"r 表示 TP rank；G⁽ʳ⁾、U⁽ʳ⁾、Z⁽ʳ⁾ 的最后一维都是 H_dense/TP。σ 表示 sigmoid，⊙ 表示逐元素相乘；Down Projection 最后归并各 rank 的部分结果。",
     notes:["Gate 与 Up 权重和同一个输入 Û 直接进入 fused projection。","投影结果沿最后一维 Split；MLP 不混合不同 token。"],
-    parameters:[["α","1.702","swiglu_alpha"],["β","1.0","activation beta"],["c","7.0","swiglu_limit"],["H_dense","12288","dense_intermediate_size"]],
+    parameters:[["α","1.702","swiglu_alpha"],["β","1.0","swiglu_beta"],["c","7.0","swiglu_limit"],["H_dense","12288","dense_intermediate_size"]],
   };
   if(stage==="attention")return type==="dense"?{
     kicker:"DENSE ATTENTION · L0–L2",title:"GQA + Partial RoPE",summary:"用 Q 检索完整可见 KV 历史，再按概率聚合 V。",
@@ -657,7 +746,7 @@ function stageOverview(type:LayerType,stage:Exclude<ExpandedStage,null>):StageOv
 
 function StageOverviewPanel({type,stage}:{type:LayerType;stage:Exclude<ExpandedStage,null>}){
   const overview=stageOverview(type,stage);
-  return <aside className="detail-panel stage-overview-panel"><header className="stage-overview-header"><span>{overview.kicker}</span><h2>{overview.title}</h2><p>{overview.summary}</p></header><div className="stage-overview-body"><section><span>数据流</span><code>{overview.flow}</code></section><section><span>计算语义</span><code>{overview.formula}</code></section><section className="stage-parameter-section"><span>关键参数</span><div className="stage-parameters">{overview.parameters.map(([symbol,value,source])=><article key={symbol}><b>{symbol}</b><strong>{value}</strong><small>{source}</small></article>)}</div></section><section><span>边界说明</span>{overview.notes.map(note=><p key={note}>{note}</p>)}</section></div><footer>展开图说明 · 点击算子查看独立详情</footer></aside>;
+  return <aside className="detail-panel stage-overview-panel"><header className="stage-overview-header"><span>{overview.kicker}</span><h2>{overview.title}</h2><p>{overview.summary}</p></header><div className="stage-overview-body"><section><span>数据流</span><code>{overview.flow}</code></section><section className="stage-formula-section"><span>计算语义</span><code>{overview.formula}</code>{overview.formulaNote&&<p>{overview.formulaNote}</p>}</section><section className="stage-parameter-section"><span>关键参数</span><div className="stage-parameters">{overview.parameters.map(([symbol,value,source])=><article key={symbol}><b>{symbol}</b><strong>{value}</strong><small>{source}</small></article>)}</div></section><section><span>边界说明</span>{overview.notes.map(note=><p key={note}>{note}</p>)}</section></div><footer>展开图说明 · 点击算子查看独立详情</footer></aside>;
 }
 
 function DetailPanel({node,tab,setTab,pinned,onClear,expanded,layerType}:{node:OpNode|null;tab:Tab;setTab:(t:Tab)=>void;pinned:boolean;onClear:()=>void;expanded:ExpandedStage;layerType:LayerType}){
