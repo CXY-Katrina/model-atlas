@@ -104,6 +104,18 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.doesNotMatch(source, /label="γ(?:post|q|k)"/);
   assert.doesNotMatch(source, /Tensor name="W(?:gate|up|down|router|routed|shared)"/);
   assert.match(source, /mlp\.gate_proj\.weight/);
+  assert.match(source, /id:"d-gatesplit",kind:"split",title:"Split Gate \/ Up"/);
+  assert.match(source, /graphId="mlp-packed"/);
+  assert.match(source, /graphId="mlp-split"/);
+  assert.match(source, /data-graph-id="mlp-gate-act">clamp → SiLU\(α·gate\)/);
+  assert.match(source, /data-graph-id="mlp-up-act">clamp → up \+ β/);
+  assert.doesNotMatch(source, /graphId="mlp-post"|graphId="mlp-wpost"|graphId="mlp-u"/);
+  assert.doesNotMatch(source, /className="lesson-notes"/);
+  assert.match(source, /function StageOverviewPanel/);
+  assert.match(source, /\["α","1\.702","swiglu_alpha"\]/);
+  assert.match(source, /\["β","1\.0","activation beta"\]/);
+  assert.match(source, /\["c","7\.0","swiglu_limit"\]/);
+  assert.match(source, /\["H_dense","12288","dense_intermediate_size"\]/);
   assert.doesNotMatch(page, /DECODER LAYER TYPE|Dense GQA · SwiGLU MLP|Indexer Attention · Top-4 MoE/);
   assert.match(source, /block_sparse_moe\.gate\.weight/);
   assert.match(source, /block_sparse_moe\.experts\.\*\.\{w1,w3,w2\}\.weight/);
@@ -184,6 +196,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.decoder-node-graph>\.stage-summary\{[^}]*width:max-content/);
   assert.match(css, /\.connected-attention-graph/);
   assert.match(css, /\.mlp-node-graph/);
+  assert.match(css, /\.mlp-node-graph>\[data-graph-id\]\{[^}]*width:max-content[^}]*max-width:260px/);
+  assert.match(css, /\.stage-overview-panel\{grid-template-rows:auto minmax\(0,1fr\) 28px\}/);
   assert.match(css, /\.moe-node-graph/);
   assert.match(css, /\.shape-rows/);
   assert.match(css, /\.model-facts small\{[^}]*font-size:12px/);
