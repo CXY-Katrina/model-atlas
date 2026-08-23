@@ -119,7 +119,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /同一个 Û 同时进入 Router、Routed Experts 与 Shared Expert/);
   assert.match(source, /symbolicShape/);
   assert.doesNotMatch(source, /CURRENT OPERATOR|className=\{`io-operator/);
-  assert.match(source, /<i>SHAPE<\/i><code title=\{shape\}>/);
+  assert.match(source, /<i>符号<\/i><code title=\{symbolicShape\(shape\)\}>/);
+  assert.match(source, /<i>实际<\/i><code title=\{shape\}>/);
+  assert.match(source, /replaceAll\("6144","H"\)/);
   assert.match(source, /完整 config\.json/);
   assert.match(source, /CONFIG_SYMBOLS/);
   assert.match(source, /<th>参数<\/th><th>符号<\/th><th>值<\/th>/);

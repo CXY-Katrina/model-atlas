@@ -528,11 +528,11 @@ function LatexFormula({node}:{node:OpNode}){
 }
 
 function symbolicShape(shape:string){
-  return shape.replaceAll("[B,64,S,128]","[B,Nₕ,S,Dₕ]").replaceAll("[B,64,S,T]","[B,Nₕ,S,T]").replaceAll("[B,4,S,128]","[B,Nₖᵥ,S,Dₕ]").replaceAll("[B,4,T,128]","[B,Nₖᵥ,T,Dₕ]").replaceAll("[B,S,12288]","[B,S,H_dense]").replaceAll("[B,S,6144]","[B,S,H]").replaceAll("[B,S,8192]","[B,S,Nₕ·Dₕ]").replaceAll("[B,S,9216]","[B,S,(Nₕ+2Nₖᵥ)·Dₕ]").replaceAll("[B,S,9856]","[B,S,QKV+Index]").replaceAll("200064","V");
+  return shape.replaceAll("[B,64,S,128]","[B,Nₕ,S,Dₕ]").replaceAll("[B,64,S,T]","[B,Nₕ,S,T]").replaceAll("[B,4,S,128]","[B,Nₖᵥ,S,Dₕ]").replaceAll("[B,4,T,128]","[B,Nₖᵥ,T,Dₕ]").replaceAll("[B,S,12288]","[B,S,H_dense]").replaceAll("[B,S,6144]","[B,S,H]").replaceAll("[B,S,8192]","[B,S,Nₕ·Dₕ]").replaceAll("[B,S,9216]","[B,S,(Nₕ+2Nₖᵥ)·Dₕ]").replaceAll("[B,S,9856]","[B,S,QKV+Index]").replaceAll("12288","H_dense").replaceAll("6144","H").replaceAll("8192","Nₕ·Dₕ").replaceAll("9216","(Nₕ+2Nₖᵥ)·Dₕ").replaceAll("9856","QKV+Index").replaceAll("200064","V");
 }
 
 function ShapeRows({shape}:{shape:string}){
-  return <div className="shape-rows"><span><i>SHAPE</i><code title={shape}>{symbolicShape(shape)}</code></span></div>;
+  return <div className="shape-rows"><span><i>符号</i><code title={symbolicShape(shape)}>{symbolicShape(shape)}</code></span><span><i>实际</i><code title={shape}>{shape}</code></span></div>;
 }
 
 function bindingsFor(node:OpNode):IoBinding[]{
