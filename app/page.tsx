@@ -119,6 +119,39 @@ const FORMULA_NOTE: Partial<Record<OpKind,string>> = {
   norm:"把每个 token 的向量缩放到稳定范围；shape 不变。",linear:"W 是当前模块绑定的权重；最后一维由 W 的输出维决定。",split:"只切分最后一维，不做数值计算，也没有权重。",rope:"position 决定旋转角度；这里只旋转每个 head 的前 64 维。",matmul:"沿共同的 head_dim 相乘并求和。",scale:"dₕ=128；缩放避免 score 随维度增大。",mask:"不可见位置加 −∞，softmax 后概率变为 0。",softmax:"把每行 score 转为和为 1 的概率。",activation:"g 是 gate，u 是 up；实际实现还包含 limit=7 的截断。",route:"只选择去哪里计算；Top-K 本身不生成 expert 输出。",cache:"slot 与 block table 由 runtime 提供，权重不参与。",add:"残差支路与计算支路逐元素相加，shape 必须一致。",io:"这是数据入口或运行时元数据，不执行可训练计算。",
 };
 
+type FormulaTerm = readonly [symbol:string,meaning:string];
+
+const FORMULA_TERMS_BY_KIND: Record<OpKind,readonly FormulaTerm[]> = {
+  io:[["x","输入"],["y","输出"]],
+  norm:[["x","输入向量"],["y","归一化输出"],["H","归一化维度"],["γ","可训练缩放权重"],["ε","数值稳定项"],["RMS(x)","均方根"]],
+  linear:[["x","输入张量"],["W","投影权重"],["y","线性投影输出"]],
+  split:[["x","待切分张量"],["a,b,…","沿最后一维得到的输出"]],
+  rope:[["q / k","Q 或 K 向量"],["p","token position"],["dᵣ","参与旋转的维度"],["θ","旋转角度"]],
+  matmul:[["a","左输入张量"],["b","右输入张量"],["y","矩阵乘输出"]],
+  scale:[["x","未缩放分数"],["dₕ","head_dim = 128"],["y","缩放后分数"]],
+  mask:[["x","原始 attention score"],["M","causal / padding mask"],["y","mask 后 score"]],
+  softmax:[["x","输入 score"],["p","归一化概率"]],
+  activation:[["g","gate 分支"],["u","up 分支"],["α","sigmoid scale = 1.702"],["c","clamp limit = 7"],["y","SwiGLU-OAI 输出"]],
+  route:[["s","路由分数"],["K","选择数量"],["𝓔 / I","选中的 expert 或 block id"]],
+  cache:[["K / V","写入 cache 的张量"],["slot","物理 cache 位置"],["block_table","逻辑块到物理页映射"]],
+  add:[["x","residual 分支"],["f(x)","当前计算分支"],["y","逐元素相加结果"]],
+};
+
+const FORMULA_TERMS_BY_ID: Partial<Record<string,readonly FormulaTerm[]>> = {
+  "d-norm":[["x","hidden_states · [B,S,H]"],["y","normalized hidden_states"],["H","hidden_size = 6144"],["γ","input_layernorm.weight"],["ε","rms_norm_eps = 10⁻⁶"],["RMS(x)","√(Σxⱼ²/H + ε)"]],
+  "s-norm":[["x","hidden_states · [B,S,H]"],["y","normalized hidden_states"],["H","hidden_size = 6144"],["γ","input_layernorm.weight"],["ε","rms_norm_eps = 10⁻⁶"],["RMS(x)","√(Σxⱼ²/H + ε)"]],
+  "d-postnorm":[["Xₗ","attention residual stream"],["Yattn","Attention 输出"],["U","Xₗ + Yattn"],["Û","Gemma RMSNorm(U)"],["γpost","post_attention_layernorm.weight"],["ε","10⁻⁶"]],
+  "s-postnorm":[["Xₗ","attention residual stream"],["Yattn","Sparse Attention 输出"],["U","Xₗ + Yattn"],["Û","Gemma RMSNorm(U)"],["γpost","post_attention_layernorm.weight"],["ε","10⁻⁶"]],
+  "d-qnorm":[["Q","Query heads"],["Q̃","归一化后的 Q"],["Dₕ","head_dim = 128"],["γQ","q_norm.weight"],["ε","10⁻⁶"]],
+  "d-knorm":[["K","Key heads"],["K̃","归一化后的 K"],["Dₕ","head_dim = 128"],["γK","k_norm.weight"],["ε","10⁻⁶"]],
+  "s-mainnorm":[["Q / K","主 Attention 的 Q/K"],["Q̃ / K̃","归一化后的 Q/K"],["Dₕ","head_dim = 128"],["γQ / γK","Q/K norm weights"],["ε","10⁻⁶"]],
+  "s-idxnorm":[["Qidx / Kidx","Indexer Q/K"],["Q̃idx / K̃idx","归一化后的 Indexer Q/K"],["Didx","index_dim = 128"],["ε","10⁻⁶"]],
+};
+
+function formulaTerms(node:OpNode){
+  return FORMULA_TERMS_BY_ID[node.id]??FORMULA_TERMS_BY_KIND[node.kind];
+}
+
 const LATEX_BY_ID: Record<string,string> = {
   "d-position":String.raw`\begin{aligned}q_b&=\mathrm{num\_scheduled\_tokens}[b]\\p_{b,i}&=\mathrm{num\_computed\_tokens}[b]+i,\quad 0\le i<q_b\\\mathbf p&=\operatorname{concat}_{b=1}^{B}(p_{b,0},\ldots,p_{b,q_b-1})\in\mathbb Z^{N_q}\end{aligned}`,
   "s-position":String.raw`\begin{aligned}q_b&=\mathrm{num\_scheduled\_tokens}[b]\\p_{b,i}&=\mathrm{num\_computed\_tokens}[b]+i,\quad 0\le i<q_b\\\mathbf p&=\operatorname{concat}_{b=1}^{B}(p_{b,0},\ldots,p_{b,q_b-1})\in\mathbb Z^{N_q}\end{aligned}`,
@@ -594,7 +627,7 @@ function DetailPanel({node,tab,setTab,pinned,onClear}:{node:OpNode|null;tab:Tab;
   if(!node)return <aside className="detail-panel detail-empty"><div><span>MODULE DETAIL</span><b>尚未选择模块</b><p>点击左侧任一运算模块后，可在这里查看固定的 I/O、权重、公式和 forward 代码。</p></div></aside>;
   return <aside className="detail-panel"><header className="detail-header"><div><span>{node.kicker}</span><h2>{node.title}</h2></div>{pinned?<button className="unpin-button" aria-label="取消固定" title="取消固定" onClick={onClear}>×</button>:<i className={`kind-dot op-${node.kind}`}/>}<p>{node.summary}</p><code>{node.runtime}</code></header><div className="detail-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div><div className={`detail-content detail-${tab}`}>
     {tab==="io"&&<IoView node={node}/>}
-    {tab==="formula"&&<div className="formula-view"><span>作用</span><div className="formula-purpose">{node.summary}</div><span>实际公式</span><LatexFormula node={node}/><div className="formula-implementation"><b>一句话解释</b><p>{node.formulaNote??FORMULA_NOTE[node.kind]}</p></div><div className="formula-terms"><span><b>x / a / b</b>输入张量</span><span><b>y / p</b>输出张量</span><span><b>W</b>权重矩阵</span><span><b>dₕ</b>head_dim = 128</span></div></div>}
+    {tab==="formula"&&<div className="formula-view"><span>作用</span><div className="formula-purpose">{node.summary}</div><span>实际公式</span><LatexFormula node={node}/><div className="formula-implementation"><b>一句话解释</b><p>{node.formulaNote??FORMULA_NOTE[node.kind]}</p></div><div className="formula-terms">{formulaTerms(node).map(([symbol,meaning])=><span key={symbol}><b>{symbol}</b>{meaning}</span>)}</div></div>}
     {tab==="code"&&<CodeView node={node}/>}
     </div><footer>vLLM @ {VLLM_COMMIT.slice(0,7)} · official safetensors</footer></aside>;
 }

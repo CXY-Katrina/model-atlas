@@ -70,6 +70,10 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /图中 residual 沿旁路单独保留/);
   assert.match(source, /output:\s*"normalized hidden_states", outputShape:\s*"\[B,S,6144\]"/);
   assert.doesNotMatch(source, /output:"normalized · updated residual"|outputShape:"\[B,S,6144\] ×2"/);
+  assert.match(source, /FORMULA_TERMS_BY_ID/);
+  assert.match(source, /\["γ","input_layernorm\.weight"\]/);
+  assert.match(source, /\["H","hidden_size = 6144"\]/);
+  assert.doesNotMatch(source, /<b>x \/ a \/ b<\/b>/);
   assert.match(source, /MergedColumnParallelLinear/);
   assert.match(source, /I\/O \+ 权重/);
   assert.match(source, /INPUT BINDINGS/);
