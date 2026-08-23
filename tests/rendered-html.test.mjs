@@ -238,6 +238,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.mlp-node-graph \[data-graph-id="mlp-wdown"\]\{grid-area:9\/5\}/);
   assert.match(css, /\.moe-node-graph/);
   assert.match(css, /\.moe-node-graph \[data-graph-id="moe-experts"\]\{grid-area:4\/3\}/);
+  assert.match(css, /\.moe-node-graph \[data-graph-id="moe-sum"\]\{grid-area:6\/4\}/);
+  assert.match(css, /\.moe-node-graph \[data-graph-id="moe-y"\]\{grid-area:7\/4\}/);
+  assert.match(css, /\.moe-node-graph \.tensor-weight\{min-height:64px;max-height:none;padding:10px 14px\}/);
   assert.match(css, /\.shape-rows/);
   assert.match(css, /\.shape-rows code\{[^}]*white-space:normal[^}]*overflow:visible[^}]*text-overflow:clip[^}]*overflow-wrap:anywhere/);
   assert.match(css, /@media\(min-width:1160px\)\{\.screen-grid\{grid-template-columns:minmax\(680px,1fr\) 460px\}\}/);
