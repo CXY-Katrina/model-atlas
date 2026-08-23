@@ -214,7 +214,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.binding-external/);
   assert.match(css, /\.decoder-column/);
   assert.match(css, /\.layer-type-options button\{[^}]*align-content:center/);
-  assert.match(css, /\.decoder-workbench\.has-zoom\{[^}]*grid-template-columns:minmax\(440px,\.85fr\) minmax\(0,2fr\)/);
+  assert.match(css, /\.decoder-workbench\.has-zoom\{grid-template-columns:minmax\(0,1fr\);gap:0\}/);
+  assert.match(source, /\{!expanded&&<GraphSurface className="decoder-column decoder-node-graph"/);
+  assert.match(source, /\{expanded&&<StageZoom/);
   assert.match(css, /\.stage-zoom/);
   assert.match(css, /\.stage-zoom>header\{align-items:center\}/);
   assert.match(css, /\.parallel-experts/);

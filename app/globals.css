@@ -91,6 +91,7 @@
 
 /* Keep the expanded-stage caption centered and the dense MLP graph horizontally compact. */
 .stage-zoom>header{align-items:center}.mlp-node-graph{width:min(600px,96%);gap:8px 6px;padding:8px 8px}
+.decoder-workbench.has-zoom{grid-template-columns:minmax(0,1fr);gap:0}.decoder-workbench.has-zoom>.stage-zoom{width:100%}
 .mlp-node-graph [data-graph-id="mlp-wdown"]{grid-area:9/5}
 .moe-node-graph [data-graph-id="moe-experts"]{grid-area:4/3}.moe-node-graph [data-graph-id="moe-routed"]{grid-area:5/3}
 .moe-node-graph [data-graph-id="moe-sum"]{grid-area:6/4}.moe-node-graph [data-graph-id="moe-y"]{grid-area:7/4}.stage-zoom .moe-node-graph{grid-template-columns:repeat(5,minmax(0,1fr));grid-template-rows:repeat(7,minmax(54px,1fr));gap:10px clamp(14px,1.2vw,22px);padding:8px clamp(16px,1.6vw,32px)}.stage-zoom .moe-node-graph :is(.tensor-node,.op-node){min-height:46px;max-height:none;padding:6px 9px;gap:2px;line-height:1.1}.stage-zoom .moe-node-graph .tensor-weight{width:210px;max-width:100%;min-height:60px;padding:8px 11px}
