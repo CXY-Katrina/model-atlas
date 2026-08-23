@@ -114,7 +114,7 @@ function configSymbol(group:string,key:string){
 }
 
 const SIMPLE_FORMULA: Partial<Record<OpKind,string>> = {
-  norm:String.raw`y=\operatorname{Norm}(x)`,linear:String.raw`y=xW^{\mathsf T}`,split:String.raw`(a,b,\ldots)=\operatorname{Split}(x)`,rope:String.raw`q'=\operatorname{RoPE}(q,\mathrm{position})`,matmul:String.raw`y=a\,b^{\mathsf T}`,scale:String.raw`y=x/\sqrt{d_h}`,mask:String.raw`y=x+\mathrm{mask}`,softmax:String.raw`p=\operatorname{softmax}(x)`,activation:String.raw`y=g\,\sigma(1.702g)\,(u+1)`,route:String.raw`I=\operatorname{TopK}(\mathrm{score}(x))`,cache:String.raw`\mathrm{KV}[\mathrm{slot}]\leftarrow(K,V)`,add:String.raw`y=x+f(x)`,io:String.raw`y=x`,
+  norm:String.raw`y=\operatorname{Norm}(x)`,linear:String.raw`y=xW^{\mathsf T}`,split:String.raw`(a,b,\ldots)=\operatorname{Split}(x)`,rope:String.raw`q'=\operatorname{RoPE}(q,\mathrm{position})`,matmul:String.raw`y=a\,b^{\mathsf T}`,scale:String.raw`y=x/\sqrt{d_h}`,mask:String.raw`y=x+\mathrm{mask}`,softmax:String.raw`p=\operatorname{softmax}(x)`,activation:String.raw`y=\bar g\,\sigma(\alpha\bar g)\,(\bar u+\beta)`,route:String.raw`I=\operatorname{TopK}(\mathrm{score}(x))`,cache:String.raw`\mathrm{KV}[\mathrm{slot}]\leftarrow(K,V)`,add:String.raw`y=x+f(x)`,io:String.raw`y=x`,
 };
 
 const FORMULA_NOTE: Partial<Record<OpKind,string>> = {
@@ -156,6 +156,24 @@ const FORMULA_TERMS_BY_ID: Partial<Record<string,readonly FormulaTerm[]>> = {
   "s-idxscore":[["Q̃idx","当前 rank 的 normalized Index Q"],["K̃idx","共享 / 复制的 normalized Index K"],["N_idx,rank","max(1,4/TP)"],["D_idx","index_dim = 128"],["Sidx","当前 rank 的 token scores"]],
   "s-qk":[["Qᵣ","当前 rank 的 rotated Q"],["K𝒮","当前 rank 选中的 K pages"],["Nₕ/TP","每 rank 的 query heads = 64/TP"],["Ksel","最多 16×128 个候选 token"],["A","当前 rank 的 sparse scores"]],
   "s-pv":[["P","当前 rank 的 sparse probability"],["V𝒮","当前 rank 选中的 V pages"],["Nₕ/TP","每 rank 的 query heads = 64/TP"],["O","当前 rank 的 context heads · 8192/TP"]],
+  "s-topk":[["B","block scores"],["λ_local","local priority = 10²⁹"],["λ_init","init priority = 10³⁰"],["K_block","sparse_topk_blocks = 16"],["𝒮","选中的逻辑 block ids"]],
+  "s-router":[["E","num_local_experts = 128"],["K","num_experts_per_tok = 4"],["s_route","routed_scaling_factor = 2.0"],["b","e_score_correction_bias"],["ŵₑ","归一化并缩放的 expert weight"]],
+  "s-experts":[["gₑ / vₑ","expert gate / up 分支"],["c","swiglu_limit = 7.0"],["α","swiglu_alpha = 1.702"],["β","swiglu_beta = 1.0"],["H_expert","intermediate_size = 3072"],["Eₑ(u)","第 e 个 expert 输出"]],
+  "d-qkv":[["Nₕ","num_attention_heads = 64"],["Nₖᵥ","num_key_value_heads = 4"],["Dₕ","head_dim = 128"],["TP","tensor parallel size"],["Z","当前 rank 的 packed QKV"]],
+  "d-split":[["Nₕ","num_attention_heads = 64"],["Nₖᵥ,rank","max(1,4/TP)"],["Dₕ","head_dim = 128"],["Q / K / V","当前 rank 的三个输出"]],
+  "d-ropeq":[["Dᵣ","rotary_dim = 64"],["Dₕ","head_dim = 128"],["θbase","rope_theta = 5000000"],["p","token position"],["Qᵣ","旋转后的 Q"]],
+  "d-ropek":[["Dᵣ","rotary_dim = 64"],["Dₕ","head_dim = 128"],["θbase","rope_theta = 5000000"],["p","token position"],["Kᵣ","旋转后的 K"]],
+  "d-oproj":[["Nₕ","num_attention_heads = 64"],["Dₕ","head_dim = 128"],["H","hidden_size = 6144"],["TP","tensor parallel size"],["W_O","o_proj.weight"]],
+  "d-down":[["Z⁽ʳ⁾","当前 TP rank 的激活输出"],["Wdown⁽ʳ⁾","当前 rank 的 down 权重"],["H_dense","dense_intermediate_size = 12288"],["H","hidden_size = 6144"],["TP","tensor parallel size"]],
+  "s-packed":[["Nₕ","num_attention_heads = 64"],["Nₖᵥ","num_key_value_heads = 4"],["N_idx","sparse_num_index_heads = 4"],["Dₕ","head_dim = 128"],["D_idx","sparse_index_dim = 128"],["TP","tensor parallel size"]],
+  "s-split":[["Nₕ/TP","每 rank query heads = 64/TP"],["Nₖᵥ,rank","max(1,4/TP)"],["N_idx,rank","max(1,4/TP)"],["Dₕ","head_dim = 128"],["D_idx","sparse_index_dim = 128"]],
+  "s-blockmax":[["B_block","sparse_block_size = 128"],["Sidx","index token scores"],["B","block scores"]],
+  "s-rope":[["Dᵣ","rotary_dim = 64"],["Dₕ","head_dim = 128"],["θbase","rope_theta = 5000000"],["p","token position"]],
+  "s-oproj":[["Nₕ","num_attention_heads = 64"],["Dₕ","head_dim = 128"],["H","hidden_size = 6144"],["TP","tensor parallel size"],["W_O","o_proj.weight"]],
+  "d-add2":[["U","Attention 后的 residual stream · [B,S,H]"],["Yffn","Dense FFN 输出 · [B,S,H]"],["Xₗ₊₁","逻辑上的下一层输入"],["H","hidden_size = 6144"]],
+  "s-addout":[["U","Attention 后的 residual stream · [B,S,H]"],["Ymoe","MoE 输出 · [B,S,H]"],["Xₗ₊₁","逻辑上的下一层输入"],["H","hidden_size = 6144"]],
+  "d-add1":[["Xₗ","进入本层的 residual stream · [B,S,H]"],["Yattn","Attention 输出 · [B,S,H]"],["U","更新后的 residual stream"],["H","hidden_size = 6144"]],
+  "s-addattn":[["Xₗ","进入本层的 residual stream · [B,S,H]"],["Yattn","Sparse Attention 输出 · [B,S,H]"],["U","更新后的 residual stream"],["H","hidden_size = 6144"]],
 };
 
 function formulaTerms(node:OpNode){
@@ -169,48 +187,48 @@ const LATEX_BY_ID: Record<string,string> = {
   "s-attnmeta":String.raw`\begin{aligned}q_b&=\mathrm{query\_start\_loc}_{b+1}-\mathrm{query\_start\_loc}_b\\c_b&=\mathrm{seq\_len}_b-q_b\\M_{b,i,j}&=\begin{cases}0,&0\le j\le c_b+i\\-\infty,&\text{otherwise}\end{cases}\end{aligned}`,
   "d-slots":String.raw`\begin{aligned}\ell&=\left\lfloor p/\mathrm{block\_size}\right\rfloor,\quad o=p\bmod \mathrm{block\_size}\\b_{\mathrm{phys}}&=\mathrm{block\_table}[r,\ell]\\\mathrm{slot}(r,p)&=b_{\mathrm{phys}}\cdot\mathrm{block\_size}+o\end{aligned}`,
   "s-slots":String.raw`\begin{aligned}\ell&=\left\lfloor p/\mathrm{block\_size}\right\rfloor,\quad o=p\bmod \mathrm{block\_size}\\b_{\mathrm{phys}}&=\mathrm{block\_table}[r,\ell]\\\mathrm{slot}(r,p)&=b_{\mathrm{phys}}\cdot\mathrm{block\_size}+o\end{aligned}`,
-  "d-norm":String.raw`\begin{aligned}\operatorname{RMS}(x)&=\sqrt{\frac1H\sum_{j=1}^{H}x_j^2+\varepsilon}\\y_i&=\frac{x_i}{\operatorname{RMS}(x)}(1+\gamma_i),\qquad \varepsilon=10^{-6}\end{aligned}`,
-  "d-qkv":String.raw`\begin{aligned}Z&=\hat X\,[W_Q^\top\mid W_K^\top\mid W_V^\top]\\Z&\in\mathbb R^{B\times S\times(8192+512+512)}\end{aligned}`,
-  "d-split":String.raw`\begin{aligned}Q&=Z_{:,:,0:8192}\in\mathbb R^{B\times64\times S\times128}\\K&=Z_{:,:,8192:8704}\in\mathbb R^{B\times4\times S\times128}\\V&=Z_{:,:,8704:9216}\in\mathbb R^{B\times4\times S\times128}\end{aligned}`,
-  "d-qnorm":String.raw`\tilde Q_{b,h,s,:}=\frac{Q_{b,h,s,:}}{\sqrt{\frac1{128}\lVert Q_{b,h,s,:}\rVert_2^2+\varepsilon}}\odot(1+\gamma_Q)`,
-  "d-knorm":String.raw`\tilde K_{b,g,s,:}=\frac{K_{b,g,s,:}}{\sqrt{\frac1{128}\lVert K_{b,g,s,:}\rVert_2^2+\varepsilon}}\odot(1+\gamma_K)`,
-  "d-ropeq":String.raw`\begin{aligned}\theta_{p,j}&=p\,\theta_{\mathrm{base}}^{-2j/d_r},\quad d_r=64\\\binom{Q^r_{2j}}{Q^r_{2j+1}}&=\begin{bmatrix}\cos\theta_{p,j}&-\sin\theta_{p,j}\\\sin\theta_{p,j}&\cos\theta_{p,j}\end{bmatrix}\binom{\tilde Q_{2j}}{\tilde Q_{2j+1}}\\Q^r_{d_r:128}&=\tilde Q_{d_r:128}\end{aligned}`,
-  "d-ropek":String.raw`\begin{aligned}\theta_{p,j}&=p\,\theta_{\mathrm{base}}^{-2j/d_r},\quad d_r=64\\\binom{K^r_{2j}}{K^r_{2j+1}}&=\begin{bmatrix}\cos\theta_{p,j}&-\sin\theta_{p,j}\\\sin\theta_{p,j}&\cos\theta_{p,j}\end{bmatrix}\binom{\tilde K_{2j}}{\tilde K_{2j+1}}\\K^r_{d_r:128}&=\tilde K_{d_r:128}\end{aligned}`,
+  "d-norm":String.raw`\begin{aligned}\operatorname{RMS}(x)&=\sqrt{\frac1H\sum_{j=1}^{H}x_j^2+\varepsilon}\\y_i&=\frac{x_i}{\operatorname{RMS}(x)}(1+\gamma_i)\end{aligned}`,
+  "d-qkv":String.raw`\begin{aligned}Z&=\hat X\,[W_Q^\top\mid W_K^\top\mid W_V^\top]\\Z&\in\mathbb R^{B\times S\times((N_h+2N_{kv})D_h/TP)}\end{aligned}`,
+  "d-split":String.raw`(Q,K,V)=\operatorname{Split}\!\left(Z;\frac{N_hD_h}{TP},N_{kv,\mathrm{rank}}D_h,N_{kv,\mathrm{rank}}D_h\right)`,
+  "d-qnorm":String.raw`\tilde Q_{b,h,s,:}=\frac{Q_{b,h,s,:}}{\sqrt{\frac1{D_h}\lVert Q_{b,h,s,:}\rVert_2^2+\varepsilon}}\odot(1+\gamma_Q)`,
+  "d-knorm":String.raw`\tilde K_{b,g,s,:}=\frac{K_{b,g,s,:}}{\sqrt{\frac1{D_h}\lVert K_{b,g,s,:}\rVert_2^2+\varepsilon}}\odot(1+\gamma_K)`,
+  "d-ropeq":String.raw`\begin{aligned}\theta_{p,j}&=p\,\theta_{\mathrm{base}}^{-2j/D_r}\\\binom{Q^r_{2j}}{Q^r_{2j+1}}&=\begin{bmatrix}\cos\theta_{p,j}&-\sin\theta_{p,j}\\\sin\theta_{p,j}&\cos\theta_{p,j}\end{bmatrix}\binom{\tilde Q_{2j}}{\tilde Q_{2j+1}}\\Q^r_{D_r:D_h}&=\tilde Q_{D_r:D_h}\end{aligned}`,
+  "d-ropek":String.raw`\begin{aligned}\theta_{p,j}&=p\,\theta_{\mathrm{base}}^{-2j/D_r}\\\binom{K^r_{2j}}{K^r_{2j+1}}&=\begin{bmatrix}\cos\theta_{p,j}&-\sin\theta_{p,j}\\\sin\theta_{p,j}&\cos\theta_{p,j}\end{bmatrix}\binom{\tilde K_{2j}}{\tilde K_{2j+1}}\\K^r_{D_r:D_h}&=\tilde K_{D_r:D_h}\end{aligned}`,
   "d-cache":String.raw`\begin{aligned}\mathcal K[\mathrm{slot}(r,p)]&\leftarrow K^r_{r,p}\\\mathcal V[\mathrm{slot}(r,p)]&\leftarrow V_{r,p}\\K_{\le p},V_{\le p}&\leftarrow\operatorname{gather}(\mathcal K,\mathcal V,\mathrm{block\_table}_r)\end{aligned}`,
-  "d-qk":String.raw`A_{b,h,i,j}=\sum_{m=1}^{128}Q^r_{b,h,i,m}\,K^r_{b,\lfloor h/16\rfloor,j,m}`,
-  "d-scale":String.raw`\bar A_{b,h,i,j}=\frac{A_{b,h,i,j}}{\sqrt{128}}`,
+  "d-qk":String.raw`A_{b,h,i,j}=\sum_{m=1}^{D_h}Q^r_{b,h,i,m}\,K^r_{b,\lfloor h/G\rfloor,j,m}`,
+  "d-scale":String.raw`\bar A_{b,h,i,j}=\frac{A_{b,h,i,j}}{\sqrt{D_h}}`,
   "d-mask":String.raw`\tilde A_{b,h,i,j}=\bar A_{b,h,i,j}+M_{b,i,j}=\begin{cases}\bar A_{b,h,i,j},&j\le c_b+i\\-\infty,&j>c_b+i\end{cases}`,
   "d-softmax":String.raw`P_{b,h,i,j}=\frac{\exp(\tilde A_{b,h,i,j}-m_{b,h,i})}{\sum_{t=0}^{T-1}\exp(\tilde A_{b,h,i,t}-m_{b,h,i})},\quad m_{b,h,i}=\max_t\tilde A_{b,h,i,t}`,
-  "d-pv":String.raw`O_{b,h,i,m}=\sum_{j=0}^{T-1}P_{b,h,i,j}\,V_{b,\lfloor h/16\rfloor,j,m}`,
-  "d-oproj":String.raw`Y_{\mathrm{attn}}=\operatorname{Concat}_{h=1}^{64}(O_h)W_O^\top\in\mathbb R^{B\times S\times6144}`,
+  "d-pv":String.raw`O_{b,h,i,m}=\sum_{j=0}^{T-1}P_{b,h,i,j}\,V_{b,\lfloor h/G\rfloor,j,m}`,
+  "d-oproj":String.raw`Y_{\mathrm{attn}}=\operatorname{RowParallel}\!\left(\operatorname{Concat}_{h=1}^{N_h/TP}(O_h),W_O\right)\in\mathbb R^{B\times S\times H}`,
   "d-add1":String.raw`U=X_l+Y_{\mathrm{attn}}`,
   "d-postnorm":String.raw`\begin{aligned}\operatorname{RMS}(U)&=\sqrt{\frac1H\sum_{j=1}^{H}U_j^2+\varepsilon}\\\hat U_i&=\frac{U_i}{\operatorname{RMS}(U)}(1+\gamma_{\mathrm{post},i})\end{aligned}`,
-  "d-gateup":String.raw`\begin{aligned}H&=6144,\qquad H_{\mathrm{dense}}=12288\\G^{(r)}&=\hat U\left(W_{\mathrm{gate}}^{(r)}\right)^\top\\U^{(r)}&=\hat U\left(W_{\mathrm{up}}^{(r)}\right)^\top\\G^{(r)},U^{(r)}&\in\mathbb R^{B\times S\times(H_{\mathrm{dense}}/TP)}\end{aligned}`,
-  "d-gatesplit":String.raw`\begin{aligned}X^{(r)}&\in\mathbb R^{B\times S\times(2H_{\mathrm{dense}}/TP)},\qquad H_{\mathrm{dense}}=12288\\G^{(r)}&=X^{(r)}_{:,:,\,0:H_{\mathrm{dense}}/TP}\\U^{(r)}&=X^{(r)}_{:,:,\,H_{\mathrm{dense}}/TP:2H_{\mathrm{dense}}/TP}\end{aligned}`,
-  "d-swiglu":String.raw`\begin{aligned}c&=7.0,\qquad\alpha=1.702,\qquad\beta=1.0\\\bar G^{(r)}&=\min(G^{(r)},c)\\\bar U^{(r)}&=\operatorname{clip}(U^{(r)},-c,c)\\Z^{(r)}&=\bar G^{(r)}\odot\sigma(\alpha\bar G^{(r)})\odot(\bar U^{(r)}+\beta)\end{aligned}`,
-  "d-down":String.raw`Y_{\mathrm{ffn}}=HW_{\mathrm{down}}^\top\in\mathbb R^{B\times S\times6144}`,
+  "d-gateup":String.raw`\begin{aligned}G^{(r)}&=\hat U\left(W_{\mathrm{gate}}^{(r)}\right)^\top\\U^{(r)}&=\hat U\left(W_{\mathrm{up}}^{(r)}\right)^\top\\G^{(r)},U^{(r)}&\in\mathbb R^{B\times S\times(H_{\mathrm{dense}}/TP)}\end{aligned}`,
+  "d-gatesplit":String.raw`\begin{aligned}X^{(r)}&\in\mathbb R^{B\times S\times(2H_{\mathrm{dense}}/TP)}\\G^{(r)}&=X^{(r)}_{:,:,\,0:H_{\mathrm{dense}}/TP}\\U^{(r)}&=X^{(r)}_{:,:,\,H_{\mathrm{dense}}/TP:2H_{\mathrm{dense}}/TP}\end{aligned}`,
+  "d-swiglu":String.raw`\begin{aligned}\bar G^{(r)}&=\min(G^{(r)},c)\\\bar U^{(r)}&=\operatorname{clip}(U^{(r)},-c,c)\\Z^{(r)}&=\bar G^{(r)}\odot\sigma(\alpha\bar G^{(r)})\odot(\bar U^{(r)}+\beta)\end{aligned}`,
+  "d-down":String.raw`Y_{\mathrm{ffn}}=\sum_r Z^{(r)}\left(W_{\mathrm{down}}^{(r)}\right)^\top\in\mathbb R^{B\times S\times H}`,
   "d-add2":String.raw`X_{l+1}=U+Y_{\mathrm{ffn}}`,
-  "s-norm":String.raw`\begin{aligned}\operatorname{RMS}(x)&=\sqrt{\frac1H\sum_{j=1}^{H}x_j^2+\varepsilon}\\y_i&=\frac{x_i}{\operatorname{RMS}(x)}(1+\gamma_i),\qquad \varepsilon=10^{-6}\end{aligned}`,
+  "s-norm":String.raw`\begin{aligned}\operatorname{RMS}(x)&=\sqrt{\frac1H\sum_{j=1}^{H}x_j^2+\varepsilon}\\y_i&=\frac{x_i}{\operatorname{RMS}(x)}(1+\gamma_i)\end{aligned}`,
   "s-postnorm":String.raw`\begin{aligned}\operatorname{RMS}(U)&=\sqrt{\frac1H\sum_{j=1}^{H}U_j^2+\varepsilon}\\\hat U_i&=\frac{U_i}{\operatorname{RMS}(U)}(1+\gamma_{\mathrm{post},i})\end{aligned}`,
-  "s-packed":String.raw`Z=\hat X[W_Q^\top\mid W_K^\top\mid W_V^\top\mid W_{Q_i}^\top\mid W_{K_i}^\top]\in\mathbb R^{B\times S\times9856}`,
-  "s-split":String.raw`Z\longrightarrow(Q_{8192},K_{512},V_{512},Q^{\mathrm{idx}}_{512},K^{\mathrm{idx}}_{128})`,
+  "s-packed":String.raw`Z=\hat X[W_Q^\top\mid W_K^\top\mid W_V^\top\mid W_{Q_i}^\top\mid W_{K_i}^\top]`,
+  "s-split":String.raw`Z\longrightarrow(Q_{N_hD_h/TP},K_{N_{kv,\mathrm{rank}}D_h},V_{N_{kv,\mathrm{rank}}D_h},Q^{\mathrm{idx}}_{N_{idx,\mathrm{rank}}D_{idx}},K^{\mathrm{idx}}_{D_{idx}})`,
   "s-idxnorm":String.raw`\tilde Q^{\mathrm{idx}}=\operatorname{RMSNorm}(Q^{\mathrm{idx}}),\qquad\tilde K^{\mathrm{idx}}=\operatorname{RMSNorm}(K^{\mathrm{idx}})`,
-  "s-idxscore":String.raw`S^{(r)}_{b,i,j}=\frac{\langle\tilde Q^{\mathrm{idx}}_{b,r,i,:},\tilde K^{\mathrm{idx}}_{b,0,j,:}\rangle}{\sqrt{128}}+M_{b,i,j}`,
-  "s-blockmax":String.raw`B^{(r)}_{b,i,u}=\max_{j\in[128u,128(u+1))}S^{(r)}_{b,i,j}`,
-  "s-topk":String.raw`\begin{aligned}\hat B_u&=B_u+10^{29}\mathbf1[u\in\mathcal L_i]+10^{30}\mathbf1[u\in\mathcal I]\\\mathcal S_{b,r,i}&=\operatorname{TopK}_{16}(\hat B)\end{aligned}`,
+  "s-idxscore":String.raw`S^{(r)}_{b,i,j}=\frac{\langle\tilde Q^{\mathrm{idx}}_{b,r,i,:},\tilde K^{\mathrm{idx}}_{b,0,j,:}\rangle}{\sqrt{D_{idx}}}+M_{b,i,j}`,
+  "s-blockmax":String.raw`B^{(r)}_{b,i,u}=\max_{j\in[B_{block}u,B_{block}(u+1))}S^{(r)}_{b,i,j}`,
+  "s-topk":String.raw`\begin{aligned}\hat B_u&=B_u+\lambda_{local}\mathbf1[u\in\mathcal L_i]+\lambda_{init}\mathbf1[u\in\mathcal I]\\\mathcal S_{b,r,i}&=\operatorname{TopK}_{K_{block}}(\hat B)\end{aligned}`,
   "s-mainnorm":String.raw`\tilde Q=\operatorname{RMSNorm}(Q),\qquad\tilde K=\operatorname{RMSNorm}(K)`,
-  "s-rope":String.raw`\begin{aligned}(Q^r_{:d_r},K^r_{:d_r})&=\operatorname{RoPE}(\tilde Q_{:d_r},\tilde K_{:d_r};\mathbf p),\quad d_r=64\\(Q^r_{d_r:},K^r_{d_r:})&=(\tilde Q_{d_r:},\tilde K_{d_r:})\end{aligned}`,
+  "s-rope":String.raw`\begin{aligned}(Q^r_{:D_r},K^r_{:D_r})&=\operatorname{RoPE}(\tilde Q_{:D_r},\tilde K_{:D_r};\mathbf p)\\(Q^r_{D_r:},K^r_{D_r:})&=(\tilde Q_{D_r:},\tilde K_{D_r:})\end{aligned}`,
   "s-cache":String.raw`\mathcal K[\mathrm{slot}(r,p)]\leftarrow K^r_{r,p},\qquad\mathcal V[\mathrm{slot}(r,p)]\leftarrow V_{r,p}`,
   "s-select":String.raw`\begin{aligned}\mathcal P_{b,r,i}&=\{\mathrm{block\_table}[b,u]\mid u\in\mathcal S_{b,r,i}\}\\(K_{\mathcal S},V_{\mathcal S})&=\operatorname{gather}(\mathcal K,\mathcal V;\mathcal P_{b,r,i})\end{aligned}`,
-  "s-qk":String.raw`A_{b,h,i,j}=\sum_{m=1}^{128}Q^r_{b,h,i,m}(K_{\mathcal S})_{b,\lfloor h/16\rfloor,j,m},\quad j\in\mathcal S_{b,\lfloor h/16\rfloor,i}`,
-  "s-scale":String.raw`\bar A_{b,h,i,j}=A_{b,h,i,j}/\sqrt{128}`,
+  "s-qk":String.raw`A_{b,h,i,j}=\sum_{m=1}^{D_h}Q^r_{b,h,i,m}(K_{\mathcal S})_{b,\lfloor h/G\rfloor,j,m},\quad j\in\mathcal S_{b,\lfloor h/G\rfloor,i}`,
+  "s-scale":String.raw`\bar A_{b,h,i,j}=A_{b,h,i,j}/\sqrt{D_h}`,
   "s-mask":String.raw`\tilde A_{b,h,i,j}=\begin{cases}\bar A_{b,h,i,j},&j\in\mathcal S_i\ \land\ j\le c_b+i\\-\infty,&\text{otherwise}\end{cases}`,
   "s-softmax":String.raw`P_{b,h,i,j}=\frac{\exp(\tilde A_{b,h,i,j}-\max_t\tilde A_{b,h,i,t})}{\sum_{t\in\mathcal S_i}\exp(\tilde A_{b,h,i,t}-\max_u\tilde A_{b,h,i,u})}`,
-  "s-pv":String.raw`O_{b,h,i,m}=\sum_{j\in\mathcal S_i}P_{b,h,i,j}(V_{\mathcal S})_{b,\lfloor h/16\rfloor,j,m}`,
-  "s-oproj":String.raw`Y_{\mathrm{attn}}=\operatorname{Concat}_{h=1}^{64}(O_h)W_O^\top`,
+  "s-pv":String.raw`O_{b,h,i,m}=\sum_{j\in\mathcal S_i}P_{b,h,i,j}(V_{\mathcal S})_{b,\lfloor h/G\rfloor,j,m}`,
+  "s-oproj":String.raw`Y_{\mathrm{attn}}=\operatorname{RowParallel}\!\left(\operatorname{Concat}_{h=1}^{N_h/TP}(O_h),W_O\right)`,
   "s-addattn":String.raw`U=X_l+Y_{\mathrm{attn}}`,
-  "s-router":String.raw`\begin{aligned}r&=UW_{\mathrm{router}}^\top\in\mathbb R^{B\times S\times128}\\s&=\sigma(r),\qquad\mathcal E=\operatorname{TopK}_4(s+b)\\\hat w_e&=2\,\frac{s_e}{\sum_{j\in\mathcal E}s_j},\quad e\in\mathcal E\end{aligned}`,
-  "s-experts":String.raw`\begin{aligned}g_e&=W_{1,e}u,\quad v_e=W_{3,e}u\\\bar g_e&=\min(g_e,7),\quad\bar v_e=\operatorname{clip}(v_e,-7,7)\\E_e(u)&=W_{2,e}[\bar g_e\odot\sigma(1.702\bar g_e)\odot(\bar v_e+1)]\end{aligned}`,
+  "s-router":String.raw`\begin{aligned}r&=UW_{\mathrm{router}}^\top\in\mathbb R^{B\times S\times E}\\s&=\sigma(r),\qquad\mathcal E=\operatorname{TopK}_K(s+b)\\\hat w_e&=s_{route}\,\frac{s_e}{\sum_{j\in\mathcal E}s_j},\quad e\in\mathcal E\end{aligned}`,
+  "s-experts":String.raw`\begin{aligned}g_e&=W_{1,e}u,\quad v_e=W_{3,e}u\\\bar g_e&=\min(g_e,c),\quad\bar v_e=\operatorname{clip}(v_e,-c,c)\\E_e(u)&=W_{2,e}[\bar g_e\odot\sigma(\alpha\bar g_e)\odot(\bar v_e+\beta)]\end{aligned}`,
   "s-shared":String.raw`E_{\mathrm{shared}}(u)=W_{2,s}\operatorname{SwiGLUOAI}(W_{1,s}u,W_{3,s}u)`,
   "s-sum":String.raw`Y_{\mathrm{moe}}=\sum_{e\in\mathcal E}\hat w_eE_e(U)+E_{\mathrm{shared}}(U)`,
   "s-addout":String.raw`X_{l+1}=U+Y_{\mathrm{moe}}`,
@@ -243,6 +261,36 @@ const NORM_SYMBOLS: CodeSymbol[] = [
   {symbol:"residual",resolvesTo:"残差累加器 r′",meaning:"首次为空时保存当前 hidden_states；后续 fused 调用原地更新为 residual + x。"},
   {symbol:"self.weight",resolvesTo:"γ",meaning:"checkpoint 保存 γ；Gemma kernel 实际使用 γ+1 作为逐元素缩放。"},
   {symbol:"self.variance_epsilon",resolvesTo:"ε=10⁻⁶",meaning:"计算 RMS 时用于数值稳定。"},
+];
+
+const RESIDUAL_MERGE_SECTIONS: CodeSection[] = [
+  {stage:"1 · EXIT",title:"DecoderLayer.forward：当前层先返回两条独立流",location:"nvidia/model.py · L776–778",url:`${CODE_URL}#L776-L778`,code:`ffn = self.block_sparse_moe if self.is_moe_layer else self.mlp
+hidden_states = ffn(hidden_states)   # Yffn / Ymoe
+return hidden_states, residual       # residual is U`},
+  {stage:"2 · ENTER",title:"下一 Decoder Layer：fused norm 内完成 residual merge",location:"nvidia/model.py · L758–767",url:`${CODE_URL}#L758-L767`,code:`if self.fuse_input_allreduce and residual is not None:
+    hidden_states, residual = fused_allreduce_gemma_rms_norm(
+        hidden_states, residual, self.input_layernorm
+    )
+else:
+    hidden_states, residual = self.input_layernorm(hidden_states, residual)`},
+];
+
+const RESIDUAL_MERGE_SYMBOLS: CodeSymbol[] = [
+  {symbol:"hidden_states",resolvesTo:"Yffn / Ymoe",meaning:"当前 FFN 计算分支的输出。"},
+  {symbol:"residual",resolvesTo:"U",meaning:"Attention 后沿 Layer 边界保留的 residual stream。"},
+  {symbol:"logical Xₗ₊₁",resolvesTo:"U + Yffn / Ymoe",meaning:"图中 Add 的语义；实际融合进下一层 input RMSNorm 或 Final Norm。"},
+];
+
+const ATTENTION_RESIDUAL_SECTIONS: CodeSection[] = [
+  {stage:"1 · CALL",title:"DecoderLayer.forward：Layer 内融合 Attention residual 与 post-norm",location:"nvidia/model.py · L773–775",url:`${CODE_URL}#L773-L775`,code:`hidden_states, residual = fused_allreduce_gemma_rms_norm(
+    hidden_states, residual, self.post_attention_layernorm
+)`},
+];
+
+const ATTENTION_RESIDUAL_SYMBOLS: CodeSymbol[] = [
+  {symbol:"hidden_states",resolvesTo:"Yattn",meaning:"L768–771 的 self_attn 输出。"},
+  {symbol:"residual",resolvesTo:"Xₗ → U",meaning:"fused kernel 原地执行 residual += hidden_states。"},
+  {symbol:"returned hidden_states",resolvesTo:"Û",meaning:"同一个 fused kernel 随后对更新后的 U 执行 Gemma RMSNorm。"},
 ];
 
 const MLP_SECTIONS: CodeSection[] = [
@@ -359,6 +407,8 @@ CODE_BY_ID["d-gateup"]={sections:GATE_UP_SECTIONS,symbols:GATE_UP_SYMBOLS};
 CODE_BY_ID["d-swiglu"]={sections:SWIGLU_SECTIONS,symbols:SWIGLU_SYMBOLS};
 CODE_BY_ID["d-down"]={sections:DOWN_SECTIONS,symbols:DOWN_SYMBOLS};
 CODE_BY_ID["s-shared"]={sections:MLP_SECTIONS,symbols:MLP_SYMBOLS};
+for(const id of ["d-add2","s-addout"]) CODE_BY_ID[id]={sections:RESIDUAL_MERGE_SECTIONS,symbols:RESIDUAL_MERGE_SYMBOLS};
+for(const id of ["d-add1","s-addattn"]) CODE_BY_ID[id]={sections:ATTENTION_RESIDUAL_SECTIONS,symbols:ATTENTION_RESIDUAL_SYMBOLS};
 for(const id of ["d-qkv","d-split","d-qnorm","d-knorm","d-ropeq","d-ropek","d-cache","d-qk","d-scale","d-mask","d-softmax","d-pv","d-oproj","s-packed","s-split","s-mainnorm","s-rope","s-cache","s-select","s-qk","s-scale","s-mask","s-softmax","s-pv","s-oproj"]) CODE_BY_ID[id]={sections:ATTENTION_SECTIONS,symbols:ATTENTION_SYMBOLS};
 for(const id of ["s-router","s-experts","s-shared","s-sum"]) CODE_BY_ID[id]={sections:id==="s-shared"?[...MOE_SECTIONS,...MLP_SECTIONS]:MOE_SECTIONS,symbols:id==="s-shared"?[...MOE_SYMBOLS,...MLP_SYMBOLS]:MOE_SYMBOLS};
 
@@ -388,11 +438,15 @@ const INPUT_OVERRIDES: Record<string, IoBinding[]> = {
   "s-experts":[{kind:"upstream",label:"normalized hidden + router logits",shape:"[B,S,6144] + [B,S,128]",from:"Post-attn RMSNorm 与 FP32 Router 输出"}],
   "s-shared":[{kind:"upstream",label:"all normalized tokens Û",shape:"[B,S,6144]",from:"Post-attn RMSNorm 输出；不经过 Top-K"}],
   "s-sum":[{kind:"upstream",label:"4 routed outputs",shape:"4 × [B,S,6144]",from:"Routed Experts ×4 输出"},{kind:"upstream",label:"shared output",shape:"[B,S,6144]",from:"Shared Expert ×1 输出"}],
+  "d-add2":[{kind:"upstream",label:"U · residual stream",shape:"[B,S,6144]",from:"Attention Residual 输出"},{kind:"upstream",label:"Yffn · FFN branch",shape:"[B,S,6144]",from:"Down Projection 输出"}],
+  "s-addout":[{kind:"upstream",label:"U · residual stream",shape:"[B,S,6144]",from:"Attention Residual 输出"},{kind:"upstream",label:"Ymoe · MoE branch",shape:"[B,S,6144]",from:"Weighted Sum 输出"}],
+  "d-add1":[{kind:"upstream",label:"Xₗ · residual stream",shape:"[B,S,6144]",from:"本层输入旁路"},{kind:"upstream",label:"Yattn · attention branch",shape:"[B,S,6144]",from:"O Projection 输出"}],
+  "s-addattn":[{kind:"upstream",label:"Xₗ · residual stream",shape:"[B,S,6144]",from:"本层输入旁路"},{kind:"upstream",label:"Yattn · sparse attention branch",shape:"[B,S,6144]",from:"O Projection 输出"}],
 };
 
 const NEXT_BY_ID: Record<string,string> = {
-  "d-input":"Gemma RMSNorm","d-position":"Partial RoPE (Q/K)","d-attnmeta":"Apply Causal / Pad Bounds","d-slots":"Paged KV Cache","d-norm":"QKV Projection","d-qkv":"Split Q / K / V","d-split":"Q RMSNorm · K RMSNorm · Paged KV Cache","d-qnorm":"Partial RoPE (Q)","d-knorm":"Partial RoPE (K)","d-ropeq":"Q × Kᵀ","d-ropek":"Paged KV Cache","d-cache":"Q × Kᵀ · P × V","d-qk":"Scale 1/√128","d-scale":"Apply Causal / Pad Bounds","d-mask":"Softmax","d-softmax":"P × V","d-pv":"O Projection","d-oproj":"Attention Residual","d-add1":"Post-attn Gemma RMSNorm","d-postnorm":"Gate + Up Projection","d-gateup":"Split Gate / Up","d-gatesplit":"SwiGLU-OAI","d-swiglu":"Down Projection","d-down":"MLP Residual","d-add2":"下一 decoder layer / Final Norm",
-  "s-input":"Gemma RMSNorm","s-position":"Partial RoPE","s-attnmeta":"Indexer 与 Sparse Attention mask","s-slots":"Paged KV Cache","s-norm":"QKV + Index Projection","s-packed":"Split 5 outputs","s-split":"Index Q/K Norm · Main Q/K Norm · Paged KV Cache","s-idxnorm":"Index Q × Kᵀ","s-idxscore":"Block Max","s-blockmax":"Top-16 Blocks","s-topk":"Select KV Pages","s-mainnorm":"Partial RoPE","s-rope":"Paged KV Cache · Q × selected Kᵀ","s-cache":"Select KV Pages","s-select":"Q × selected Kᵀ · P × selected V","s-qk":"Scale 1/√128","s-scale":"Apply Causal / Pad Bounds","s-mask":"Softmax","s-softmax":"P × selected V","s-pv":"O Projection","s-oproj":"Attention Residual","s-addattn":"Post-attn Gemma RMSNorm","s-postnorm":"FP32 Router · Routed Experts · Shared Expert","s-router":"Routed Experts ×4","s-experts":"Weighted Sum","s-shared":"Weighted Sum","s-sum":"MoE Residual","s-addout":"下一 decoder layer / Final Norm",
+  "d-input":"Gemma RMSNorm","d-position":"Partial RoPE (Q/K)","d-attnmeta":"Apply Causal / Pad Bounds","d-slots":"Paged KV Cache","d-norm":"QKV Projection","d-qkv":"Split Q / K / V","d-split":"Q RMSNorm · K RMSNorm · Paged KV Cache","d-qnorm":"Partial RoPE (Q)","d-knorm":"Partial RoPE (K)","d-ropeq":"Q × Kᵀ","d-ropek":"Paged KV Cache","d-cache":"Q × Kᵀ · P × V","d-qk":"Scale 1/√128","d-scale":"Apply Causal / Pad Bounds","d-mask":"Softmax","d-softmax":"P × V","d-pv":"O Projection","d-oproj":"Attention Residual Merge","d-add1":"Post-attn Gemma RMSNorm","d-postnorm":"Gate + Up Projection","d-gateup":"Split Gate / Up","d-gatesplit":"SwiGLU-OAI","d-swiglu":"Down Projection","d-down":"Decoder Layer Residual Merge","d-add2":"下一 decoder layer / Final Norm",
+  "s-input":"Gemma RMSNorm","s-position":"Partial RoPE","s-attnmeta":"Indexer 与 Sparse Attention mask","s-slots":"Paged KV Cache","s-norm":"QKV + Index Projection","s-packed":"Split 5 outputs","s-split":"Index Q/K Norm · Main Q/K Norm · Paged KV Cache","s-idxnorm":"Index Q × Kᵀ","s-idxscore":"Block Max","s-blockmax":"Top-16 Blocks","s-topk":"Select KV Pages","s-mainnorm":"Partial RoPE","s-rope":"Paged KV Cache · Q × selected Kᵀ","s-cache":"Select KV Pages","s-select":"Q × selected Kᵀ · P × selected V","s-qk":"Scale 1/√128","s-scale":"Apply Causal / Pad Bounds","s-mask":"Softmax","s-softmax":"P × selected V","s-pv":"O Projection","s-oproj":"Attention Residual Merge","s-addattn":"Post-attn Gemma RMSNorm","s-postnorm":"FP32 Router · Routed Experts · Shared Expert","s-router":"Routed Experts ×4","s-experts":"Weighted Sum","s-shared":"Weighted Sum","s-sum":"Decoder Layer Residual Merge","s-addout":"下一 decoder layer / Final Norm",
 };
 
 const cloneOp = (base: Node, values: Partial<OpNode> & { id: string; kind: OpKind; title: string }): OpNode => {
@@ -424,13 +478,13 @@ function denseGraph(layer: number): Record<string, OpNode> {
     softmax: cloneOp(attn,{id:"d-softmax",kind:"softmax",title:"Softmax",input:"masked scores",inputShape:"[B,64/TP,S,T]",output:"attention prob",outputShape:"[B,64/TP,S,T]",formula:"P=softmax(A,dim=-1)",weights:[]}),
     pv: cloneOp(attn,{id:"d-pv",kind:"matmul",title:"P × V",input:"P,V",inputShape:"[B,64/TP,S,T] · [B,max(1,4/TP),T,128]",output:"local heads",outputShape:"[B,S,8192/TP]",formula:"Oₕ=PₕV⌊h/16⌋",formulaNote:"P × V 在每个 TP rank 上独立计算，得到 (64/TP)×128=8192/TP 的局部 attention 宽度，再交给 RowParallel O Projection。",weights:[]}),
     oproj: cloneOp(out,{id:"d-oproj",kind:"linear",title:"O Projection"}),
-    add1: cloneOp(out,{id:"d-add1",kind:"add",title:"+ Attention Residual",input:"Yattn + residual",inputShape:"2 × [B,S,6144]",output:"U",outputShape:"[B,S,6144]",formula:"U=residual+Yattn",weights:[]}),
+    add1: cloneOp(out,{id:"d-add1",kind:"add",kicker:"DECODER LAYER · ATTENTION RESIDUAL",title:"Attention Residual Merge",summary:"在 Decoder Layer 内把 Attention 分支 Yattn 加入 residual stream Xₗ，得到更新后的 U；图中将 fused add 与紧随其后的 post-norm 分开表达。",input:"Xₗ + Yattn",inputShape:"2 × [B,S,6144]",output:"U · updated residual stream",outputShape:"[B,S,6144]",formula:"U=Xₗ+Yattn",formulaNote:"实际调用位于 DecoderLayer.forward L773：fused kernel 先执行 residual += hidden_states，再对更新后的 residual 执行 post-attention Gemma RMSNorm。",runtime:"fused_allreduce_gemma_rms_norm · attention residual",source:"nvidia/model.py · MiniMaxM3DecoderLayer.forward · L773–775",sourceUrl:`${CODE_URL}#L773-L775`,weights:[]}),
     postnorm: cloneOp(norm,{id:"d-postnorm",kind:"norm",title:"Post-attn Gemma RMSNorm",summary:"输入 U 已由上游 Add 节点计算完成；此节点只执行 Gemma RMSNorm(U)，输出唯一的 Û 作为 FFN 输入。",formulaNote:"U 是上游 Add 的单一输出；本节点只计算 RMS(U) 与 (1+γpost) 缩放，不重复执行 residual add。",input:"U",inputShape:"[B,S,6144]",output:"Û",outputShape:"[B,S,6144]",source:"nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142",sourceUrl:NORM_FORWARD_URL,weights:[postNorm]}),
     gateup: cloneOp(mlp,{id:"d-gateup",kind:"linear",kicker:"DENSE FFN · H=6144 · H_dense=12288",title:"Gate + Up Projection",summary:"MergedColumnParallelLinear 让每个 TP rank 读取完整 Û，并分别计算局部 gate/up 投影；这里只做线性 GEMM。",input:"Û",inputShape:"[B,S,6144]",output:"packed gate_up (TP-local)",outputShape:"[B,S,24576/TP]",formulaNote:"Wgate⁽ʳ⁾ 与 Wup⁽ʳ⁾ 都沿输出维切分；本节点不执行 Split、clamp、SiLU 或逐元素乘。",runtime:"MergedColumnParallelLinear · gate_up_proj",weights:mlp.weights.filter(w=>!w.key.includes("down_proj"))}),
     gatesplit: cloneOp(mlp,{id:"d-gatesplit",kind:"split",kicker:"DENSE FFN · TP-LOCAL SPLIT",title:"Split Gate / Up",summary:"把当前 TP rank 的 packed gate_up 沿最后一维等分为 G⁽ʳ⁾ 和 U⁽ʳ⁾；不含权重，也不改变数值。",input:"packed gate_up (TP-local)",inputShape:"[B,S,24576/TP]",output:"G⁽ʳ⁾ · U⁽ʳ⁾",outputShape:"2 × [B,S,12288/TP]",formula:"(G⁽ʳ⁾,U⁽ʳ⁾)=split(gate_up⁽ʳ⁾,2,dim=-1)",formulaNote:"本节点只切分 view：前 H_dense/TP 个通道是 gate，后 H_dense/TP 个通道是 up；clamp 与 sigmoid 属于下一 SwiGLU-OAI 节点。",runtime:"SiluAndMulWithClamp · fused input slicing",source:"activation.py · SiluAndMulWithClamp.forward_native",sourceUrl:`${ACTIVATION_URL}#L214-L218`,weights:[]}),
     swiglu: cloneOp(mlp,{id:"d-swiglu",kind:"activation",kicker:"DENSE FFN · TP-LOCAL ACTIVATION",title:"SiluAndMulWithClamp · SwiGLU-OAI",summary:"对当前 TP rank 的 G⁽ʳ⁾/U⁽ʳ⁾ 分片执行 gate 上界截断、up 双边截断、sigmoid、+β 与逐元素乘；不执行线性投影。",input:"G⁽ʳ⁾,U⁽ʳ⁾",inputShape:"2 × [B,S,12288/TP]",output:"Z⁽ʳ⁾ · activated⁽ʳ⁾",outputShape:"[B,S,12288/TP]",formulaNote:"forward_native 先以 c=7 截断两个分支，再计算 Ḡ⁽ʳ⁾⊙σ(αḠ⁽ʳ⁾)⊙(Ū⁽ʳ⁾+β)；α=1.702，β=1.0。",runtime:"SiluAndMulWithClamp.forward_native",source:"activation.py · SiluAndMulWithClamp.forward_native · L214–218",sourceUrl:`${ACTIVATION_URL}#L214-L218`,weights:[]}),
     down: cloneOp(mlp,{id:"d-down",kind:"linear",kicker:"DENSE FFN · ROW PARALLEL · H=6144",title:"Down Projection",summary:"RowParallelLinear 消费每个 TP rank 的局部 activated 分片，将 H_dense/TP 投回 H，并归并各 rank 的部分结果。",input:"activated⁽ʳ⁾",inputShape:"[B,S,12288/TP]",output:"Yffn",outputShape:"[B,S,6144]",formulaNote:"本节点只执行 down projection；输入宽度为 H_dense/TP，输出隐藏宽度 H=6144。",weights:mlp.weights.filter(w=>w.key.includes("down_proj"))}),
-    add2: cloneOp(mlp,{id:"d-add2",kind:"add",title:"+ MLP Residual",input:"Yffn + U",inputShape:"2 × [B,S,6144]",output:"Xₗ₊₁",outputShape:"[B,S,6144]",formula:"Xₗ₊₁=U+MLP(RMSNorm(U))",weights:[]}),
+    add2: cloneOp(mlp,{id:"d-add2",kind:"add",kicker:"DECODER LAYER · FFN RESIDUAL",title:"Decoder Layer Residual Merge",summary:"在 Decoder Layer 边界把 Dense FFN 分支 Yffn 与 residual stream U 逻辑合并，得到 Xₗ₊₁；该 merge 延迟融合到下一层 input RMSNorm。",input:"U + Yffn",inputShape:"2 × [B,S,6144]",output:"Xₗ₊₁ · logical next-layer input",outputShape:"[B,S,6144]",formula:"Xₗ₊₁=U+Yffn",formulaNote:"当前层 L776–778 返回 Yffn 与 U 两条独立流；下一 Decoder Layer 在 L758–767 的 fused input RMSNorm 中执行实际 add。",runtime:"MiniMaxM3DecoderLayer boundary · deferred residual merge",source:"nvidia/model.py · MiniMaxM3DecoderLayer.forward · L758–778",sourceUrl:`${CODE_URL}#L758-L778`,weights:[]}),
   };
 }
 
@@ -462,13 +516,13 @@ function sparseGraph(layer: number): Record<string, OpNode> {
     softmax:cloneOp(attn,{id:"s-softmax",kind:"softmax",title:"Softmax",input:"masked scores",inputShape:"[B,64/TP,S,≤2048]",output:"probabilities",outputShape:"same",weights:[]}),
     pv:cloneOp(attn,{id:"s-pv",kind:"matmul",title:"P × selected V",input:"P, selected V",inputShape:"[B,64/TP,S,≤2048] · selected V pages",output:"local heads",outputShape:"[B,S,8192/TP]",formulaNote:"P × selected V 在每个 TP rank 上输出 8192/TP 的局部 attention 宽度，再进入 RowParallel O Projection。",weights:[]}),
     oproj:cloneOp(attn,{id:"s-oproj",kind:"linear",title:"O Projection",input:"heads",inputShape:"[B,S,8192]",output:"Yattn",outputShape:"[B,S,6144]",weights:attn.weights.filter(w=>w.key.includes("o_proj"))}),
-    addattn:cloneOp(combine,{id:"s-addattn",kind:"add",title:"+ Attention Residual",input:"Yattn + residual",inputShape:"2 × [B,S,6144]",output:"U",outputShape:"[B,S,6144]",weights:[]}),
+    addattn:cloneOp(combine,{id:"s-addattn",kind:"add",kicker:"DECODER LAYER · ATTENTION RESIDUAL",title:"Attention Residual Merge",summary:"在 Decoder Layer 内把 Sparse Attention 分支 Yattn 加入 residual stream Xₗ，得到更新后的 U；图中将 fused add 与紧随其后的 post-norm 分开表达。",input:"Xₗ + Yattn",inputShape:"2 × [B,S,6144]",output:"U · updated residual stream",outputShape:"[B,S,6144]",formula:"U=Xₗ+Yattn",formulaNote:"实际调用位于 DecoderLayer.forward L773：fused kernel 先执行 residual += hidden_states，再对更新后的 residual 执行 post-attention Gemma RMSNorm。",runtime:"fused_allreduce_gemma_rms_norm · attention residual",source:"nvidia/model.py · MiniMaxM3DecoderLayer.forward · L773–775",sourceUrl:`${CODE_URL}#L773-L775`,weights:[]}),
     postnorm:cloneOp(normBase,{id:"s-postnorm",kind:"norm",title:"Post-attn Gemma RMSNorm",summary:"输入 U 已由上游 Add 节点计算完成；此节点只执行 Gemma RMSNorm(U)，输出唯一的 Û 作为 MoE 输入。",formulaNote:"U 是上游 Add 的单一输出；本节点只计算 RMS(U) 与 (1+γpost) 缩放，不重复执行 residual add。",input:"U",inputShape:"[B,S,6144]",output:"Û",outputShape:"[B,S,6144]",source:"nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142",sourceUrl:NORM_FORWARD_URL,weights:[postNorm]}),
     router:cloneOp(router,{id:"s-router",kind:"route",title:"FP32 Router → Top-4",input:"Û",inputShape:"[B,S,6144]"}),
     experts:cloneOp(experts,{id:"s-experts",kind:"activation",title:"Routed Experts ×4",input:"Û + expert ids + weights",inputShape:"[B,S,6144] + 2×[B,S,4]"}),
     shared:cloneOp(shared,{id:"s-shared",kind:"activation",title:"Shared Expert ×1",input:"Û",inputShape:"[B,S,6144]"}),
     sum:cloneOp(combine,{id:"s-sum",kind:"add",title:"Weighted Sum",input:"4 routed + shared",inputShape:"5 × [B,S,6144]",output:"Ymoe",outputShape:"[B,S,6144]",weights:[]}),
-    addout:cloneOp(combine,{id:"s-addout",kind:"add",title:"+ Decoder Residual"}),
+    addout:cloneOp(combine,{id:"s-addout",kind:"add",kicker:"DECODER LAYER · MOE RESIDUAL",title:"Decoder Layer Residual Merge",summary:"在 Decoder Layer 边界把 MoE 分支 Ymoe 与 residual stream U 逻辑合并，得到 Xₗ₊₁；该 merge 延迟融合到下一层 input RMSNorm。",input:"U + Ymoe",inputShape:"2 × [B,S,6144]",output:"Xₗ₊₁ · logical next-layer input",outputShape:"[B,S,6144]",formula:"Xₗ₊₁=U+Ymoe",formulaNote:"当前层 L776–778 返回 Ymoe 与 U 两条独立流；下一 Decoder Layer 在 L758–767 的 fused input RMSNorm 中执行实际 add。",runtime:"MiniMaxM3DecoderLayer boundary · deferred residual merge",source:"nvidia/model.py · MiniMaxM3DecoderLayer.forward · L758–778",sourceUrl:`${CODE_URL}#L758-L778`,weights:[]}),
   };
 }
 
@@ -717,10 +771,10 @@ function stageOverview(type:LayerType,stage:Exclude<ExpandedStage,null>):StageOv
   if(type==="dense"&&stage==="ffn")return {
     kicker:"DENSE FFN · L0–L2",title:"SwiGLU-OAI MLP",summary:"逐 token 扩维、门控，再投回 hidden size。",
     flow:"Û → TP-local Gate + Up Projection → Split → SwiGLU-OAI → RowParallel Down Projection → Yffn",
-    formula:"H = 6144，H_dense = 12288\nG⁽ʳ⁾ = Û (W_gate⁽ʳ⁾)ᵀ\nU⁽ʳ⁾ = Û (W_up⁽ʳ⁾)ᵀ\nḠ⁽ʳ⁾ = min(G⁽ʳ⁾, c)\nŪ⁽ʳ⁾ = clip(U⁽ʳ⁾, −c, c)\nZ⁽ʳ⁾ = Ḡ⁽ʳ⁾ ⊙ σ(αḠ⁽ʳ⁾) ⊙ (Ū⁽ʳ⁾ + β)\nYffn = Σᵣ Z⁽ʳ⁾ (W_down⁽ʳ⁾)ᵀ",
+    formula:"G⁽ʳ⁾ = Û (W_gate⁽ʳ⁾)ᵀ\nU⁽ʳ⁾ = Û (W_up⁽ʳ⁾)ᵀ\nḠ⁽ʳ⁾ = min(G⁽ʳ⁾, c)\nŪ⁽ʳ⁾ = clip(U⁽ʳ⁾, −c, c)\nZ⁽ʳ⁾ = Ḡ⁽ʳ⁾ ⊙ σ(αḠ⁽ʳ⁾) ⊙ (Ū⁽ʳ⁾ + β)\nYffn = Σᵣ Z⁽ʳ⁾ (W_down⁽ʳ⁾)ᵀ",
     formulaNote:"r 表示 TP rank；G⁽ʳ⁾、U⁽ʳ⁾、Z⁽ʳ⁾ 的最后一维都是 H_dense/TP。σ 表示 sigmoid，⊙ 表示逐元素相乘；Down Projection 最后归并各 rank 的部分结果。",
     notes:["Gate 与 Up 权重和同一个输入 Û 直接进入 fused projection。","投影结果沿最后一维 Split；MLP 不混合不同 token。"],
-    parameters:[["α","1.702","swiglu_alpha"],["β","1.0","swiglu_beta"],["c","7.0","swiglu_limit"],["H_dense","12288","dense_intermediate_size"]],
+    parameters:[["H","6144","hidden_size"],["H_dense","12288","dense_intermediate_size"],["α","1.702","swiglu_alpha"],["β","1.0","swiglu_beta"],["c","7.0","swiglu_limit"]],
   };
   if(stage==="attention")return type==="dense"?{
     kicker:"DENSE ATTENTION · L0–L2",title:"GQA + Partial RoPE",summary:"用 Q 检索完整可见 KV 历史，再按概率聚合 V。",

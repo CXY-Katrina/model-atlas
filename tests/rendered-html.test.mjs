@@ -55,7 +55,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /katex\.renderToString/);
   assert.match(source, /LATEX_BY_ID/);
   assert.match(source, /实际公式/);
-  assert.match(source, /operatorname\{TopK\}_4/);
+  assert.match(source, /operatorname\{TopK\}_K/);
   assert.match(source, /theta_\{p,j\}/);
   assert.doesNotMatch(source, /权重名称为什么与代码不同/);
   assert.match(source, /SiluAndMulWithClamp/);
@@ -136,6 +136,14 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /outputShape:"\[B,64\/TP,S,T\]"/);
   assert.match(source, /outputShape:"\[B,S,8192\/TP\]"/);
   assert.match(source, /max\(1,4\/TP\)/);
+  const latexBlock = source.match(/const LATEX_BY_ID:[\s\S]*?const NORM_SECTIONS/)?.[0] ?? "";
+  assert.doesNotMatch(latexBlock, /6144|12288|9856|9216|8704|8192|512|128|64|16|7\.0|1\.702|1\.0|10\^\{(?:29|30|-6)\}/);
+  assert.match(source, /id:"d-add1",kind:"add",kicker:"DECODER LAYER · ATTENTION RESIDUAL"/);
+  assert.match(source, /source:"nvidia\/model\.py · MiniMaxM3DecoderLayer\.forward · L773–775"/);
+  assert.match(source, /id:"d-add2",kind:"add",kicker:"DECODER LAYER · FFN RESIDUAL"/);
+  assert.match(source, /下一 Decoder Layer 在 L758–767 的 fused input RMSNorm 中执行实际 add/);
+  assert.match(source, /"d-add2":\[\["U","Attention 后的 residual stream/);
+  assert.doesNotMatch(source, /title:"\+ MLP Residual"/);
   assert.doesNotMatch(page, /DECODER LAYER TYPE|Dense GQA · SwiGLU MLP|Indexer Attention · Top-4 MoE/);
   assert.match(source, /block_sparse_moe\.gate\.weight/);
   assert.match(source, /block_sparse_moe\.experts\.\*\.\{w1,w3,w2\}\.weight/);
