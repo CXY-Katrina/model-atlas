@@ -85,3 +85,6 @@
 
 /* Detail-panel controls and shapes use the same restrained visual language everywhere. */
 .unpin-button{border:1px solid transparent;background:transparent;color:var(--muted);border-radius:6px;font:20px/1 var(--font-geist-sans);transition:color .12s,background .12s,border-color .12s}.unpin-button:hover,.unpin-button:focus-visible{outline:0;border-color:var(--line);background:var(--field);color:var(--green)}.shape-rows{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px}.shape-rows span{grid-template-columns:auto minmax(0,1fr);align-items:baseline;gap:7px}.shape-rows code{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal!important;word-break:normal}.shape-rows i{white-space:nowrap}.io-binding-view{gap:10px}.output-binding{margin-top:0}
+
+/* Formula term cards stay symmetric regardless of identifier length. */
+.formula-terms{grid-template-columns:repeat(2,minmax(0,1fr))}.formula-terms span{min-width:0;overflow-wrap:anywhere}

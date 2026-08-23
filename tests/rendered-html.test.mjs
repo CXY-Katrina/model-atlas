@@ -74,6 +74,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /\["γ","input_layernorm\.weight"\]/);
   assert.match(source, /\["H","hidden_size = 6144"\]/);
   assert.doesNotMatch(source, /<b>x \/ a \/ b<\/b>/);
+  assert.match(source, /\["U","上游 Add 节点的输出"\]/);
+  assert.doesNotMatch(source, /"d-postnorm":\[\["Xₗ"|"s-postnorm":\[\["Xₗ"/);
+  assert.match(css, /\.formula-terms\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(source, /MergedColumnParallelLinear/);
   assert.match(source, /I\/O \+ 权重/);
   assert.match(source, /INPUT BINDINGS/);
