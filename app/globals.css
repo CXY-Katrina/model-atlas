@@ -93,7 +93,7 @@
 .stage-zoom>header{align-items:center}.mlp-node-graph{width:min(600px,96%);gap:8px 6px;padding:8px 8px}
 .mlp-node-graph [data-graph-id="mlp-wdown"]{grid-area:9/5}
 .moe-node-graph [data-graph-id="moe-experts"]{grid-area:4/3}.moe-node-graph [data-graph-id="moe-routed"]{grid-area:5/3}
-.moe-node-graph [data-graph-id="moe-sum"]{grid-area:6/4}.moe-node-graph [data-graph-id="moe-y"]{grid-area:7/4}.stage-zoom .moe-node-graph{grid-template-columns:repeat(5,minmax(0,1fr));gap:14px clamp(16px,1.5vw,28px);padding:10px clamp(18px,2vw,42px)}.stage-zoom .moe-node-graph :is(.tensor-node,.op-node){min-height:50px;max-height:none;padding:7px 10px;gap:3px}.stage-zoom .moe-node-graph .tensor-weight{width:220px;max-width:100%;min-height:64px;padding:9px 14px}
+.moe-node-graph [data-graph-id="moe-sum"]{grid-area:6/4}.moe-node-graph [data-graph-id="moe-y"]{grid-area:7/4}.stage-zoom .moe-node-graph{grid-template-columns:repeat(5,minmax(0,1fr));grid-template-rows:repeat(7,minmax(54px,1fr));gap:10px clamp(14px,1.2vw,22px);padding:8px clamp(16px,1.6vw,32px)}.stage-zoom .moe-node-graph :is(.tensor-node,.op-node){min-height:46px;max-height:none;padding:6px 9px;gap:2px;line-height:1.1}.stage-zoom .moe-node-graph .tensor-weight{width:210px;max-width:100%;min-height:60px;padding:8px 11px}
 .multiply-circle[aria-pressed="true"]{outline:2px solid #1f6c4d5c;border-color:var(--green)}
 
 /* Give evidence more room; symbolic and concrete shapes always use separate rows. */

@@ -578,7 +578,12 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
         const [sx,sy]=point(source.getBoundingClientRect(),fromPort,rootRect);
         const [tx,ty]=point(target.getBoundingClientRect(),toPort,rootRect);
         const direction=edge.route??(fromPort==="right"||fromPort==="left"||toPort==="right"||toPort==="left"?"horizontal":"vertical");
-        return [routeGraphEdge({source:{x:sx,y:sy},target:{x:tx,y:ty},direction,obstacleBounds,clearance:24}).path];
+        const safeClearance=direction==="side-left"
+          ?Math.min(24,Math.max(4,obstacleBounds.left-8))
+          :direction==="side-right"
+            ?Math.min(24,Math.max(4,rootRect.width-obstacleBounds.right-8))
+            :24;
+        return [routeGraphEdge({source:{x:sx,y:sy},target:{x:tx,y:ty},direction,obstacleBounds,clearance:safeClearance}).path];
       });
       setPaths(next);
     };
