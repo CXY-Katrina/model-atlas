@@ -249,7 +249,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.moe-node-graph \[data-graph-id="moe-experts"\]\{grid-area:4\/3\}/);
   assert.match(css, /\.moe-node-graph \[data-graph-id="moe-sum"\]\{grid-area:6\/4\}/);
   assert.match(css, /\.moe-node-graph \[data-graph-id="moe-y"\]\{grid-area:7\/4\}/);
-  assert.match(css, /\.stage-zoom \.moe-node-graph\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\);grid-template-rows:repeat\(7,minmax\(54px,1fr\)\);gap:10px clamp\(14px,1\.2vw,22px\);padding:8px clamp\(16px,1\.6vw,32px\)\}/);
+  assert.match(css, /\.stage-zoom\{container-type:inline-size\}/);
+  assert.match(css, /\.stage-zoom \.moe-node-graph\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\);grid-template-rows:repeat\(7,minmax\(54px,1fr\)\);gap:10px clamp\(15px,1\.2vw,22px\);padding:8px clamp\(16px,1\.6vw,32px\)\}/);
   assert.match(css, /\.stage-zoom \.moe-node-graph :is\(\.tensor-node,\.op-node\)\{min-height:46px;max-height:none;padding:6px 9px;gap:2px;line-height:1\.1\}/);
   assert.match(css, /\.stage-zoom \.moe-node-graph \.tensor-weight\{width:210px;max-width:100%;min-height:60px;padding:8px 11px\}/);
   assert.match(source, /const safeClearance=direction==="side-left"/);
@@ -260,15 +261,17 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.shape-rows\{display:flex!important;flex-direction:column;align-items:stretch;gap:6px\}/);
   assert.match(css, /\.shape-rows>span\{width:100%;grid-template-columns:46px minmax\(0,1fr\)\}/);
   assert.match(css, /\.shape-rows code\{white-space:nowrap;overflow-wrap:normal!important\}/);
-  assert.doesNotMatch(css, /container-type:inline-size|@container \(max-width:430px\)/);
+  assert.doesNotMatch(css, /\.binding,\.output-binding article\{container-type:inline-size\}|@container \(max-width:430px\)/);
   assert.match(css, /\.model-facts small\{[^}]*font-size:12px/);
   assert.match(css, /\.tensor-node code\{font-size:12px/);
   assert.match(css, /\.stage-zoom \.graph-surface \.tensor-node code\{font-size:12px/);
   assert.match(css, /\.shape-rows code\{font:12px/);
   assert.match(css, /\.model-overview \.model-step code\{font-size:12px/);
+  assert.match(css, /@container \(max-width:1000px\)\{[^}]*font-size:10px!important/);
+  assert.match(css, /column-gap:15px/);
   const fixedPixelFontSizes = [...css.matchAll(/(?:font-size|font):(\d+(?:\.\d+)?)px/g)]
     .map((match) => Number(match[1]));
-  assert.ok(fixedPixelFontSizes.every((size) => size >= 12), "all fixed pixel font sizes should be at least 12px");
+  assert.ok(fixedPixelFontSizes.every((size) => size >= 10), "compact graph text may shrink to 10px but no smaller");
   assert.match(css, /\.config-reference/);
   assert.match(css, /\.config-reference\{[^}]*overflow-x:hidden/);
   assert.match(css, /\.config-reference table\{[^}]*table-layout:fixed/);
