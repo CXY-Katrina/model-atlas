@@ -138,6 +138,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /outputShape:"\[B,64\/TP,S,T\]"/);
   assert.match(source, /outputShape:"\[B,S,8192\/TP\]"/);
   assert.match(source, /max\(1,4\/TP\)/);
+  assert.match(source, /shape:tpShape\?`\$\{weight\.dtype\} · TP shard \$\{tpShape\}`/);
+  assert.doesNotMatch(source, /TP shard \$\{tpShape\} · checkpoint \$\{weight\.shape\}/);
   const latexBlock = source.match(/const LATEX_BY_ID:[\s\S]*?const NORM_SECTIONS/)?.[0] ?? "";
   assert.doesNotMatch(latexBlock, /6144|12288|9856|9216|8704|8192|512|128|64|16|7\.0|1\.702|1\.0|10\^\{(?:29|30|-6)\}/);
   assert.match(source, /id:"d-add1",kind:"add",kicker:"DECODER LAYER · ATTENTION RESIDUAL"/);
