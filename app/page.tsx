@@ -174,10 +174,27 @@ const FORMULA_TERMS_BY_ID: Partial<Record<string,readonly FormulaTerm[]>> = {
   "s-addout":[["U","Attention 后的 residual stream · [B,S,H]"],["Ymoe","MoE 输出 · [B,S,H]"],["Xₗ₊₁","逻辑上的下一层输入"],["H","hidden_size = 6144"]],
   "d-add1":[["Xₗ","进入本层的 residual stream · [B,S,H]"],["Yattn","Attention 输出 · [B,S,H]"],["U","更新后的 residual stream"],["H","hidden_size = 6144"]],
   "s-addattn":[["Xₗ","进入本层的 residual stream · [B,S,H]"],["Yattn","Sparse Attention 输出 · [B,S,H]"],["U","更新后的 residual stream"],["H","hidden_size = 6144"]],
+  "d-position":[["q_b","请求 b 本轮调度的 query 数"],["p_b,i","请求 b 的第 i 个 token position"],["N_q","本轮 query token 总数"],["B","batch size"]],
+  "s-position":[["q_b","请求 b 本轮调度的 query 数"],["p_b,i","请求 b 的第 i 个 token position"],["N_q","本轮 query token 总数"],["B","batch size"]],
+  "d-attnmeta":[["q_b","请求 b 的 query 数"],["c_b","请求 b 已有 context 长度"],["M","causal / padding mask"],["−∞","不可见位置的加性 mask 值"]],
+  "s-attnmeta":[["q_b","请求 b 的 query 数"],["c_b","请求 b 已有 context 长度"],["M","causal / padding mask"],["−∞","不可见位置的加性 mask 值"]],
+  "d-slots":[["p","token position"],["B_block","KV cache block size · runtime"],["b_phys","物理 block id"],["block_table","逻辑块到物理页映射"],["slot","KV cache 物理槽位"]],
+  "s-slots":[["p","token position"],["B_block","KV cache block size · runtime"],["b_phys","物理 block id"],["block_table","逻辑块到物理页映射"],["slot","KV cache 物理槽位"]],
+  "d-cache":[["Kᵣ / V","写入 cache 的 Key / Value"],["slot","物理 cache 位置"],["block_table","逻辑块到物理页映射"],["K≤p / V≤p","当前 token 可见的 KV"]],
+  "d-scale":[["A","未缩放 attention scores"],["Ā","缩放后的 scores"],["Dₕ","head_dim = 128"]],
+  "d-mask":[["Ā","缩放后的 scores"],["M","causal / padding mask"],["Ã","mask 后的 scores"],["c_b","请求 b 的 context 长度"]],
+  "d-softmax":[["Ã","mask 后的 scores"],["P","attention probability"],["T","可见 KV token 数"],["m","每行最大值，用于数值稳定"]],
+  "s-cache":[["Kᵣ / V","写入 sparse cache 的 Key / Value"],["slot","物理 cache 位置"],["block_table","逻辑块到物理页映射"]],
+  "s-select":[["𝒮","Top-K 选中的逻辑 block ids"],["block_table","逻辑块到物理页映射"],["𝒫","选中的物理 pages"],["K𝒮 / V𝒮","从 pages gather 的 KV"]],
+  "s-scale":[["A","未缩放 sparse scores"],["Ā","缩放后的 sparse scores"],["Dₕ","head_dim = 128"]],
+  "s-mask":[["Ā","缩放后的 sparse scores"],["𝒮","Indexer 选中的 token 集合"],["Ã","causal / padding mask 后的 scores"],["c_b","请求 b 的 context 长度"]],
+  "s-softmax":[["Ã","mask 后的 sparse scores"],["P","selected KV 上的概率"],["𝒮","当前 query 的候选 token 集合"]],
+  "s-shared":[["u","Shared Expert 输入 · [B,S,H]"],["W₁,s","shared gate_proj.weight"],["W₃,s","shared up_proj.weight"],["W₂,s","shared down_proj.weight"],["H","hidden_size = 6144"],["H_shared","shared_intermediate_size = 3072"],["E_shared(u)","Shared Expert 输出"]],
+  "s-sum":[["𝓔","当前 token 选中的 routed experts"],["ŵₑ","第 e 个 routed expert 权重"],["Eₑ(U)","第 e 个 routed expert 输出"],["E_shared(U)","Shared Expert 输出"],["Ymoe","两路求和后的 MoE 输出"]],
 };
 
 function formulaTerms(node:OpNode){
-  return FORMULA_TERMS_BY_ID[node.id]??FORMULA_TERMS_BY_KIND[node.kind];
+  return FORMULA_TERMS_BY_ID[node.id]??(node.latex?[]:FORMULA_TERMS_BY_KIND[node.kind]);
 }
 
 const LATEX_BY_ID: Record<string,string> = {
@@ -185,8 +202,8 @@ const LATEX_BY_ID: Record<string,string> = {
   "s-position":String.raw`\begin{aligned}q_b&=\mathrm{num\_scheduled\_tokens}[b]\\p_{b,i}&=\mathrm{num\_computed\_tokens}[b]+i,\quad 0\le i<q_b\\\mathbf p&=\operatorname{concat}_{b=1}^{B}(p_{b,0},\ldots,p_{b,q_b-1})\in\mathbb Z^{N_q}\end{aligned}`,
   "d-attnmeta":String.raw`\begin{aligned}q_b&=\mathrm{query\_start\_loc}_{b+1}-\mathrm{query\_start\_loc}_b\\c_b&=\mathrm{seq\_len}_b-q_b\\M_{b,i,j}&=\begin{cases}0,&0\le j\le c_b+i\\-\infty,&\text{otherwise}\end{cases}\end{aligned}`,
   "s-attnmeta":String.raw`\begin{aligned}q_b&=\mathrm{query\_start\_loc}_{b+1}-\mathrm{query\_start\_loc}_b\\c_b&=\mathrm{seq\_len}_b-q_b\\M_{b,i,j}&=\begin{cases}0,&0\le j\le c_b+i\\-\infty,&\text{otherwise}\end{cases}\end{aligned}`,
-  "d-slots":String.raw`\begin{aligned}\ell&=\left\lfloor p/\mathrm{block\_size}\right\rfloor,\quad o=p\bmod \mathrm{block\_size}\\b_{\mathrm{phys}}&=\mathrm{block\_table}[r,\ell]\\\mathrm{slot}(r,p)&=b_{\mathrm{phys}}\cdot\mathrm{block\_size}+o\end{aligned}`,
-  "s-slots":String.raw`\begin{aligned}\ell&=\left\lfloor p/\mathrm{block\_size}\right\rfloor,\quad o=p\bmod \mathrm{block\_size}\\b_{\mathrm{phys}}&=\mathrm{block\_table}[r,\ell]\\\mathrm{slot}(r,p)&=b_{\mathrm{phys}}\cdot\mathrm{block\_size}+o\end{aligned}`,
+  "d-slots":String.raw`\begin{aligned}\ell&=\left\lfloor p/B_{block}\right\rfloor,\quad o=p\bmod B_{block}\\b_{\mathrm{phys}}&=\mathrm{block\_table}[r,\ell]\\\mathrm{slot}(r,p)&=b_{\mathrm{phys}}\cdot B_{block}+o\end{aligned}`,
+  "s-slots":String.raw`\begin{aligned}\ell&=\left\lfloor p/B_{block}\right\rfloor,\quad o=p\bmod B_{block}\\b_{\mathrm{phys}}&=\mathrm{block\_table}[r,\ell]\\\mathrm{slot}(r,p)&=b_{\mathrm{phys}}\cdot B_{block}+o\end{aligned}`,
   "d-norm":String.raw`\begin{aligned}\operatorname{RMS}(x)&=\sqrt{\frac1H\sum_{j=1}^{H}x_j^2+\varepsilon}\\y_i&=\frac{x_i}{\operatorname{RMS}(x)}(1+\gamma_i)\end{aligned}`,
   "d-qkv":String.raw`\begin{aligned}Z&=\hat X\,[W_Q^\top\mid W_K^\top\mid W_V^\top]\\Z&\in\mathbb R^{B\times S\times((N_h+2N_{kv})D_h/TP)}\end{aligned}`,
   "d-split":String.raw`(Q,K,V)=\operatorname{Split}\!\left(Z;\frac{N_hD_h}{TP},N_{kv,\mathrm{rank}}D_h,N_{kv,\mathrm{rank}}D_h\right)`,

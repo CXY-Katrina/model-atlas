@@ -142,6 +142,13 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.doesNotMatch(source, /TP shard \$\{tpShape\} · checkpoint \$\{weight\.shape\}/);
   const latexBlock = source.match(/const LATEX_BY_ID:[\s\S]*?const NORM_SECTIONS/)?.[0] ?? "";
   assert.doesNotMatch(latexBlock, /6144|12288|9856|9216|8704|8192|512|128|64|16|7\.0|1\.702|1\.0|10\^\{(?:29|30|-6)\}/);
+  const termBlock = source.match(/const FORMULA_TERMS_BY_ID:[\s\S]*?function formulaTerms/)?.[0] ?? "";
+  const latexIds = [...latexBlock.matchAll(/"([ds]-[^"]+)":String\.raw/g)].map((match) => match[1]);
+  const termIds = new Set([...termBlock.matchAll(/"([ds]-[^"]+)":\[/g)].map((match) => match[1]));
+  assert.deepEqual(latexIds.filter((id) => !termIds.has(id)), [], "every dedicated formula needs matching dedicated terms");
+  assert.match(source, /"s-shared":\[\["u","Shared Expert 输入/);
+  assert.match(source, /\["W₁,s","shared gate_proj\.weight"\]/);
+  assert.doesNotMatch(source, /FORMULA_TERMS_BY_ID\[node\.id\]\?\?FORMULA_TERMS_BY_KIND/);
   assert.match(source, /id:"d-add1",kind:"add",kicker:"DECODER LAYER · ATTENTION RESIDUAL"/);
   assert.match(source, /source:"nvidia\/model\.py · MiniMaxM3DecoderLayer\.forward · L773–775"/);
   assert.match(source, /id:"d-add2",kind:"add",kicker:"DECODER LAYER · FFN RESIDUAL"/);
