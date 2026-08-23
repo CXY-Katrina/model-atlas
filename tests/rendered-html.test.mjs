@@ -225,7 +225,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.decoder-node-graph>\.stage-summary\{[^}]*width:max-content/);
   assert.match(css, /\.connected-attention-graph/);
   assert.match(css, /\.mlp-node-graph/);
-  assert.match(css, /\.mlp-node-graph\{width:min\(700px,96%\);gap:8px 10px;padding:8px 10px\}/);
+  assert.match(css, /\.mlp-node-graph\{width:min\(600px,96%\);gap:8px 6px;padding:8px 8px\}/);
   assert.match(css, /\.mlp-node-graph>\[data-graph-id\]\{[^}]*width:max-content[^}]*max-width:260px/);
   assert.match(css, /\.stage-overview-panel\{grid-template-rows:auto minmax\(0,1fr\) 28px\}/);
   assert.match(css, /\.stage-formula-section code\{white-space:pre-line\}/);

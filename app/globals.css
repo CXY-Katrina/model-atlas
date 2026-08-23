@@ -90,7 +90,7 @@
 .formula-terms{grid-template-columns:repeat(2,minmax(0,1fr))}.formula-terms span{min-width:0;overflow-wrap:anywhere}
 
 /* Keep the expanded-stage caption centered and the dense MLP graph horizontally compact. */
-.stage-zoom>header{align-items:center}.mlp-node-graph{width:min(700px,96%);gap:8px 10px;padding:8px 10px}
+.stage-zoom>header{align-items:center}.mlp-node-graph{width:min(600px,96%);gap:8px 6px;padding:8px 8px}
 .multiply-circle[aria-pressed="true"]{outline:2px solid #1f6c4d5c;border-color:var(--green)}
 
 /* Give evidence more room; stack symbolic and concrete shapes when a card is still narrow. */
