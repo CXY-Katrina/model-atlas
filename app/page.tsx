@@ -29,6 +29,7 @@ import {
   type Weight,
 } from "./atlas-shared";
 import type { ModelModule } from "./models/model-module";
+import { hy4Module } from "./models/hy4";
 
 type LayerType = "dense" | "sparse";
 
@@ -44,6 +45,7 @@ const FLASHINFER_GEMMA_NORM_URL = "https://docs.flashinfer.ai/generated/flashinf
 
 const MODEL_REGISTRY = [
   { id: "minimax-m3", name: "MiniMax-M3", enabled: true },
+  { id: "hunyuan-hy4", name: "Hunyuan Hy4", enabled: true },
   { id: "kimi-k3", name: "Kimi K3 · 待添加", enabled: false },
   { id: "deepseek-v4", name: "DeepSeek V4 · 待添加", enabled: false },
   { id: "step-3.7", name: "Step 3.7 · 待添加", enabled: false },
@@ -785,7 +787,7 @@ const minimaxM3Module: ModelModule = {
   Workbench: (props) => <DecoderDiagram type={props.layerType === "dense" ? "dense" : "sparse"} g={props.graph} active={props.activeId} expanded={props.expanded} onExpand={props.onExpand} onHover={props.onHover} onLeave={props.onLeave} onSelect={props.onSelect} />,
 };
 
-const MODULES: Record<string, ModelModule> = { "minimax-m3": minimaxM3Module };
+const MODULES: Record<string, ModelModule> = { "minimax-m3": minimaxM3Module, "hunyuan-hy4": hy4Module };
 
 function initialModelFromHash(): string {
   const id = window.location.hash.replace(/^#\//, "");

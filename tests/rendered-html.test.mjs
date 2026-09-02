@@ -31,13 +31,14 @@ test("builds a static GitHub Pages entry", async () => {
 });
 
 test("keeps code, checkpoint, formula, and shape evidence together", async () => {
-  const [page, modelData, shared, css] = await Promise.all([
+  const [page, modelData, shared, hy4, css] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/model-data.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/atlas-shared.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/models/hy4.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
-  const source = `${page}\n${modelData}\n${shared}`;
+  const source = `${page}\n${modelData}\n${shared}\n${hy4}`;
 
   assert.match(source, /MinimaxM3QKVParallelLinearWithIndexer/);
   assert.match(source, /block_sparse_moe\.experts\.0\.w1\.weight/);
@@ -284,8 +285,11 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
 });
 
 test("renders every operator equation as valid LaTeX", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  const equations = [...page.matchAll(/String\.raw`([^`]*)`/g)].map((match) => match[1]);
+  const [page, hy4] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/models/hy4.tsx", import.meta.url), "utf8"),
+  ]);
+  const equations = [...`${page}\n${hy4}`.matchAll(/String\.raw`([^`]*)`/g)].map((match) => match[1]);
 
   assert.ok(equations.length >= 40, `expected a complete formula set, got ${equations.length}`);
   for (const equation of equations) {

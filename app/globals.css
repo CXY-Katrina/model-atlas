@@ -104,3 +104,34 @@
 
 /* Expanded-stage guidance belongs in the persistent right rail, not inside the graph. */
 .stage-overview-panel{grid-template-rows:auto minmax(0,1fr) 28px}.stage-overview-header{padding:20px 18px 16px;border-bottom:1px solid var(--line)}.stage-overview-header>span,.stage-overview-body section>span{font:12px var(--font-geist-mono);letter-spacing:.1em;color:var(--green)}.stage-overview-header h2{font-size:24px;line-height:1.15;letter-spacing:-.035em;margin:7px 0 9px}.stage-overview-header p{font-size:12px;line-height:1.6;color:var(--muted);margin:0}.stage-overview-body{min-height:0;overflow:auto;padding:16px;display:grid;align-content:start;gap:10px;scrollbar-width:thin}.stage-overview-body section{border:1px solid var(--line);border-radius:9px;background:var(--field);padding:11px;display:grid;gap:8px}.stage-overview-body code{font:12px/1.65 var(--font-geist-mono);color:var(--ink);white-space:normal;overflow-wrap:anywhere}.stage-formula-section code{white-space:pre-line}.stage-overview-body p{font-size:12px;line-height:1.55;color:var(--muted);margin:0}.stage-parameters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.stage-parameters article{min-width:0;border:1px solid var(--line);border-radius:7px;background:var(--paper);padding:8px;display:grid;grid-template-columns:1fr auto;gap:3px 7px}.stage-parameters b,.stage-parameters strong{font:700 12px var(--font-geist-mono)}.stage-parameters b{color:var(--green)}.stage-parameters small{grid-column:1/-1;min-width:0;font:12px/1.35 var(--font-geist-mono);color:var(--muted);overflow-wrap:anywhere}
+
+/* --- Hunyuan Hy4 module layouts --- */
+.hy4-collapsed{height:100%;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-width:0}
+.hy4-collapsed>.decoder-column{flex:0 1 auto;height:auto;max-height:100%;gap:10px}
+.hy4-collapsed .decoder-node-graph{padding-block:8px;padding-inline-start:76px}
+.hy4-pair-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;align-items:stretch}
+.hy4-collapsed .hy4-pair-row .co-input-row{grid-template-columns:minmax(0,.75fr) minmax(0,1.25fr);gap:10px}
+.hy4-collapsed .hy4-pair-row .co-input-row>.tensor-node{width:100%;max-width:100%}
+.hy4-collapsed .hy4-pair-row .input-weighted-op>.op-node{width:100%}
+.hy4-nav .layer-type-options{grid-template-columns:repeat(3,minmax(0,1fr))}
+.hy4-nav .layer-type-options button{padding:5px 8px}
+.hy4-attn-graph{display:flex;flex-direction:column;gap:7px;min-height:0;overflow:auto}
+.hy4-attn-graph .compact-chain{flex:0 0 31px;display:flex;align-items:stretch;gap:14px}
+.hy4-attn-graph .compact-chain>*{flex:1 1 0;min-width:0}
+.hy4-attn-graph .qkv-lanes{flex:0 0 auto;display:grid;grid-template-columns:1fr;gap:7px;min-height:0}
+.hy4-attn-graph .qkv-lanes>section{border:1px dashed var(--line);border-radius:7px;padding:5px;display:flex;flex-direction:column;justify-content:center;gap:7px;min-width:0}
+.hy4-attn-graph .qkv-lanes>section>header{text-align:center;font:12px var(--font-geist-mono);color:var(--green);margin-bottom:3px}
+.hy4-lane-row{display:flex;flex-wrap:wrap;align-items:stretch;gap:5px 10px;min-width:0}
+.hy4-lane-row>*{flex:1 1 128px;min-width:0}
+.hy4-index-chain{flex:0 0 auto;border:1px dashed #8f7aae;border-radius:7px;padding:4px;background:color-mix(in srgb,var(--sparse) 14%,var(--paper))}
+.hy4-index-chain>header{font:12px var(--font-geist-mono);color:var(--green);text-align:center;margin-bottom:4px}
+.hy4-index-row{display:flex;flex-wrap:wrap;align-items:stretch;gap:5px 12px;min-width:0}
+.hy4-index-row>*{flex:1 1 120px;min-width:0}
+.hy4-index-chain.hy4-shared .hy4-index-row>*{flex:0 1 420px}
+.hy4-out-pipeline{flex:0 0 auto;border:1px solid var(--line);border-radius:7px;background:color-mix(in srgb,var(--matmul) 16%,var(--paper));padding:4px 8px;display:grid;grid-template-rows:auto minmax(30px,auto);gap:5px}
+.hy4-out-weights{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px 14px}
+.hy4-out-weights>[data-graph-id="attn-wsink"]{grid-column:1/2}
+.hy4-out-weights>[data-graph-id="attn-wgate"]{grid-column:4/5}
+.hy4-out-weights>[data-graph-id="attn-wop"]{grid-column:6/7}
+.hy4-out-row{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px 14px;align-items:stretch}
+@media(max-height:760px){.hy4-attn-graph{gap:4px}.hy4-attn-graph .qkv-lanes>section{gap:4px}.hy4-index-row{gap:3px 8px}}

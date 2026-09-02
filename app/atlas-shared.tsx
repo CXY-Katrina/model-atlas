@@ -58,7 +58,7 @@ export const FORMULA_NOTE_DEFAULT: Partial<Record<OpKind, string>> = {
 };
 
 export function checkpointWeightName(weight?: Weight) {
-  return weight?.key.replace(/^language_model\.model\.layers\.\d+\./, "") ?? "weight";
+  return weight?.key.replace(/^(?:language_model\.)?model\.layers\.\d+\./, "") ?? "weight";
 }
 
 export function GraphSurface({ edges, className, children }: { edges: GraphEdge[]; className: string; children: ReactNode }) {
