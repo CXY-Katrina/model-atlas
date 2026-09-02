@@ -31,12 +31,13 @@ test("builds a static GitHub Pages entry", async () => {
 });
 
 test("keeps code, checkpoint, formula, and shape evidence together", async () => {
-  const [page, modelData, css] = await Promise.all([
+  const [page, modelData, shared, css] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/model-data.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/atlas-shared.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
-  const source = `${page}\n${modelData}`;
+  const source = `${page}\n${modelData}\n${shared}`;
 
   assert.match(source, /MinimaxM3QKVParallelLinearWithIndexer/);
   assert.match(source, /block_sparse_moe\.experts\.0\.w1\.weight/);
@@ -184,7 +185,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /同一个 Û 直接进入 Router、Routed Experts 与 Shared Expert/);
   assert.match(source, /symbolicShape/);
   assert.doesNotMatch(source, /CURRENT OPERATOR|className=\{`io-operator/);
-  assert.match(source, /<i>符号<\/i><code title=\{symbolicShape\(shape\)\}>/);
+  assert.match(source, /<i>符号<\/i><code title=\{symbolic\(shape\)\}>/);
   assert.match(source, /<i>实际<\/i><code title=\{shape\}>/);
   assert.match(source, /replaceAll\("6144","H"\)/);
   assert.match(source, /完整 config\.json/);
