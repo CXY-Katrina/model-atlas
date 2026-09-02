@@ -1,21 +1,37 @@
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import katex from "katex";
-import { routeGraphEdge } from "./graph-routing";
+import { useState } from "react";
 import { nextDetailState, type DetailEvent, type DetailState } from "./detail-selection";
-import { denseNodes, layerShard, sparseNodes, type Node, type Weight } from "./model-data";
+import { denseNodes, layerShard, sparseNodes } from "./model-data";
+import {
+  AddCircle,
+  Arrow,
+  FORMULA_NOTE_DEFAULT,
+  GraphSurface,
+  InputWeightedOp,
+  LatexFormula,
+  Op,
+  RuntimeIORail,
+  Tensor,
+  type BindingKind,
+  type CodeDetail,
+  type CodeSection,
+  type CodeSymbol,
+  type ConfigGroup,
+  type EdgePort,
+  type ExpandedStage,
+  type FormulaTerm,
+  type GraphEdge,
+  type IoBinding,
+  type Node,
+  type OpKind,
+  type OpNode,
+  type StageOverview,
+  type Tab,
+  type Weight,
+} from "./atlas-shared";
+import type { ModelModule } from "./models/model-module";
+import { hy4Module } from "./models/hy4";
 
-type Tab = "io" | "formula" | "code";
-type OpKind = "io" | "norm" | "linear" | "split" | "rope" | "matmul" | "scale" | "mask" | "softmax" | "activation" | "route" | "cache" | "add";
-type BindingKind = "upstream" | "external" | "weight";
-type IoBinding = { kind: BindingKind; label: string; shape: string; from: string; note?: string };
-type CodeSection = { stage: string; title: string; location: string; code: string; url?: string };
-type CodeSymbol = { symbol: string; resolvesTo: string; meaning: string };
-type CodeDetail = { sections: CodeSection[]; symbols: CodeSymbol[] };
-type OpNode = Node & { kind: OpKind; latex?: string; codeSections?: CodeSection[]; codeSymbols?: CodeSymbol[] };
 type LayerType = "dense" | "sparse";
-type ExpandedStage = "attention" | "ffn" | null;
-type EdgePort = "top" | "top-left" | "top-right" | "right" | "bottom" | "left";
-type GraphEdge = { from: string; to: string; fromPort?: EdgePort; toPort?: EdgePort; route?: "side-left" | "side-right" };
 
 const VLLM_COMMIT = "edd4c8176cfd98ece8a29beda574378c42971967";
 const CODE_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/models/minimax_m3/nvidia/model.py`;
@@ -29,6 +45,7 @@ const FLASHINFER_GEMMA_NORM_URL = "https://docs.flashinfer.ai/generated/flashinf
 
 const MODEL_REGISTRY = [
   { id: "minimax-m3", name: "MiniMax-M3", enabled: true },
+  { id: "hunyuan-hy4", name: "Hunyuan Hy4", enabled: true },
   { id: "kimi-k3", name: "Kimi K3 · 待添加", enabled: false },
   { id: "deepseek-v4", name: "DeepSeek V4 · 待添加", enabled: false },
   { id: "step-3.7", name: "Step 3.7 · 待添加", enabled: false },
@@ -113,15 +130,9 @@ function configSymbol(group:string,key:string){
   return CONFIG_SYMBOLS[`${group}:${key}`]??"—";
 }
 
-const SIMPLE_FORMULA: Partial<Record<OpKind,string>> = {
-  norm:String.raw`y=\operatorname{Norm}(x)`,linear:String.raw`y=xW^{\mathsf T}`,split:String.raw`(a,b,\ldots)=\operatorname{Split}(x)`,rope:String.raw`q'=\operatorname{RoPE}(q,\mathrm{position})`,matmul:String.raw`y=a\,b^{\mathsf T}`,scale:String.raw`y=x/\sqrt{d_h}`,mask:String.raw`y=x+\mathrm{mask}`,softmax:String.raw`p=\operatorname{softmax}(x)`,activation:String.raw`y=\bar g\,\sigma(\alpha\bar g)\,(\bar u+\beta)`,route:String.raw`I=\operatorname{TopK}(\mathrm{score}(x))`,cache:String.raw`\mathrm{KV}[\mathrm{slot}]\leftarrow(K,V)`,add:String.raw`y=x+f(x)`,io:String.raw`y=x`,
-};
-
 const FORMULA_NOTE: Partial<Record<OpKind,string>> = {
   norm:"把每个 token 的向量缩放到稳定范围；shape 不变。",linear:"W 是当前模块绑定的权重；最后一维由 W 的输出维决定。",split:"只切分最后一维，不做数值计算，也没有权重。",rope:"position 决定旋转角度；这里只旋转每个 head 的前 64 维。",matmul:"沿共同的 head_dim 相乘并求和。",scale:"dₕ=128；缩放避免 score 随维度增大。",mask:"不可见位置加 −∞，softmax 后概率变为 0。",softmax:"把每行 score 转为和为 1 的概率。",activation:"g 是 gate，u 是 up；实际实现还包含 limit=7 的截断。",route:"只选择去哪里计算；Top-K 本身不生成 expert 输出。",cache:"slot 与 block table 由 runtime 提供，权重不参与。",add:"残差支路与计算支路逐元素相加，shape 必须一致。",io:"这是数据入口或运行时元数据，不执行可训练计算。",
 };
-
-type FormulaTerm = readonly [symbol:string,meaning:string];
 
 const FORMULA_TERMS_BY_KIND: Record<OpKind,readonly FormulaTerm[]> = {
   io:[["x","输入"],["y","输出"]],
@@ -543,94 +554,6 @@ function sparseGraph(layer: number): Record<string, OpNode> {
   };
 }
 
-function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:string;children:ReactNode}){
-  const rootRef=useRef<HTMLDivElement>(null);
-  const markerId=`graph-arrow-${useId().replace(/:/g,"")}`;
-  const serializedEdges=JSON.stringify(edges);
-  const edgeKey=edges.map(edge=>`${edge.from}:${edge.fromPort??"bottom"}>${edge.to}:${edge.toPort??"top"}:${edge.route??"direct"}`).join("|");
-  const [paths,setPaths]=useState<string[]>([]);
-  useLayoutEffect(()=>{
-    const root=rootRef.current;
-    if(!root)return;
-    let frame=0;
-    const point=(rect:DOMRect,port:EdgePort,rootRect:DOMRect)=>{
-      const x=rect.left-rootRect.left; const y=rect.top-rootRect.top;
-      if(port==="top")return [x+rect.width/2,y];
-      if(port==="top-left")return [x+rect.width*.34,y];
-      if(port==="top-right")return [x+rect.width*.66,y];
-      if(port==="right")return [x+rect.width,y+rect.height/2];
-      if(port==="left")return [x,y+rect.height/2];
-      return [x+rect.width/2,y+rect.height];
-    };
-    const measure=()=>{
-      const rootRect=root.getBoundingClientRect();
-      const currentEdges=JSON.parse(serializedEdges) as GraphEdge[];
-      const nodeRects=[...root.querySelectorAll<HTMLElement>("[data-graph-id]")].map(node=>node.getBoundingClientRect());
-      const obstacleBounds={
-        left:Math.min(...nodeRects.map(rect=>rect.left-rootRect.left)),
-        right:Math.max(...nodeRects.map(rect=>rect.right-rootRect.left)),
-      };
-      const next=currentEdges.flatMap(edge=>{
-        const source=root.querySelector<HTMLElement>(`[data-graph-id="${edge.from}"]`);
-        const target=root.querySelector<HTMLElement>(`[data-graph-id="${edge.to}"]`);
-        if(!source||!target)return [];
-        const fromPort=edge.fromPort??"bottom"; const toPort=edge.toPort??"top";
-        const [sx,sy]=point(source.getBoundingClientRect(),fromPort,rootRect);
-        const [tx,ty]=point(target.getBoundingClientRect(),toPort,rootRect);
-        const direction=edge.route??(fromPort==="right"||fromPort==="left"||toPort==="right"||toPort==="left"?"horizontal":"vertical");
-        const safeClearance=direction==="side-left"
-          ?Math.min(24,Math.max(4,obstacleBounds.left-8))
-          :direction==="side-right"
-            ?Math.min(24,Math.max(4,rootRect.width-obstacleBounds.right-8))
-            :24;
-        return [routeGraphEdge({source:{x:sx,y:sy},target:{x:tx,y:ty},direction,obstacleBounds,clearance:safeClearance}).path];
-      });
-      setPaths(next);
-    };
-    const observer=new ResizeObserver(()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(measure)});
-    observer.observe(root);
-    root.querySelectorAll<HTMLElement>("[data-graph-id]").forEach(node=>observer.observe(node));
-    frame=requestAnimationFrame(measure);
-    return()=>{cancelAnimationFrame(frame);observer.disconnect()};
-  },[serializedEdges]);
-  return <div ref={rootRef} className={`graph-surface ${className}`}>{children}<svg className="graph-connectors" aria-hidden="true"><defs><marker id={markerId} markerWidth="9" markerHeight="9" refX="8" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 8 4 L 0 8 Z"/></marker></defs>{paths.map((path,index)=><path key={`${edgeKey}-connector-${index}`} d={path} markerEnd={`url(#${markerId})`}/>)}</svg></div>;
-}
-
-function Op({node,active,onHover,onLeave,onSelect,graphId}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;graphId?:string}){
-  return <button data-graph-id={graphId} className={`op-node op-${node.kind} ${active?"active":""}`} aria-pressed={active} onMouseEnter={()=>onHover(node)} onMouseLeave={onLeave} onFocus={()=>onHover(node)} onBlur={onLeave} onPointerDown={()=>onSelect(node)} onClick={event=>{if(event.detail===0)onSelect(node)}}><small>OP · {node.kind}</small><b>{node.title}</b></button>;
-}
-
-type TensorRole = "input" | "tensor" | "output" | "side" | "weight";
-
-function Tensor({name,shape,role="tensor",graphId}:{name:string;shape:string;role?:TensorRole;graphId?:string}){
-  const label={input:"TENSOR",tensor:"TENSOR",output:"TENSOR",side:"EXTERNAL",weight:"WEIGHT"}[role];
-  return <div data-graph-id={graphId} className={`tensor-node tensor-${role}`}><small>{label}</small><b>{name}</b><code>{shape}</code></div>;
-}
-
-const Arrow=({label}:{label?:string})=><span className="op-arrow"><i/>{label&&<small>{label}</small>}</span>;
-
-function checkpointWeightName(weight?:Weight){
-  return weight?.key.replace(/^language_model\.model\.layers\.\d+\./,"")??"weight";
-}
-
-function InputWeightedOp({node,active,onHover,onLeave,onSelect,inputName,inputShape,weightIndex=0,inputGraphId,graphId,weightGraphId,className=""}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;inputName:string;inputShape:string;weightIndex?:number;inputGraphId:string;graphId:string;weightGraphId:string;className?:string}){
-  const weight=node.weights[weightIndex];
-  const symbolicWeightShape=weight?.shape.replaceAll("6144","H")??"[H]";
-  return <div className={`input-weighted-op ${className}`}><div className="co-input-row"><Tensor name={inputName} shape={inputShape} graphId={inputGraphId}/><Tensor name={checkpointWeightName(weight)} shape={symbolicWeightShape} role="weight" graphId={weightGraphId}/></div><Op node={node} active={active} onHover={onHover} onLeave={onLeave} onSelect={onSelect} graphId={graphId}/></div>;
-}
-
-function AddCircle({node,active,onHover,onLeave,onSelect,graphId}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;graphId?:string}){
-  return <button data-graph-id={graphId} className={`add-circle ${active?"active":""}`} aria-label={node.title} aria-pressed={active} title={node.title} onMouseEnter={()=>onHover(node)} onMouseLeave={onLeave} onFocus={()=>onHover(node)} onBlur={onLeave} onPointerDown={()=>onSelect(node)} onClick={event=>{if(event.detail===0)onSelect(node)}}>+</button>;
-}
-
-function RuntimeIORail({N}:{N:({id}:{id:string})=>ReactNode}){
-  return <section className="runtime-io"><header><b>ATTENTION RUNTIME I/O</b><span>这些输入由 vLLM runner 生成并传入模型；mask 在内核中按边界隐式执行</span></header><div className="runtime-io-grid">
-    <div className="io-lane"><Tensor name="num_computed_tokens · query offsets" shape="[B] + [Nq]" role="input"/><Arrow/><N id="position"/><Arrow/><Tensor name="positions → RoPE" shape="[Nq]"/></div>
-    <div className="io-lane"><Tensor name="query_start_loc · seq_lens · causal" shape="[B+1] · [B] · True" role="input"/><Arrow/><N id="attnmeta"/><Arrow/><Tensor name="causal / padding layout → Attention" shape="implicit · 非稠密 [S,T]"/></div>
-    <div className="io-lane"><Tensor name="positions · block_table" shape="[Nq] + [B,Nblocks]" role="input"/><Arrow/><N id="slots"/><Arrow/><Tensor name="slot_mapping · block_table → KV Cache" shape="[Nq] + [B,Nblocks]"/></div>
-  </div></section>;
-}
-
 /* eslint-disable react-hooks/static-components -- local alias only shortens a large, stateless operator graph */
 // Legacy full graph kept as a source-level reference while progressive disclosure is active.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -715,14 +638,9 @@ function DecoderDiagram({type,g,active,expanded,onExpand,onHover,onLeave,onSelec
 }
 /* eslint-enable react-hooks/static-components */
 
-function LayerNavigator({type,onChange}:{type:LayerType;onChange:(type:LayerType)=>void}){
+function LayerNavigator({value,onChange}:{value:string;onChange:(next:string)=>void}){
+  const type:LayerType = value==="dense"?"dense":"sparse";
   return <div className="layer-nav layer-type-nav"><div className="layer-nav-head"><b>{type==="dense"?"GQA + SwiGLU-OAI MLP":"MiniMax Sparse Attention + MoE"}</b></div><div className="layer-type-options"><button className={type==="dense"?"active dense":"dense"} onClick={()=>onChange("dense")}><span>L0–L2</span><b>GQA + Partial RoPE + SwiGLU-OAI MLP</b><small>3 层共享同一实现</small></button><button className={type==="sparse"?"active sparse":"sparse"} onClick={()=>onChange("sparse")}><span>L3–L59</span><b>MiniMax Sparse Attention + Partial RoPE + Top-4 MoE</b><small>57 层共享同一实现</small></button></div></div>;
-}
-
-function LatexFormula({node}:{node:OpNode}){
-  const formula=node.latex??SIMPLE_FORMULA[node.kind]??String.raw`y=f(x)`;
-  const html=katex.renderToString(formula,{displayMode:true,throwOnError:false,strict:"ignore",output:"htmlAndMathml"});
-  return <div className="latex-render" aria-label={`${node.title} 简化公式`} dangerouslySetInnerHTML={{__html:html}}/>;
 }
 
 function symbolicShape(shape:string){
@@ -760,8 +678,8 @@ function symbolicShape(shape:string){
     .replaceAll("200064","V");
 }
 
-function ShapeRows({shape}:{shape:string}){
-  return <div className="shape-rows"><span><i>符号</i><code title={symbolicShape(shape)}>{symbolicShape(shape)}</code></span><span><i>实际</i><code title={shape}>{shape}</code></span></div>;
+function ShapeRows({shape,symbolic}:{shape:string;symbolic:(shape:string)=>string}){
+  return <div className="shape-rows"><span><i>符号</i><code title={symbolic(shape)}>{symbolic(shape)}</code></span><span><i>实际</i><code title={shape}>{shape}</code></span></div>;
 }
 
 function bindingsFor(node:OpNode):IoBinding[]{
@@ -773,21 +691,19 @@ function bindingsFor(node:OpNode):IoBinding[]{
   return [...dataInputs,...weightInputs];
 }
 
-function IoView({node}:{node:OpNode}){
-  const bindings=bindingsFor(node);
+function IoView({node,bindings,symbolic,next}:{node:OpNode;bindings:IoBinding[];symbolic:(shape:string)=>string;next:(nodeId:string)=>string|undefined}){
   const labels:Record<BindingKind,string>={upstream:"上游张量",external:"外部输入",weight:"权重输入"};
-  return <div className="io-binding-view"><section className="binding-list"><header><span>INPUT BINDINGS</span><b>{bindings.length} 路输入</b></header>{bindings.map((binding,index)=><article className={`binding binding-${binding.kind}`} key={`${binding.kind}-${binding.label}-${index}`}><div><span>{labels[binding.kind]}</span></div><b>{binding.label}</b><ShapeRows shape={binding.shape}/><p><i>来自</i>{binding.from}</p>{binding.note&&<small>{binding.note}</small>}</article>)}</section><section className="output-binding"><header><span>OUTPUT BINDING</span><b>1 路产物</b></header><article><div><span>计算产物</span></div><b>{node.output}</b><ShapeRows shape={node.outputShape}/><p><i>送往</i>{NEXT_BY_ID[node.id]??"图中下游模块"}</p></article></section></div>;
+  return <div className="io-binding-view"><section className="binding-list"><header><span>INPUT BINDINGS</span><b>{bindings.length} 路输入</b></header>{bindings.map((binding,index)=><article className={`binding binding-${binding.kind}`} key={`${binding.kind}-${binding.label}-${index}`}><div><span>{labels[binding.kind]}</span></div><b>{binding.label}</b><ShapeRows shape={binding.shape} symbolic={symbolic}/><p><i>来自</i>{binding.from}</p>{binding.note&&<small>{binding.note}</small>}</article>)}</section><section className="output-binding"><header><span>OUTPUT BINDING</span><b>1 路产物</b></header><article><div><span>计算产物</span></div><b>{node.output}</b><ShapeRows shape={node.outputShape} symbolic={symbolic}/><p><i>送往</i>{next(node.id)??"图中下游模块"}</p></article></section></div>;
 }
 
-function CodeView({node}:{node:OpNode}){
+function CodeView({node,commit}:{node:OpNode;commit:string}){
   const sections=(node.codeSections??[]).filter(section=>/forward|INIT|CALL|ENTER|PROJECT|ATTEND|ROUTE|SHARED/.test(`${section.title} ${section.stage}`));
   return <div className="code-view">
-    <a className="code-source" href={pinSource(node.sourceUrl)} target="_blank" rel="noreferrer"><span>PINNED SOURCE · {VLLM_COMMIT.slice(0,7)}</span><b>{node.source}</b><i>↗</i></a>
+    <a className="code-source" href={pinSource(node.sourceUrl)} target="_blank" rel="noreferrer"><span>PINNED SOURCE · {commit.slice(0,7)}</span><b>{node.source}</b><i>↗</i></a>
     {sections.length?<section className="code-call-chain"><header><span>IMPLEMENTATION TRACE</span><b>forward → fused kernel → 数学定义</b></header>{sections.map((section,index)=><article className="code-section" key={`${node.id}-${section.stage}-${index}`}><header><div><span>{section.stage}</span><b>{section.title}</b><small>{section.location}</small></div>{section.url&&<a href={section.url} target="_blank" rel="noreferrer" aria-label={`打开 ${section.title} 固定源码`}>↗</a>}</header><pre><code>{section.code}</code></pre></article>)}</section>:<div className="code-empty"><b>此节点没有独立 forward</b><p>它由所在模块的 forward 调度，或只是一个数学拆解步骤。</p></div>}
   </div>;
 }
 
-type StageOverview = { kicker:string; title:string; summary:string; flow:string; formula:string; formulaNote?:string; notes:string[]; parameters:readonly (readonly [string,string,string])[] };
 
 function stageOverview(type:LayerType,stage:Exclude<ExpandedStage,null>):StageOverview{
   if(type==="dense"&&stage==="ffn")return {
@@ -820,42 +736,80 @@ function stageOverview(type:LayerType,stage:Exclude<ExpandedStage,null>):StageOv
   };
 }
 
-function StageOverviewPanel({type,stage}:{type:LayerType;stage:Exclude<ExpandedStage,null>}){
-  const overview=stageOverview(type,stage);
+function StageOverviewPanel({overview}:{overview:StageOverview}){
   return <aside className="detail-panel stage-overview-panel"><header className="stage-overview-header"><span>{overview.kicker}</span><h2>{overview.title}</h2><p>{overview.summary}</p></header><div className="stage-overview-body"><section><span>数据流</span><code>{overview.flow}</code></section><section className="stage-formula-section"><span>计算语义</span><code>{overview.formula}</code>{overview.formulaNote&&<p>{overview.formulaNote}</p>}</section><section className="stage-parameter-section"><span>关键参数</span><div className="stage-parameters">{overview.parameters.map(([symbol,value,source])=><article key={symbol}><b>{symbol}</b><strong>{value}</strong><small>{source}</small></article>)}</div></section><section><span>边界说明</span>{overview.notes.map(note=><p key={note}>{note}</p>)}</section></div><footer>展开图说明 · 点击算子查看独立详情</footer></aside>;
 }
 
-function DetailPanel({node,tab,setTab,pinned,onClear,expanded,layerType}:{node:OpNode|null;tab:Tab;setTab:(t:Tab)=>void;pinned:boolean;onClear:()=>void;expanded:ExpandedStage;layerType:LayerType}){
+function DetailPanel({node,tab,setTab,pinned,onClear,expanded,layerType,module}:{node:OpNode|null;tab:Tab;setTab:(t:Tab)=>void;pinned:boolean;onClear:()=>void;expanded:ExpandedStage;layerType:string;module:ModelModule}){
   const tabs:[Tab,string][]=[["io","I/O + 权重"],["formula","公式"],["code","代码"]];
-  if(!node&&expanded)return <StageOverviewPanel type={layerType} stage={expanded}/>;
+  if(!node&&expanded){const overview=module.stageOverviewFor(layerType,expanded);return overview?<StageOverviewPanel overview={overview}/>:<aside className="detail-panel detail-empty"><div><span>MODULE DETAIL</span><b>尚未选择模块</b><p>点击左侧任一运算模块后，可在这里查看固定的 I/O、权重、公式和 forward 代码。</p></div></aside>;}
   if(!node)return <aside className="detail-panel detail-empty"><div><span>MODULE DETAIL</span><b>尚未选择模块</b><p>点击左侧任一运算模块后，可在这里查看固定的 I/O、权重、公式和 forward 代码。</p></div></aside>;
   return <aside className="detail-panel"><header className="detail-header"><div><span>{node.kicker}</span><h2>{node.title}</h2></div>{pinned?<button className="unpin-button" aria-label="取消固定" title="取消固定" onClick={onClear}>×</button>:<i className={`kind-dot op-${node.kind}`}/>}<p>{node.summary}</p><code>{node.runtime}</code></header><div className="detail-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div><div className={`detail-content detail-${tab}`}>
-    {tab==="io"&&<IoView node={node}/>}
-    {tab==="formula"&&<div className="formula-view"><span>作用</span><div className="formula-purpose">{node.summary}</div><span>实际公式</span><LatexFormula node={node}/><div className="formula-implementation"><b>一句话解释</b><p>{node.formulaNote??FORMULA_NOTE[node.kind]}</p></div><div className="formula-terms">{formulaTerms(node).map(([symbol,meaning])=><span key={symbol}><b>{symbol}</b>{meaning}</span>)}</div></div>}
-    {tab==="code"&&<CodeView node={node}/>}
-    </div><footer>vLLM @ {VLLM_COMMIT.slice(0,7)} · official safetensors</footer></aside>;
+    {tab==="io"&&<IoView node={node} bindings={module.inputBindingsFor(node)} symbolic={module.symbolicShape} next={module.nextFor}/>}
+    {tab==="formula"&&<div className="formula-view"><span>作用</span><div className="formula-purpose">{node.summary}</div><span>实际公式</span><LatexFormula node={node}/><div className="formula-implementation"><b>一句话解释</b><p>{module.formulaNoteFor(node)}</p></div><div className="formula-terms">{module.formulaTermsFor(node).map(([symbol,meaning])=><span key={symbol}><b>{symbol}</b>{meaning}</span>)}</div></div>}
+    {tab==="code"&&<CodeView node={node} commit={module.vllmCommit}/>}
+    </div><footer>vLLM @ {module.vllmCommit.slice(0,7)} · official safetensors</footer></aside>;
 }
 
-function HelpModal({onClose}:{onClose:()=>void}){
+function HelpModal({onClose,groups,symbols}:{onClose:()=>void;groups:readonly ConfigGroup[];symbols:Record<string,string>}){
   const [activeGroup,setActiveGroup]=useState(0);
-  const group=CONFIG_GROUPS[activeGroup];
-  return <div className="modal-backdrop" onMouseDown={onClose}><section className="help-modal reference-modal" onMouseDown={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label="完整 config.json 参数与符号"><header><div><span>CONFIG REFERENCE</span><h2>完整 config.json · 参数与符号</h2></div><button onClick={onClose} aria-label="关闭">×</button></header><nav className="config-tabs" role="tablist" aria-label="选择 config.json 分组">{CONFIG_GROUPS.map((item,index)=><button key={item.title} role="tab" aria-selected={activeGroup===index} className={activeGroup===index?"active":""} onClick={()=>setActiveGroup(index)}>{item.title}</button>)}</nav><div className="config-reference" role="tabpanel"><section><h3>{group.title}</h3><table><colgroup><col className="config-key-column"/><col className="config-symbol-column"/><col/></colgroup><thead><tr><th>参数</th><th>符号</th><th>值</th></tr></thead><tbody>{group.rows.map(([key,value])=><tr key={key}><th scope="row">{key}</th><td className="config-symbol"><code>{configSymbol(group.title,key)}</code></td><td>{value}</td></tr>)}</tbody></table></section></div></section></div>;
+  const group=groups[activeGroup];
+  const symbolFor=(groupTitle:string,key:string)=>symbols[`${groupTitle}:${key}`]??"—";
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="help-modal reference-modal" onMouseDown={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-label="完整 config.json 参数与符号"><header><div><span>CONFIG REFERENCE</span><h2>完整 config.json · 参数与符号</h2></div><button onClick={onClose} aria-label="关闭">×</button></header><nav className="config-tabs" role="tablist" aria-label="选择 config.json 分组">{groups.map((item,index)=><button key={item.title} role="tab" aria-selected={activeGroup===index} className={activeGroup===index?"active":""} onClick={()=>setActiveGroup(index)}>{item.title}</button>)}</nav><div className="config-reference" role="tabpanel"><section><h3>{group.title}</h3><table><colgroup><col className="config-key-column"/><col className="config-symbol-column"/><col/></colgroup><thead><tr><th>参数</th><th>符号</th><th>值</th></tr></thead><tbody>{group.rows.map(([key,value])=><tr key={key}><th scope="row">{key}</th><td className="config-symbol"><code>{symbolFor(group.title,key)}</code></td><td>{value}</td></tr>)}</tbody></table></section></div></section></div>;
+}
+
+function MiniMaxM3Overview(){
+  return <div className="model-overview"><div className="model-step">Text / Vision Inputs</div><Arrow/><div className="model-step">Embedding Fusion <code>[B,S,H]</code></div><Arrow/><div className="overview-stack"><b>Decoder ×60</b><span><i className="dense"/>L0–2 · GQA + Partial RoPE + SwiGLU-OAI MLP</span><span><i className="sparse"/>L3–59 · MiniMax Sparse Attention + Partial RoPE + MoE</span></div><Arrow/><div className="model-step">Final Gemma RMSNorm <code>[B,S,H]</code></div><Arrow/><div className="model-step">LM Head <code>[B,S,V]</code></div></div>;
+}
+
+const minimaxM3Module: ModelModule = {
+  id: "minimax-m3",
+  name: "MiniMax-M3",
+  facts: { total: "428B", active: "23B", context: "1M", checkpoint: "869 GB" },
+  links: { codeUrl: CODE_URL, codeLabel: `vLLM @ ${VLLM_COMMIT.slice(0, 7)}`, weightsUrl: WEIGHTS_URL, weightsLabel: "Hugging Face · 59 shards" },
+  vllmCommit: VLLM_COMMIT,
+  defaultLayerType: "sparse",
+  configGroups: CONFIG_GROUPS,
+  configSymbols: CONFIG_SYMBOLS,
+  graphFor: (layerType: string) => layerType === "dense" ? denseGraph(2) : sparseGraph(3),
+  inputBindingsFor: bindingsFor,
+  nextFor: (nodeId: string) => NEXT_BY_ID[nodeId],
+  symbolicShape,
+  stageOverviewFor: (layerType: string, stage: Exclude<ExpandedStage, null>) => stageOverview(layerType === "dense" ? "dense" : "sparse", stage),
+  formulaTermsFor: formulaTerms,
+  formulaNoteFor: (node: OpNode) => node.formulaNote ?? FORMULA_NOTE[node.kind] ?? "",
+  Overview: MiniMaxM3Overview,
+  Navigator: LayerNavigator,
+  canvasHeading: (layerType: string) => ({
+    kicker: "DECODER LAYER · 按结构类型展示",
+    title: layerType === "dense" ? "GQA + Partial RoPE + SwiGLU-OAI MLP · L0–L2 同构" : "MiniMax Sparse Attention + Partial RoPE + Top-4 MoE · L3–L59 同构",
+  }),
+  Workbench: (props) => <DecoderDiagram type={props.layerType === "dense" ? "dense" : "sparse"} g={props.graph} active={props.activeId} expanded={props.expanded} onExpand={props.onExpand} onHover={props.onHover} onLeave={props.onLeave} onSelect={props.onSelect} />,
+};
+
+const MODULES: Record<string, ModelModule> = { "minimax-m3": minimaxM3Module, "hunyuan-hy4": hy4Module };
+
+function initialModelFromHash(): string {
+  const id = window.location.hash.replace(/^#\//, "");
+  return MODULES[id]?.id ?? "minimax-m3";
 }
 
 export default function Home(){
-  const [layerType,setLayerType]=useState<LayerType>("sparse"); const [expanded,setExpanded]=useState<ExpandedStage>(null); const [tab,setTab]=useState<Tab>("io"); const [dark,setDark]=useState(false); const [help,setHelp]=useState(false);
-  const layer=layerType==="dense"?2:3; const graph=layerType==="dense"?denseGraph(layer):sparseGraph(layer); const [detail,setDetail]=useState<DetailState<OpNode>>({hovered:null,pinned:null}); const active=detail.pinned??detail.hovered;
+  const [modelId,setModelId]=useState(initialModelFromHash()); const module=MODULES[modelId]??minimaxM3Module;
+  const [layerType,setLayerType]=useState<string>(module.defaultLayerType); const [expanded,setExpanded]=useState<ExpandedStage>(null); const [tab,setTab]=useState<Tab>("io"); const [dark,setDark]=useState(false); const [help,setHelp]=useState(false);
+  const graph=module.graphFor(layerType); const [detail,setDetail]=useState<DetailState<OpNode>>({hovered:null,pinned:null}); const active=detail.pinned??detail.hovered;
   const updateDetail=(event:DetailEvent<OpNode>)=>setDetail(state=>nextDetailState(state,event));
-  const changeLayerType=(next:LayerType)=>{setLayerType(next);setExpanded(null);updateDetail({type:"clear"})};
+  const changeModel=(nextId:string)=>{const next=MODULES[nextId];if(!next)return;setModelId(nextId);setLayerType(next.defaultLayerType);setExpanded(null);updateDetail({type:"clear"});window.location.hash=`/${nextId}`;};
+  const changeLayerType=(next:string)=>{setLayerType(next);setExpanded(null);updateDetail({type:"clear"})};
   return <main className={`atlas-app ${dark?"dark":""}`}><header className="app-header">
     <div className="brand-lockup"><span className="brand-glyph"><i/><i/><i/></span><div><b>Model Atlas</b></div></div>
-    <label className="model-select"><span>MODEL</span><select aria-label="选择模型" value="minimax-m3" onChange={()=>undefined}>{MODEL_REGISTRY.map(m=><option key={m.id} value={m.id} disabled={!m.enabled}>{m.name}</option>)}</select></label>
-    <nav className="resource-links"><a href={CODE_URL} target="_blank" rel="noreferrer"><b>CODE ↗</b><small>vLLM @ {VLLM_COMMIT.slice(0,7)}</small></a><a href={WEIGHTS_URL} target="_blank" rel="noreferrer"><b>WEIGHTS ↗</b><small>Hugging Face · 59 shards</small></a></nav>
-    <div className="model-facts"><span><b>428B</b><small>模型总参数量</small></span><span><b>23B</b><small>每 token 激活参数</small></span><span><b>1M</b><small>最大上下文 token</small></span><span><b>869 GB</b><small>BF16 checkpoint</small></span></div>
+    <label className="model-select"><span>MODEL</span><select aria-label="选择模型" value={module.id} onChange={event=>changeModel(event.target.value)}>{MODEL_REGISTRY.map(m=><option key={m.id} value={m.id} disabled={!m.enabled}>{m.name}</option>)}</select></label>
+    <nav className="resource-links"><a href={module.links.codeUrl} target="_blank" rel="noreferrer"><b>CODE ↗</b><small>{module.links.codeLabel}</small></a><a href={module.links.weightsUrl} target="_blank" rel="noreferrer"><b>WEIGHTS ↗</b><small>{module.links.weightsLabel}</small></a></nav>
+    <div className="model-facts"><span><b>{module.facts.total}</b><small>模型总参数量</small></span><span><b>{module.facts.active}</b><small>每 token 激活参数</small></span><span><b>{module.facts.context}</b><small>最大上下文 token</small></span><span><b>{module.facts.checkpoint}</b><small>BF16 checkpoint</small></span></div>
     <button className="help-button" onClick={()=>setHelp(true)} aria-label="查看参数和符号说明">?</button><button className="theme-button" onClick={()=>setDark(v=>!v)} aria-label="切换明暗主题">{dark?"☀":"☾"}</button>
   </header><div className="screen-grid"><section className="map-panel">
-    <div className="model-overview"><div className="model-step">Text / Vision Inputs</div><Arrow/><div className="model-step">Embedding Fusion <code>[B,S,H]</code></div><Arrow/><div className="overview-stack"><b>Decoder ×60</b><span><i className="dense"/>L0–2 · GQA + Partial RoPE + SwiGLU-OAI MLP</span><span><i className="sparse"/>L3–59 · MiniMax Sparse Attention + Partial RoPE + MoE</span></div><Arrow/><div className="model-step">Final Gemma RMSNorm <code>[B,S,H]</code></div><Arrow/><div className="model-step">LM Head <code>[B,S,V]</code></div></div>
-    <LayerNavigator type={layerType} onChange={changeLayerType}/>
-    <section className="layer-canvas"><header><div><span>DECODER LAYER · 按结构类型展示</span><h1>{layerType==="dense"?"GQA + Partial RoPE + SwiGLU-OAI MLP · L0–L2 同构":"MiniMax Sparse Attention + Partial RoPE + Top-4 MoE · L3–L59 同构"}</h1></div><div className="node-legend"><span><i className="tensor-swatch"/>TENSOR</span><span><i className="external-swatch"/>EXTERNAL</span><span><i className="weight-swatch"/>WEIGHT</span><span><i className="operator-swatch"/>OPERATOR</span><code>点击大模块展开 · 按下算子后右侧固定</code></div></header><DecoderDiagram type={layerType} g={graph} active={active?.id??""} expanded={expanded} onExpand={setExpanded} onHover={node=>updateDetail({type:"hover",node})} onLeave={()=>updateDetail({type:"leave"})} onSelect={node=>{updateDetail({type:"pin",node});setTab("io")}}/></section>
-  </section><DetailPanel node={active} tab={tab} setTab={setTab} pinned={Boolean(detail.pinned)} onClear={()=>updateDetail({type:"clear"})} expanded={expanded} layerType={layerType}/></div>{help&&<HelpModal onClose={()=>setHelp(false)}/>}</main>;
+    <module.Overview/>
+    <module.Navigator value={layerType} onChange={changeLayerType}/>
+    <section className="layer-canvas"><header><div><span>DECODER LAYER · 按结构类型展示</span><h1>{module.canvasHeading(layerType).title}</h1></div><div className="node-legend"><span><i className="tensor-swatch"/>TENSOR</span><span><i className="external-swatch"/>EXTERNAL</span><span><i className="weight-swatch"/>WEIGHT</span><span><i className="operator-swatch"/>OPERATOR</span><code>点击大模块展开 · 按下算子后右侧固定</code></div></header><module.Workbench layerType={layerType} graph={graph} activeId={active?.id??""} expanded={expanded} onExpand={setExpanded} onHover={node=>updateDetail({type:"hover",node})} onLeave={()=>updateDetail({type:"leave"})} onSelect={node=>{updateDetail({type:"pin",node});setTab("io")}}/></section>
+  </section><DetailPanel node={active} tab={tab} setTab={setTab} pinned={Boolean(detail.pinned)} onClear={()=>updateDetail({type:"clear"})} expanded={expanded} layerType={layerType} module={module}/></div>{help&&<HelpModal onClose={()=>setHelp(false)} groups={module.configGroups} symbols={module.configSymbols}/>}</main>;
 }

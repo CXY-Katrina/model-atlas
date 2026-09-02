@@ -1,33 +1,8 @@
+import type { Node, Weight } from "./atlas-shared";
+
+export type { Node, Weight };
+
 type Tone = "norm" | "projection" | "attention" | "index" | "moe" | "vision" | "output";
-
-export type Weight = {
-  key: string;
-  shape: string;
-  dtype: "BF16" | "F32";
-  shard: string;
-  runtime?: string;
-  note?: string;
-  params?: string;
-};
-
-export type Node = {
-  id: string;
-  tone: Tone;
-  kicker: string;
-  title: string;
-  summary: string;
-  input: string;
-  inputShape: string;
-  output: string;
-  outputShape: string;
-  formula: string;
-  formulaNote: string;
-  runtime: string;
-  source: string;
-  sourceUrl: string;
-  code: string;
-  weights: Weight[];
-};
 
 export const MODEL = "https://github.com/vllm-project/vllm/blob/main/vllm/models/minimax_m3/nvidia/model.py";
 const INDEXER = "https://github.com/vllm-project/vllm/blob/main/vllm/models/minimax_m3/common/indexer.py";
