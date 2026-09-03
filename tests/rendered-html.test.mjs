@@ -109,8 +109,11 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /id:"d-gatesplit",kind:"split",kicker:"DENSE FFN · TP-LOCAL SPLIT",title:"Split Gate \/ Up"/);
   assert.match(source, /graphId="mlp-packed"/);
   assert.match(source, /graphId="mlp-split"/);
-  assert.match(source, /data-graph-id="mlp-gate-act"[\s\S]{0,600}clamp → Ḡ⁽ʳ⁾·σ\(αḠ⁽ʳ⁾\)/);
-  assert.match(source, /data-graph-id="mlp-up-act"[\s\S]{0,600}clamp → Ū⁽ʳ⁾ \+ β/);
+  assert.match(source, /<Tensor name="G⁽ʳ⁾" shape="\[B,S,H_dense\/TP\]" graphId="mlp-gate"\/>/);
+  assert.match(source, /<Tensor name="U⁽ʳ⁾" shape="\[B,S,H_dense\/TP\]" graphId="mlp-up"\/>/);
+  assert.match(source, /data-graph-id="mlp-gate-act"[\s\S]{0,700}min\(G⁽ʳ⁾, C\) · σ\(α·min\(G⁽ʳ⁾, C\)\)/);
+  assert.match(source, /data-graph-id="mlp-up-act"[\s\S]{0,700}clip\(U⁽ʳ⁾, −C, C\) \+ β/);
+  assert.match(source, /title="逐元素相乘"[\s\S]{0,300}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4\.25 4\.25 11\.75 11\.75M11\.75 4\.25 4\.25 11\.75"\/><\/svg><\/button>/);
   assert.match(source, /className="mini-math activation-step"/);
   assert.match(source, /title:"SiluAndMulWithClamp · SwiGLU-OAI"/);
   assert.match(source, /<Tensor name="Z⁽ʳ⁾" shape="\[B,S,H_dense\/TP\]" graphId="mlp-activated"\/>/);
@@ -201,6 +204,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /--font-geist-sans:Consolas,"Microsoft YaHei",monospace;--font-geist-mono:Consolas,"Microsoft YaHei",monospace/);
   assert.match(css, /\.tensor-node/);
   assert.match(css, /tensor artifact → compute operator → tensor artifact/);
+  assert.match(source, /title="颜色区分算子类型"/);
+  assert.match(css, /\.operator-swatch\{[^}]*linear-gradient\(90deg,var\(--linear\).*var\(--norm\).*var\(--split\).*var\(--activation\).*var\(--route\)/);
   assert.match(css, /\.runtime-io/);
   assert.match(css, /\.tensor-input/);
   assert.match(css, /\.tensor-output/);
@@ -215,7 +220,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.decoder-column/);
   assert.match(css, /\.layer-type-options button\{[^}]*align-content:center/);
   assert.match(css, /\.decoder-workbench\.has-zoom\{grid-template-columns:minmax\(0,1fr\);gap:0\}/);
-  assert.match(source, /\{!expanded&&<GraphSurface className="decoder-column decoder-node-graph"/);
+  assert.match(source, /\{!expanded&&<GraphPan><GraphSurface className="decoder-column decoder-node-graph"/);
+  assert.match(css, /\.decoder-workbench:not\(\.has-zoom\)>\.graph-pan-viewport/);
   assert.match(source, /\{expanded&&<StageZoom/);
   assert.match(css, /\.stage-zoom/);
   assert.match(css, /\.stage-zoom>header\{align-items:center\}/);
@@ -292,8 +298,9 @@ test("renders every operator equation as valid LaTeX", async () => {
   }
 });
 
-test("routes the MoE hidden tensor into the shared expert without crossing its weight tensor", async () => {
+test("routes MoE branches on symmetric rails without crossing nodes", async () => {
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
   assert.match(
     source,
@@ -303,8 +310,11 @@ test("routes the MoE hidden tensor into the shared expert without crossing its w
     source,
     /\{from:"moe-u",to:"moe-shared",route:"side-right",fromPort:"right",toPort:"right"\}/,
   );
-  assert.match(source, /\{from:"moe-u",to:"moe-experts",toPort:"top-right"\}/);
+  assert.match(source, /\{from:"moe-u",to:"moe-experts",route:"bus-right",departure:12\}/);
   assert.doesNotMatch(source, /\{from:"moe-u",to:"moe-experts",route:"side-left"/);
+  assert.match(css, /\[data-graph-id="moe-rweights"\]\{grid-area:3\/3\}/);
+  assert.match(css, /\[data-graph-id="moe-experts"\]\{grid-area:4\/2\}/);
+  assert.match(css, /\[data-graph-id="moe-sum"\]\{grid-area:6\/3\}/);
   assert.match(source, /name="shared expert weights ×3" shape="gate \/ up \/ down"/);
   assert.doesNotMatch(source, /name="block_sparse_moe\.shared_experts\.\{gate_proj,up_proj,down_proj\}\.weight"/);
 

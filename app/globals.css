@@ -14,7 +14,7 @@
 .layer-ticks{grid-template-columns:repeat(60,20px);gap:3px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;padding:2px}.layer-ticks button{font-size:12px}
 
 /* Operator graph grammar: tensor artifact → compute operator → tensor artifact. */
-.layer-canvas>header .node-legend{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap;max-width:48%;font:12px var(--font-geist-mono);color:var(--muted)}.node-legend>span{display:flex;align-items:center;gap:4px;letter-spacing:0;color:var(--muted)}.node-legend>code{flex-basis:100%;text-align:right;font-size:12px}.tensor-swatch,.operator-swatch{display:inline-block;width:17px;height:11px;border-radius:3px}.tensor-swatch{border:1px dashed #718078;background:var(--paper)}.operator-swatch{border:1px solid #718078;background:var(--linear)}
+.layer-canvas>header .node-legend{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap;max-width:48%;font:12px var(--font-geist-mono);color:var(--muted)}.node-legend>span{display:flex;align-items:center;gap:4px;letter-spacing:0;color:var(--muted)}.node-legend>code{flex-basis:100%;text-align:right;font-size:12px}.tensor-swatch,.operator-swatch{display:inline-block;width:17px;height:11px;border-radius:3px}.tensor-swatch{border:1px dashed #718078;background:var(--paper)}.operator-swatch{border:1px solid #718078;background:linear-gradient(90deg,var(--linear) 0 20%,var(--norm) 20% 40%,var(--split) 40% 60%,var(--activation) 60% 80%,var(--route) 80% 100%)}
 .operator-diagram{overflow:hidden;gap:4px;padding:4px 1px}.flow-row,.mini-flow{display:flex;align-items:stretch;justify-content:center;gap:2px;min-width:0}.flow-row>*:not(.op-arrow),.mini-flow>*:not(.op-arrow){min-width:0}.op-node,.tensor-node{flex:1 1 0;min-width:0;min-height:38px;border-radius:6px;padding:4px 3px;text-align:center;display:grid;place-items:center;align-content:center;gap:2px}.op-node{border:1px solid #66736d}.op-node small{font:12px var(--font-geist-mono);color:#59665f;text-transform:uppercase}.dark .op-node small{color:#a7b3ad}.op-node b{font-size:12px;line-height:1.08}.tensor-node{border:1px dashed #708078;background:var(--paper)}.tensor-node small{font:12px var(--font-geist-mono);letter-spacing:.08em;color:var(--green)}.tensor-node b{font-size:12px;line-height:1.08}.tensor-node code{font-size:12px;line-height:1.1;color:var(--muted);overflow-wrap:anywhere}.external-tensor{background:var(--field);border-style:dotted;border-color:#8a7351}.external-tensor small{color:#8a5b21}.dark .external-tensor small{color:#e6bd86}
 .op-arrow{position:relative;flex:0 0 9px;min-width:9px;display:block;align-self:center;height:1px;background:#5e756b;color:transparent}.op-arrow i{position:absolute;right:-1px;top:-3px;width:0;height:0;border-top:3px solid transparent;border-bottom:3px solid transparent;border-left:5px solid #5e756b}.op-arrow small{color:var(--muted)}
 .branch-box{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;padding:4px}.branch-box>section,.dual-path>section{border:1px dashed var(--line);border-radius:7px;padding:3px;background:#ffffff4a;min-width:0}.dark .branch-box>section,.dark .dual-path>section{background:#ffffff03}.branch-box section>header,.dual-path section>header{font:12px var(--font-geist-mono);color:var(--muted);margin:0 0 3px}.branch-box .tensor-node,.branch-box .op-node,.dual-path .tensor-node,.dual-path .op-node{min-height:34px;padding:3px 2px}.branch-box section>.external-tensor,.dual-path section>.external-tensor{min-height:23px;margin-top:3px;grid-template-columns:auto auto auto;gap:3px}.branch-box section>.external-tensor small,.dual-path section>.external-tensor small{font-size:12px}.branch-box section>.external-tensor b,.dual-path section>.external-tensor b{font-size:12px}.branch-box section>.external-tensor code,.dual-path section>.external-tensor code{font-size:12px}.dual-path{grid-template-columns:1.3fr .7fr;gap:4px}.attached-input{height:23px;display:flex;align-items:center;justify-content:center;gap:6px;color:var(--muted);font:12px var(--font-geist-mono)}.attached-input .tensor-node{flex:0 0 130px;min-height:21px;display:flex;padding:2px 5px;gap:4px}.attached-input:after{content:"↗";color:var(--green);font-size:12px}.moe-path .parallel-ops{flex:1.35;display:grid;grid-template-columns:1fr 1fr;gap:2px}.node-rule{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--paper);border-radius:7px;padding:8px;font-size:12px}.node-rule-note{font-size:12px;line-height:1.5;color:var(--muted);margin:7px 0 9px}
@@ -104,3 +104,127 @@
 
 /* Expanded-stage guidance belongs in the persistent right rail, not inside the graph. */
 .stage-overview-panel{grid-template-rows:auto minmax(0,1fr) 28px}.stage-overview-header{padding:20px 18px 16px;border-bottom:1px solid var(--line)}.stage-overview-header>span,.stage-overview-body section>span{font:12px var(--font-geist-mono);letter-spacing:.1em;color:var(--green)}.stage-overview-header h2{font-size:24px;line-height:1.15;letter-spacing:-.035em;margin:7px 0 9px}.stage-overview-header p{font-size:12px;line-height:1.6;color:var(--muted);margin:0}.stage-overview-body{min-height:0;overflow:auto;padding:16px;display:grid;align-content:start;gap:10px;scrollbar-width:thin}.stage-overview-body section{border:1px solid var(--line);border-radius:9px;background:var(--field);padding:11px;display:grid;gap:8px}.stage-overview-body code{font:12px/1.65 var(--font-geist-mono);color:var(--ink);white-space:normal;overflow-wrap:anywhere}.stage-formula-section code{white-space:pre-line}.stage-overview-body p{font-size:12px;line-height:1.55;color:var(--muted);margin:0}.stage-parameters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.stage-parameters article{min-width:0;border:1px solid var(--line);border-radius:7px;background:var(--paper);padding:8px;display:grid;grid-template-columns:1fr auto;gap:3px 7px}.stage-parameters b,.stage-parameters strong{font:700 12px var(--font-geist-mono)}.stage-parameters b{color:var(--green)}.stage-parameters small{grid-column:1/-1;min-width:0;font:12px/1.35 var(--font-geist-mono);color:var(--muted);overflow-wrap:anywhere}
+
+/* Archify-inspired flow polish: clear gaps, orthogonal routes, and semantic edge tones. */
+.graph-surface{--edge-data:#2f6f59;--edge-weight:#a46d26;--edge-external:#755fa2;--edge-residual:#687a72;--edge-halo:var(--paper)}
+.dark .graph-surface{--edge-data:#9fc8b7;--edge-weight:#dfb16e;--edge-external:#bca8df;--edge-residual:#9eafa7;--edge-halo:var(--paper)}
+.graph-connectors :is(.edge-halo,.edge-line){fill:none;vector-effect:non-scaling-stroke;stroke-linecap:round;stroke-linejoin:round}
+.graph-connectors .edge-halo{stroke:var(--edge-halo);stroke-width:6;opacity:.96}
+.graph-connectors .edge-line{stroke-width:2}
+.graph-connectors .edge-line.edge-data{stroke:var(--edge-data)}
+.graph-connectors .edge-line.edge-weight{stroke:var(--edge-weight);stroke-dasharray:5 4}
+.graph-connectors .edge-line.edge-external{stroke:var(--edge-external);stroke-dasharray:3 4}
+.graph-connectors .edge-line.edge-residual{stroke:var(--edge-residual);stroke-width:1.8;stroke-dasharray:8 5}
+.graph-connectors .edge-marker-data path{fill:var(--edge-data)}
+.graph-connectors .edge-marker-weight path{fill:var(--edge-weight)}
+.graph-connectors .edge-marker-external path{fill:var(--edge-external)}
+.graph-connectors .edge-marker-residual path{fill:var(--edge-residual)}
+.graph-surface>[data-graph-id],.graph-surface [data-graph-id]{box-shadow:0 1px 0 color-mix(in srgb,var(--ink) 8%,transparent),0 5px 14px color-mix(in srgb,var(--ink) 5%,transparent)}
+.graph-surface :is(.op-node,.tensor-node,.stage-summary){border-radius:10px}
+.decoder-column{gap:clamp(14px,2vh,24px)}
+.decoder-node-graph{padding-block:clamp(16px,2.2vh,28px)}
+.decoder-node-graph>.input-weighted-op{row-gap:clamp(20px,2.8vh,32px)}
+.mlp-node-graph{grid-template-rows:repeat(10,minmax(38px,1fr));gap:12px 10px;padding-block:14px}
+.stage-zoom .moe-node-graph{grid-template-rows:repeat(7,minmax(56px,1fr));gap:14px clamp(18px,1.5vw,28px);padding-block:14px}
+.connected-attention-graph{gap:clamp(12px,1.8vh,20px);padding-block:12px}
+.connected-attention-graph :is(.compact-chain,.index-ribbon,.qkv-lanes,.selection-chain,.score-pipeline,.context-pipeline){column-gap:clamp(18px,1.6vw,30px)}
+@media(max-height:760px){.decoder-column{gap:11px}.decoder-node-graph{padding-block:8px}.decoder-node-graph>.input-weighted-op{row-gap:16px}.mlp-node-graph{grid-template-rows:repeat(10,minmax(29px,1fr));gap:7px 9px;padding-block:7px}.stage-zoom .moe-node-graph{grid-template-rows:repeat(7,minmax(43px,1fr));gap:9px 16px;padding-block:7px}.connected-attention-graph{gap:7px;padding-block:6px}}
+
+/* Attention lanes reserve real rows for metadata and keep cross-stage elbows in clear approach lanes. */
+.connected-attention-graph{gap:10px;padding-block:8px}
+.connected-attention-graph .compact-chain{flex-basis:40px}
+.connected-attention-graph .index-ribbon{grid-template-rows:38px 44px;gap:10px 16px;padding:5px 8px}
+.connected-attention-graph .qkv-lanes{gap:20px}
+.connected-attention-graph .qkv-lanes>section{justify-content:flex-start;gap:8px;padding:8px}
+.connected-attention-graph .qkv-lanes>section>header{height:16px;margin:0 0 4px}
+.qkv-lanes .co-input-row{grid-template-columns:minmax(0,1fr) minmax(96px,.42fr);gap:12px}
+.qkv-lanes .input-weighted-op>.op-node{width:78%}
+.qkv-lanes .co-input-row>.tensor-weight{max-height:48px;padding-inline:8px}
+.connected-attention-graph .selection-chain{flex:0 0 108px;min-height:108px;grid-template-columns:1fr;grid-template-rows:44px 48px;justify-items:center;gap:10px;padding:3px 22%}
+.connected-attention-graph .selection-chain>.op-node{width:44%}
+.connected-attention-graph .selection-chain>.two-source{width:100%;height:48px}
+.connected-attention-graph .score-pipeline{grid-template-rows:38px 44px;gap:10px 18px;padding:5px 8px}
+.connected-attention-graph .context-pipeline{flex-basis:48px;min-height:48px}
+.index-ribbon [data-graph-id="attn-idxbounds"],.score-pipeline [data-graph-id="attn-bounds"]{min-height:34px;max-height:38px;padding-block:3px}
+@media(max-height:760px){.connected-attention-graph{gap:6px;padding-block:5px}.connected-attention-graph .index-ribbon{grid-template-rows:30px 38px;gap:6px 12px;padding:3px 6px}.connected-attention-graph .qkv-lanes{gap:12px}.connected-attention-graph .qkv-lanes>section{gap:4px;padding:4px}.qkv-lanes .co-input-row{grid-template-columns:minmax(0,1fr) minmax(82px,.4fr);gap:7px}.connected-attention-graph .selection-chain{flex-basis:78px;min-height:78px;grid-template-rows:32px 36px;gap:4px;padding-block:1px}.connected-attention-graph .selection-chain>.two-source{height:36px}.connected-attention-graph .score-pipeline{grid-template-rows:30px 38px;gap:6px 12px;padding:3px 6px}.connected-attention-graph .context-pipeline{flex-basis:40px;min-height:40px}}
+
+/* Expanded diagrams get the full vertical canvas; closing restores the overview and layer chooser. */
+.atlas-app.stage-expanded .map-panel{grid-template-rows:minmax(0,1fr)}
+.atlas-app.stage-expanded .map-panel>.model-overview,.atlas-app.stage-expanded .map-panel>.layer-type-nav{display:none}
+
+/* Expanded diagrams are tall, draggable canvases: no scrollbars, grab-to-pan. */
+.graph-pan-viewport{position:relative;min-width:0;min-height:0;height:100%;overflow:hidden;cursor:grab;touch-action:none;user-select:none}
+.graph-pan-viewport.is-dragging{cursor:grabbing}
+.graph-pan-content{width:100%;min-height:100%;will-change:transform}
+.graph-pan-hint{position:absolute;right:12px;bottom:10px;z-index:5;border:1px solid var(--line);border-radius:6px;background:color-mix(in srgb,var(--paper) 92%,transparent);box-shadow:0 4px 14px #10251b14;padding:5px 9px;color:var(--muted);font:12px var(--font-geist-mono);pointer-events:none}
+
+/* Give every fan-out and fan-in a real turning lane. */
+.graph-pan-content .mlp-node-graph{height:1180px;grid-template-rows:repeat(10,minmax(72px,1fr));gap:30px 14px;padding:34px 20px}
+.graph-pan-content .moe-node-graph{height:1180px;grid-template-rows:repeat(7,minmax(92px,1fr));gap:36px clamp(24px,2vw,48px);padding:42px clamp(28px,3vw,80px)}
+
+/* Attention is a top-to-bottom data-flow. Only parallel branches sit side by side. */
+.graph-pan-content .connected-attention-graph{width:max(100%,1320px);height:2300px;display:flex;flex-direction:column;gap:46px;padding:36px clamp(46px,5vw,90px)}
+.connected-attention-graph .compact-chain{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:30px}
+.connected-attention-graph .compact-chain>*{flex:0 0 auto;width:min(460px,72%);min-height:54px}
+.connected-attention-graph .attention-branches{flex:0 0 610px;min-height:610px;display:grid;grid-template-columns:minmax(250px,.9fr) minmax(0,2.5fr);gap:46px}
+.connected-attention-graph .attention-branches.dense{grid-template-columns:1fr}
+.connected-attention-graph .index-ribbon{height:100%;display:grid;grid-template-columns:minmax(18px,1fr) minmax(130px,2fr) minmax(100px,1fr);grid-template-rows:90px repeat(5,72px);gap:24px 16px;padding:22px 16px;align-items:center}
+.connected-attention-graph .index-ribbon>.multi-source{grid-area:1/1/2/4}
+.connected-attention-graph .index-ribbon [data-graph-id="attn-idxnorm"]{grid-area:2/2}
+.connected-attention-graph .index-ribbon [data-graph-id="attn-idxscore"]{grid-area:3/2}
+.connected-attention-graph .index-ribbon [data-graph-id="attn-idxbounds"]{grid-area:3/3}
+.connected-attention-graph .index-ribbon [data-graph-id="attn-blockmax"]{grid-area:4/2}
+.connected-attention-graph .index-ribbon [data-graph-id="attn-topk"]{grid-area:5/2}
+.connected-attention-graph .index-ribbon [data-graph-id="attn-topids"]{grid-area:6/2}
+.connected-attention-graph .qkv-lanes{height:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:46px}
+.connected-attention-graph .qkv-lanes>section{justify-content:flex-start;gap:30px;padding:22px 18px}
+.connected-attention-graph .qkv-lanes>section>header{height:18px;margin:0}
+.connected-attention-graph .qkv-lanes .input-weighted-op{gap:28px}
+.connected-attention-graph .qkv-lanes .co-input-row{grid-template-columns:minmax(0,1fr) minmax(110px,.42fr);gap:18px}
+.connected-attention-graph .qkv-lanes .two-source{gap:18px}
+.connected-attention-graph .selection-chain{flex:0 0 200px;min-height:200px;grid-template-columns:1fr;grid-template-rows:66px 82px;gap:34px;padding:8px 24%}
+.connected-attention-graph .selection-chain>.op-node{width:52%}
+.connected-attention-graph .selection-chain>.two-source{height:82px;gap:28px}
+.connected-attention-graph .score-pipeline{flex:0 0 520px;display:grid;grid-template-columns:1fr minmax(280px,380px) 1fr;grid-template-rows:repeat(6,62px);gap:28px 32px;padding:28px 34px}
+.connected-attention-graph .score-pipeline [data-graph-id="attn-qk"]{grid-area:1/2}
+.connected-attention-graph .score-pipeline [data-graph-id="attn-scale"]{grid-area:2/2}
+.connected-attention-graph .score-pipeline [data-graph-id="attn-scaled"]{grid-area:3/2}
+.connected-attention-graph .score-pipeline [data-graph-id="attn-bounds"]{grid-area:4/3}
+.connected-attention-graph .score-pipeline [data-graph-id="attn-mask"]{grid-area:4/2}
+.connected-attention-graph .score-pipeline [data-graph-id="attn-softmax"]{grid-area:5/2}
+.connected-attention-graph .score-pipeline [data-graph-id="attn-p"]{grid-area:6/2}
+.connected-attention-graph .context-pipeline{flex:0 0 360px;display:grid;grid-template-columns:1fr minmax(280px,380px) 1fr;grid-template-rows:repeat(4,62px);gap:28px 32px;padding:18px 34px}
+.connected-attention-graph .context-pipeline [data-graph-id="attn-pv"]{grid-area:1/2}
+.connected-attention-graph .context-pipeline [data-graph-id="attn-heads"]{grid-area:2/2}
+.connected-attention-graph .context-pipeline [data-graph-id="attn-oproj"]{grid-area:3/2}
+.connected-attention-graph .context-pipeline [data-graph-id="attn-y"]{grid-area:4/2}
+
+/* Main decoder cards keep breathing room below their copy; turns finish on a straight approach lane. */
+.decoder-column{gap:clamp(18px,2.4vh,30px)}
+.decoder-node-graph>.input-weighted-op{row-gap:clamp(44px,5vh,64px)}
+.decoder-node-graph>.add-circle{margin-block:4px 24px}
+.decoder-node-graph>.stage-summary{min-height:76px;padding:13px 22px 18px;gap:6px}
+.decoder-node-graph>.stage-summary small{line-height:1.25}
+.decoder-node-graph>.stage-summary b{line-height:1.3}
+@media(max-height:760px){.decoder-column{gap:12px}.decoder-node-graph>.input-weighted-op{row-gap:28px}.decoder-node-graph>.add-circle{margin-block:2px 10px}.decoder-node-graph>.stage-summary{min-height:58px;padding:9px 16px 12px;gap:3px}}
+
+/* The decoder overview uses the same grab-to-pan viewport as expanded stages. */
+.decoder-workbench:not(.has-zoom)>.graph-pan-viewport{width:100%;height:100%}
+.graph-pan-content .decoder-node-graph{width:min(680px,96%);height:1120px;min-height:1120px;margin-inline:auto;justify-content:flex-start;padding-top:46px;padding-bottom:64px}
+@media(max-height:760px){.graph-pan-content .decoder-node-graph{height:940px;min-height:940px;padding-top:24px;padding-bottom:40px}}
+
+/* MoE uses two symmetric vertical rails and a compact, page-sized rhythm. */
+.graph-pan-content .moe-node-graph{height:720px;grid-template-rows:repeat(7,64px);gap:18px clamp(24px,2vw,42px);align-content:center;padding:20px clamp(28px,3vw,72px)}
+.moe-node-graph [data-graph-id="moe-rweights"]{grid-area:3/3}
+.moe-node-graph [data-graph-id="moe-experts"]{grid-area:4/2}
+.moe-node-graph [data-graph-id="moe-routed"]{grid-area:5/2}
+.moe-node-graph [data-graph-id="moe-sum"]{grid-area:6/3}
+.moe-node-graph [data-graph-id="moe-y"]{grid-area:7/3}
+
+/* Activation labels name the clamped tensor and bounds before showing the result. */
+.graph-pan-content .mlp-node-graph{width:min(760px,96%)}
+.activation-step{min-width:220px;padding:9px 11px;display:grid;line-height:1.15}
+.activation-step b{font:700 12px var(--font-geist-mono);white-space:nowrap}
+.multiply-circle{padding:0!important;display:grid!important;place-items:center!important;line-height:0!important;appearance:none}
+.multiply-circle svg{display:block;width:14px;height:14px;overflow:visible}
+.multiply-circle svg path{fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;vector-effect:non-scaling-stroke}
