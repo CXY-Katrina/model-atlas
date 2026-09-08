@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { routeGraphEdge } from "../app/graph-routing.ts";
+import { routeGraphEdge, routeGraphFanout } from "../app/graph-routing.ts";
 
 test("side routes clear every node before turning toward the target", () => {
   const route = routeGraphEdge({
@@ -86,4 +86,45 @@ test("horizontal routes finish perpendicular to the arrowhead base", () => {
   });
 
   assert.equal(route.path, "M 60 120 C 98 120, 98 150, 136 150 L 150 150");
+});
+
+test("vertical fan-out honors one shared departure height", () => {
+  const options = {
+    source: { x: 100, y: 20 },
+    direction: "vertical",
+    obstacleBounds: { left: 0, right: 200 },
+    clearance: 24,
+    approach: 40,
+    departure: 36,
+  };
+  const left = routeGraphEdge({ ...options, target: { x: 20, y: 200 } });
+  const right = routeGraphEdge({ ...options, target: { x: 180, y: 240 } });
+  const firstTurnY = (path) => Number(path.match(/Q 100 ([\d.]+),/)?.[1]);
+
+  assert.equal(firstTurnY(left.path), 56);
+  assert.equal(firstTurnY(right.path), 56);
+});
+
+test("shared fan-out uses one trunk and one aligned rail", () => {
+  const routes = routeGraphFanout({
+    source: { x: 300, y: 40 },
+    targets: [
+      { x: 80, y: 180 },
+      { x: 190, y: 180 },
+      { x: 300, y: 180 },
+      { x: 410, y: 180 },
+      { x: 520, y: 180 },
+    ],
+    departure: 64,
+  });
+
+  assert.equal(routes.filter(route => route.role === "trunk").length, 1);
+  assert.equal(routes.filter(route => route.role === "rail").length, 2);
+  assert.equal(routes.filter(route => route.role === "drop").length, 5);
+  for (const route of routes.filter(route => route.role === "drop")) {
+    assert.match(route.path, /^M ([\d.]+) (?:104|128) L \1 180$/);
+    assert.equal(route.arrow, true);
+  }
+  assert.ok(routes.filter(route => route.role !== "drop").every(route => route.arrow === false));
+  assert.match(routes.find(route => route.role === "rail" && route.path.includes("80"))?.path ?? "", / Q /);
 });

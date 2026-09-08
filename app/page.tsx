@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import katex from "katex";
-import { routeGraphEdge } from "./graph-routing";
+import { routeGraphEdge, routeGraphFanout } from "./graph-routing";
 import { nextDetailState, type DetailEvent, type DetailState } from "./detail-selection";
 import { denseNodes, layerShard, sparseNodes, type Node, type Weight } from "./model-data";
 
@@ -14,10 +14,10 @@ type CodeDetail = { sections: CodeSection[]; symbols: CodeSymbol[] };
 type OpNode = Node & { kind: OpKind; latex?: string; codeSections?: CodeSection[]; codeSymbols?: CodeSymbol[] };
 type LayerType = "dense" | "sparse";
 type ExpandedStage = "attention" | "ffn" | null;
-type EdgePort = "top" | "top-left" | "top-right" | "right" | "bottom" | "left";
-type GraphEdge = { from: string; to: string; fromPort?: EdgePort; toPort?: EdgePort; route?: "side-left" | "side-right" | "bus-left" | "bus-right"; approach?: number; departure?: number };
+type EdgePort = "top" | "top-left" | "top-right" | "right" | "bottom" | "bottom-left" | "bottom-right" | "left";
+type GraphEdge = { from: string; to: string; fromPort?: EdgePort; toPort?: EdgePort; route?: "side-left" | "side-right" | "bus-left" | "bus-right"; approach?: number; departure?: number; fanout?: string };
 type EdgeTone = "data" | "weight" | "external" | "residual";
-type GraphPath = { d: string; tone: EdgeTone };
+type GraphPath = { d: string; tone: EdgeTone; marker?: boolean };
 
 const VLLM_COMMIT = "edd4c8176cfd98ece8a29beda574378c42971967";
 const CODE_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/models/minimax_m3/nvidia/model.py`;
@@ -25,6 +25,15 @@ const WEIGHTS_URL = "https://huggingface.co/MiniMaxAI/MiniMax-M3";
 const RUNNER_URL = "https://github.com/vllm-project/vllm/blob/main/vllm/v1/worker/gpu_model_runner.py";
 const ACTIVATION_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/model_executor/layers/activation.py`;
 const LINEAR_URL = `https://github.com/vllm-project/vllm/blob/${VLLM_COMMIT}/vllm/model_executor/layers/linear.py`;
+const TRANSFORMERS_MINIMAX_M3_URL = "https://github.com/huggingface/transformers/blob/main/src/transformers/models/minimax_m3_vl/modeling_minimax_m3_vl.py#L365";
+const TRANSFORMERS_MOE_URL = "https://github.com/huggingface/transformers/blob/main/src/transformers/models/minimax_m3_vl/modeling_minimax_m3_vl.py#L202-L239";
+const TRANSFORMERS_QKV_PROJECTION_URL = "https://github.com/huggingface/transformers/blob/main/src/transformers/models/minimax_m3_vl/modeling_minimax_m3_vl.py#L422-L445";
+const TRANSFORMERS_INDEX_PROJECTION_URL = "https://github.com/huggingface/transformers/blob/main/src/transformers/models/minimax_m3_vl/modeling_minimax_m3_vl.py#L538-L563";
+const TRANSFORMERS_SPARSE_ATTENTION_URL = "https://github.com/huggingface/transformers/blob/main/src/transformers/models/minimax_m3_vl/modeling_minimax_m3_vl.py#L447-L489";
+const TRANSFORMERS_INDEX_SELECTION_URL = "https://github.com/huggingface/transformers/blob/main/src/transformers/models/minimax_m3_vl/modeling_minimax_m3_vl.py#L552-L597";
+const TRANSFORMERS_BLOCK_MASK_URL = "https://github.com/huggingface/transformers/blob/main/src/transformers/models/minimax_m3_vl/modeling_minimax_m3_vl.py#L599-L635";
+const VLLM_INDEXER_URL = "https://github.com/vllm-project/vllm/blob/main/vllm/models/minimax_m3/common/indexer.py";
+const VLLM_SPARSE_ATTENTION_URL = "https://github.com/vllm-project/vllm/blob/main/vllm/models/minimax_m3/common/sparse_attention.py";
 const NORM_FORWARD_URL = `${CODE_URL}#L130-L142`;
 const DECODER_FORWARD_URL = `${CODE_URL}#L752-L778`;
 const FLASHINFER_GEMMA_NORM_URL = "https://docs.flashinfer.ai/generated/flashinfer.norm.gemma_rmsnorm.html";
@@ -124,6 +133,7 @@ const FORMULA_NOTE: Partial<Record<OpKind,string>> = {
 };
 
 type FormulaTerm = readonly [symbol:string,meaning:string];
+type FormulaStep = { title:string; formula:string; explanation:string };
 
 const FORMULA_TERMS_BY_KIND: Record<OpKind,readonly FormulaTerm[]> = {
   io:[["x","输入"],["y","输出"]],
@@ -149,18 +159,20 @@ const FORMULA_TERMS_BY_ID: Partial<Record<string,readonly FormulaTerm[]>> = {
   "d-qnorm":[["Q","Query heads"],["Q̃","归一化后的 Q"],["Dₕ","head_dim = 128"],["γQ","q_norm.weight"],["ε","10⁻⁶"]],
   "d-knorm":[["K","Key heads"],["K̃","归一化后的 K"],["Dₕ","head_dim = 128"],["γK","k_norm.weight"],["ε","10⁻⁶"]],
   "s-mainnorm":[["Q / K","主 Attention 的 Q/K"],["Q̃ / K̃","归一化后的 Q/K"],["Dₕ","head_dim = 128"],["γQ / γK","Q/K norm weights"],["ε","10⁻⁶"]],
-  "s-idxnorm":[["Qidx / Kidx","Indexer Q/K"],["Q̃idx / K̃idx","归一化后的 Indexer Q/K"],["Didx","index_dim = 128"],["ε","10⁻⁶"]],
+  "s-idxnorm":[["Qidx / Kidx","Indexer 的投影输入"],["Q̃idx / K̃idx","RMSNorm 后的 Index Q/K"],["Qidxᵣ / Kidxᵣ","加入 position 后的旋转结果"],["Didx","index_dim = 128"],["p","query/key position"]],
   "d-gateup":[["Û","归一化输入 · [B,S,H]"],["Wgate⁽ʳ⁾","当前 TP rank 的 gate 权重"],["Wup⁽ʳ⁾","当前 TP rank 的 up 权重"],["G⁽ʳ⁾","当前 rank 的 gate 投影"],["U⁽ʳ⁾","当前 rank 的 up 投影"],["H","hidden_size = 6144"],["H_dense","dense_intermediate_size = 12288"],["TP","tensor parallel size"]],
   "d-gatesplit":[["X⁽ʳ⁾","当前 rank 的 packed gate_up"],["G⁽ʳ⁾","前 H_dense/TP 个通道"],["U⁽ʳ⁾","后 H_dense/TP 个通道"],["H_dense","dense_intermediate_size = 12288"],["TP","tensor parallel size"]],
   "d-swiglu":[["G⁽ʳ⁾","当前 rank 的 gate 分片"],["U⁽ʳ⁾","当前 rank 的 up 分片"],["Ḡ⁽ʳ⁾ / Ū⁽ʳ⁾","clamp 后的两个分片"],["α","swiglu_alpha = 1.702"],["β","swiglu_beta = 1.0"],["c","swiglu_limit = 7.0"],["Z⁽ʳ⁾","当前 rank 的激活输出"]],
   "d-qk":[["Qᵣ","当前 rank 的 rotated Q"],["Kᵣ","当前 rank 的 rotated / visible K"],["Nₕ/TP","每 rank 的 query heads = 64/TP"],["Nₖᵥ,rank","每 rank KV heads = max(1,4/TP)"],["Dₕ","head_dim = 128"],["A","当前 rank 的 attention scores"]],
   "d-pv":[["P","当前 rank 的 attention probability"],["V","当前 rank 的 visible V"],["Nₕ/TP","每 rank 的 query heads = 64/TP"],["Nₖᵥ,rank","每 rank KV heads = max(1,4/TP)"],["O","当前 rank 的 context heads"]],
-  "s-idxscore":[["Q̃idx","当前 rank 的 normalized Index Q"],["K̃idx","共享 / 复制的 normalized Index K"],["N_idx,rank","max(1,4/TP)"],["D_idx","index_dim = 128"],["Sidx","当前 rank 的 token scores"]],
-  "s-qk":[["Qᵣ","当前 rank 的 rotated Q"],["K𝒮","当前 rank 选中的 K pages"],["Nₕ/TP","每 rank 的 query heads = 64/TP"],["Ksel","最多 16×128 个候选 token"],["A","当前 rank 的 sparse scores"]],
-  "s-pv":[["P","当前 rank 的 sparse probability"],["V𝒮","当前 rank 选中的 V pages"],["Nₕ/TP","每 rank 的 query heads = 64/TP"],["O","当前 rank 的 context heads · 8192/TP"]],
-  "s-topk":[["B","block scores"],["λ_local","local priority = 10²⁹"],["λ_init","init priority = 10³⁰"],["K_block","sparse_topk_blocks = 16"],["𝒮","选中的逻辑 block ids"]],
-  "s-router":[["E","num_local_experts = 128"],["K","num_experts_per_tok = 4"],["s_route","routed_scaling_factor = 2.0"],["b","e_score_correction_bias"],["ŵₑ","归一化并缩放的 expert weight"]],
-  "s-experts":[["gₑ / vₑ","expert gate / up 分支"],["c","swiglu_limit = 7.0"],["α","swiglu_alpha = 1.702"],["β","swiglu_beta = 1.0"],["H_expert","intermediate_size = 3072"],["Eₑ(u)","第 e 个 expert 输出"]],
+  "s-idxscore":[["Qidxᵣ","当前 rank 的 Index Q query"],["𝒦idx","独立 side cache 中的完整 Index K history"],["N_idx,rank","max(1,4/TP)"],["D_idx","index_dim = 128"],["Sidx","尚未 mask 的 Index token scores"]],
+  "s-idxcache":[["Kidxᵣ","当前 token 的旋转后 Index K"],["slot","index slot_mapping 指定的 side-cache 位置"],["𝒦idx","独立的 key-only Index K cache"],["D_idx","每 token 一个 128 维 Index K 向量"]],
+  "s-idxmask":[["Sidx","Index Q/K 点积分数"],["p","当前 query position"],["j","key position"],["S̃idx","未来 key 被置为 −∞ 后的分数"]],
+  "s-qk":[["Qᵣ","当前 rank 的 rotated Q"],["paged K","主 Paged KV Cache 中的 K pages"],["block_indices","Indexer 输出的 Top-16 逻辑块索引"],["Ksel","kernel 最多读取 16×128 个候选 token"],["A","当前 rank 的 sparse scores"]],
+  "s-pv":[["P","当前 rank 的 sparse probability"],["paged V","主 Paged KV Cache 中的 V pages"],["block_indices","与 Q×K 阶段相同的 Top-16 块顺序"],["O","当前 rank 的 context heads · 8192/TP"]],
+  "s-topk":[["B","block scores"],["𝓛ᵢ","当前 query 的 local block 集合"],["+∞","保证 local blocks 必然进入候选"],["K_block","sparse_topk_blocks = 16"],["𝒮 / block_indices","每组、每个 query 选中的逻辑 blocks"]],
+  "s-router":[["Û","Post-attn RMSNorm 输出"],["Wrouter","block_sparse_moe.gate.weight"],["E","num_local_experts = 128"],["r","router_logits · [B,S,E]"]],
+  "s-experts":[["r","FP32 router_logits · [B,S,E]"],["σ","逐元素 sigmoid 函数"],["sₑ","专家 e 的 sigmoid 路由分数 σ(rₑ)"],["b","e_score_correction_bias；只影响专家选择"],["K","num_experts_per_tok = 4"],["𝓔","按 s+b 选出的 Top-K expert 集合"],["e / j","选中集合中的 expert 索引"],["ŵₑ","专家 e 的归一化混合权重"],["s_route","routed_scaling_factor = 2.0"],["Û","Post-attn RMSNorm 输出；每个专家的输入"],["Eₑ(Û)","第 e 个 expert 对 Û 的输出"],["Yᵣₒᵤₜₑd","4 个选中专家加权归并后的 routed output"]],
   "d-qkv":[["Nₕ","num_attention_heads = 64"],["Nₖᵥ","num_key_value_heads = 4"],["Dₕ","head_dim = 128"],["TP","tensor parallel size"],["Z","当前 rank 的 packed QKV"]],
   "d-split":[["Nₕ","num_attention_heads = 64"],["Nₖᵥ,rank","max(1,4/TP)"],["Dₕ","head_dim = 128"],["Q / K / V","当前 rank 的三个输出"]],
   "d-ropeq":[["Dᵣ","rotary_dim = 64"],["Dₕ","head_dim = 128"],["θbase","rope_theta = 5000000"],["p","token position"],["Qᵣ","旋转后的 Q"]],
@@ -169,7 +181,7 @@ const FORMULA_TERMS_BY_ID: Partial<Record<string,readonly FormulaTerm[]>> = {
   "d-down":[["Z⁽ʳ⁾","当前 TP rank 的激活输出"],["Wdown⁽ʳ⁾","当前 rank 的 down 权重"],["H_dense","dense_intermediate_size = 12288"],["H","hidden_size = 6144"],["TP","tensor parallel size"]],
   "s-packed":[["Nₕ","num_attention_heads = 64"],["Nₖᵥ","num_key_value_heads = 4"],["N_idx","sparse_num_index_heads = 4"],["Dₕ","head_dim = 128"],["D_idx","sparse_index_dim = 128"],["TP","tensor parallel size"]],
   "s-split":[["Nₕ/TP","每 rank query heads = 64/TP"],["Nₖᵥ,rank","max(1,4/TP)"],["N_idx,rank","max(1,4/TP)"],["Dₕ","head_dim = 128"],["D_idx","sparse_index_dim = 128"]],
-  "s-blockmax":[["B_block","sparse_block_size = 128"],["Sidx","index token scores"],["B","block scores"]],
+  "s-blockmax":[["B_block","sparse_block_size = 128"],["S̃idx","已排除未来 key 的 Index scores"],["B","每 128 keys 取 max 后的 block scores"]],
   "s-rope":[["Dᵣ","rotary_dim = 64"],["Dₕ","head_dim = 128"],["θbase","rope_theta = 5000000"],["p","token position"]],
   "s-oproj":[["Nₕ","num_attention_heads = 64"],["Dₕ","head_dim = 128"],["H","hidden_size = 6144"],["TP","tensor parallel size"],["W_O","o_proj.weight"]],
   "d-add2":[["U","Attention 后的 residual stream · [B,S,H]"],["Yffn","Dense FFN 输出 · [B,S,H]"],["Xₗ₊₁","逻辑上的下一层输入"],["H","hidden_size = 6144"]],
@@ -187,12 +199,19 @@ const FORMULA_TERMS_BY_ID: Partial<Record<string,readonly FormulaTerm[]>> = {
   "d-mask":[["Ā","缩放后的 scores"],["M","causal / padding mask"],["Ã","mask 后的 scores"],["c_b","请求 b 的 context 长度"]],
   "d-softmax":[["Ã","mask 后的 scores"],["P","attention probability"],["T","可见 KV token 数"],["m","每行最大值，用于数值稳定"]],
   "s-cache":[["Kᵣ / V","写入 sparse cache 的 Key / Value"],["slot","物理 cache 位置"],["block_table","逻辑块到物理页映射"]],
-  "s-select":[["𝒮","Top-K 选中的逻辑 block ids"],["block_table","逻辑块到物理页映射"],["𝒫","选中的物理 pages"],["K𝒮 / V𝒮","从 pages gather 的 KV"]],
   "s-scale":[["A","未缩放 sparse scores"],["Ā","缩放后的 sparse scores"],["Dₕ","head_dim = 128"]],
-  "s-mask":[["Ā","缩放后的 sparse scores"],["𝒮","Indexer 选中的 token 集合"],["Ã","causal / padding mask 后的 scores"],["c_b","请求 b 的 context 长度"]],
+  "s-mask":[["Ā","selected K 上的缩放 scores"],["valid_token","候选 blocks 内的 causal / padding 判定"],["Ã","token mask 后的 selected scores"],["K𝒮","block_indices 限定的候选 K view"]],
   "s-softmax":[["Ã","mask 后的 sparse scores"],["P","selected KV 上的概率"],["𝒮","当前 query 的候选 token 集合"]],
   "s-shared":[["u","Shared Expert 输入 · [B,S,H]"],["W₁,s","shared gate_proj.weight"],["W₃,s","shared up_proj.weight"],["W₂,s","shared down_proj.weight"],["H","hidden_size = 6144"],["H_shared","shared_intermediate_size = 3072"],["E_shared(u)","Shared Expert 输出"]],
-  "s-sum":[["𝓔","当前 token 选中的 routed experts"],["ŵₑ","第 e 个 routed expert 权重"],["Eₑ(U)","第 e 个 routed expert 输出"],["E_shared(U)","Shared Expert 输出"],["Ymoe","两路求和后的 MoE 输出"]],
+  "s-sum":[["Y_routed","FusedMoE 已完成加权归并的输出"],["Y_shared","Shared Expert 输出"],["Y_moe","两路逐元素相加后的 MoE 输出"]],
+};
+
+const FORMULA_STEPS_BY_ID: Partial<Record<string,readonly FormulaStep[]>> = {
+  "s-experts":[
+    {title:"1 · 得分与选择",formula:String.raw`s=\sigma(r),\qquad \mathcal E=\operatorname{TopK}_{K}(s+b)`,explanation:"r 是 Router 输出的 128 个 FP32 logits；σ 对每个 logit 做 sigmoid，得到路由分数 s。b 是 correction bias，只在选择专家时加到 s 上；K=4，所以 𝓔 表示当前 token 选中的 4 个专家。目的：确定这个 token 应交给哪些专家计算。"},
+    {title:"2 · 生成混合权重",formula:String.raw`\hat w_e=s_{route}\,\frac{s_e}{\sum_{j\in\mathcal E}s_j}`,explanation:"e 和 j 都是 𝓔 中的专家索引；sₑ 是专家 e 未加 correction bias 的 sigmoid 分数。分母把 4 个入选专家的分数归一化，再乘 s_route=2.0 得到 ŵₑ。目的：决定每个入选专家对最终 routed output 的贡献比例；correction bias 不进入该权重。"},
+    {title:"3 · 专家计算与归并",formula:String.raw`Y_{\mathrm{routed}}=\sum_{e\in\mathcal E}\hat w_eE_e(\hat U)`,explanation:"Û 是 Post-attn RMSNorm 输出，也是各专家共享的输入；Eₑ(Û) 是专家 e 对该 token 的计算结果。每个结果乘对应的 ŵₑ，再对 4 个专家求和，得到 Y_routed。目的：把多个专家结果还原成每个 token 的一个 [H] 输出向量。"},
+  ],
 };
 
 function formulaTerms(node:OpNode){
@@ -209,10 +228,10 @@ const LATEX_BY_ID: Record<string,string> = {
   "d-norm":String.raw`\begin{aligned}\operatorname{RMS}(x)&=\sqrt{\frac1H\sum_{j=1}^{H}x_j^2+\varepsilon}\\y_i&=\frac{x_i}{\operatorname{RMS}(x)}(1+\gamma_i)\end{aligned}`,
   "d-qkv":String.raw`\begin{aligned}Z&=\hat X\,[W_Q^\top\mid W_K^\top\mid W_V^\top]\\Z&\in\mathbb R^{B\times S\times((N_h+2N_{kv})D_h/TP)}\end{aligned}`,
   "d-split":String.raw`(Q,K,V)=\operatorname{Split}\!\left(Z;\frac{N_hD_h}{TP},N_{kv,\mathrm{rank}}D_h,N_{kv,\mathrm{rank}}D_h\right)`,
-  "d-qnorm":String.raw`\tilde Q_{b,h,s,:}=\frac{Q_{b,h,s,:}}{\sqrt{\frac1{D_h}\lVert Q_{b,h,s,:}\rVert_2^2+\varepsilon}}\odot(1+\gamma_Q)`,
-  "d-knorm":String.raw`\tilde K_{b,g,s,:}=\frac{K_{b,g,s,:}}{\sqrt{\frac1{D_h}\lVert K_{b,g,s,:}\rVert_2^2+\varepsilon}}\odot(1+\gamma_K)`,
-  "d-ropeq":String.raw`\begin{aligned}\theta_{p,j}&=p\,\theta_{\mathrm{base}}^{-2j/D_r}\\\binom{Q^r_{2j}}{Q^r_{2j+1}}&=\begin{bmatrix}\cos\theta_{p,j}&-\sin\theta_{p,j}\\\sin\theta_{p,j}&\cos\theta_{p,j}\end{bmatrix}\binom{\tilde Q_{2j}}{\tilde Q_{2j+1}}\\Q^r_{D_r:D_h}&=\tilde Q_{D_r:D_h}\end{aligned}`,
-  "d-ropek":String.raw`\begin{aligned}\theta_{p,j}&=p\,\theta_{\mathrm{base}}^{-2j/D_r}\\\binom{K^r_{2j}}{K^r_{2j+1}}&=\begin{bmatrix}\cos\theta_{p,j}&-\sin\theta_{p,j}\\\sin\theta_{p,j}&\cos\theta_{p,j}\end{bmatrix}\binom{\tilde K_{2j}}{\tilde K_{2j+1}}\\K^r_{D_r:D_h}&=\tilde K_{D_r:D_h}\end{aligned}`,
+  "d-qnorm":String.raw`\begin{aligned}\operatorname{RMS}(Q_{b,h,s})&=\sqrt{\frac1{D_h}\sum_{j=1}^{D_h}Q_{b,h,s,j}^2+\varepsilon}\\\tilde Q_{b,h,s,i}&=\frac{Q_{b,h,s,i}}{\operatorname{RMS}(Q_{b,h,s})}(1+\gamma_{Q,i})\end{aligned}`,
+  "d-knorm":String.raw`\begin{aligned}\operatorname{RMS}(K_{b,g,s})&=\sqrt{\frac1{D_h}\sum_{j=1}^{D_h}K_{b,g,s,j}^2+\varepsilon}\\\tilde K_{b,g,s,i}&=\frac{K_{b,g,s,i}}{\operatorname{RMS}(K_{b,g,s})}(1+\gamma_{K,i})\end{aligned}`,
+  "d-ropeq":String.raw`\begin{aligned}(Q_{\mathrm{rot}},Q_{\mathrm{pass}})&=\operatorname{Split}(\tilde Q;D_r,D_h-D_r)\\Q^r&=\operatorname{Concat}(\operatorname{RoPE}(Q_{\mathrm{rot}},p),Q_{\mathrm{pass}})\end{aligned}`,
+  "d-ropek":String.raw`\begin{aligned}(K_{\mathrm{rot}},K_{\mathrm{pass}})&=\operatorname{Split}(\tilde K;D_r,D_h-D_r)\\K^r&=\operatorname{Concat}(\operatorname{RoPE}(K_{\mathrm{rot}},p),K_{\mathrm{pass}})\end{aligned}`,
   "d-cache":String.raw`\begin{aligned}\mathcal K[\mathrm{slot}(r,p)]&\leftarrow K^r_{r,p}\\\mathcal V[\mathrm{slot}(r,p)]&\leftarrow V_{r,p}\\K_{\le p},V_{\le p}&\leftarrow\operatorname{gather}(\mathcal K,\mathcal V,\mathrm{block\_table}_r)\end{aligned}`,
   "d-qk":String.raw`A_{b,h,i,j}=\sum_{m=1}^{D_h}Q^r_{b,h,i,m}\,K^r_{b,\lfloor h/G\rfloor,j,m}`,
   "d-scale":String.raw`\bar A_{b,h,i,j}=\frac{A_{b,h,i,j}}{\sqrt{D_h}}`,
@@ -231,25 +250,26 @@ const LATEX_BY_ID: Record<string,string> = {
   "s-postnorm":String.raw`\begin{aligned}\operatorname{RMS}(U)&=\sqrt{\frac1H\sum_{j=1}^{H}U_j^2+\varepsilon}\\\hat U_i&=\frac{U_i}{\operatorname{RMS}(U)}(1+\gamma_{\mathrm{post},i})\end{aligned}`,
   "s-packed":String.raw`Z=\hat X[W_Q^\top\mid W_K^\top\mid W_V^\top\mid W_{Q_i}^\top\mid W_{K_i}^\top]`,
   "s-split":String.raw`Z\longrightarrow(Q_{N_hD_h/TP},K_{N_{kv,\mathrm{rank}}D_h},V_{N_{kv,\mathrm{rank}}D_h},Q^{\mathrm{idx}}_{N_{idx,\mathrm{rank}}D_{idx}},K^{\mathrm{idx}}_{D_{idx}})`,
-  "s-idxnorm":String.raw`\tilde Q^{\mathrm{idx}}=\operatorname{RMSNorm}(Q^{\mathrm{idx}}),\qquad\tilde K^{\mathrm{idx}}=\operatorname{RMSNorm}(K^{\mathrm{idx}})`,
-  "s-idxscore":String.raw`S^{(r)}_{b,i,j}=\frac{\langle\tilde Q^{\mathrm{idx}}_{b,r,i,:},\tilde K^{\mathrm{idx}}_{b,0,j,:}\rangle}{\sqrt{D_{idx}}}+M_{b,i,j}`,
-  "s-blockmax":String.raw`B^{(r)}_{b,i,u}=\max_{j\in[B_{block}u,B_{block}(u+1))}S^{(r)}_{b,i,j}`,
-  "s-topk":String.raw`\begin{aligned}\hat B_u&=B_u+\lambda_{local}\mathbf1[u\in\mathcal L_i]+\lambda_{init}\mathbf1[u\in\mathcal I]\\\mathcal S_{b,r,i}&=\operatorname{TopK}_{K_{block}}(\hat B)\end{aligned}`,
+  "s-idxnorm":String.raw`\begin{aligned}\tilde Q^{\mathrm{idx}},\tilde K^{\mathrm{idx}}&=\operatorname{RMSNorm}(Q^{\mathrm{idx}}),\operatorname{RMSNorm}(K^{\mathrm{idx}})\\Q^{\mathrm{idx},r},K^{\mathrm{idx},r}&=\operatorname{RoPE}(\tilde Q^{\mathrm{idx}},\tilde K^{\mathrm{idx}};\mathbf p)\end{aligned}`,
+  "s-idxcache":String.raw`\mathcal K_{\mathrm{idx}}[\mathrm{slot}(b,p)]\leftarrow K^{\mathrm{idx},r}_{b,p}\in\mathbb R^{D_{idx}}`,
+  "s-idxscore":String.raw`S^{(r)}_{b,i,j}=\left\langle Q^{\mathrm{idx},r}_{b,r,i,:},\mathcal K_{\mathrm{idx}}[b,j,:]\right\rangle`,
+  "s-idxmask":String.raw`\tilde S^{(r)}_{b,i,j}=\begin{cases}S^{(r)}_{b,i,j},&j\le p_{b,i}\\-\infty,&j>p_{b,i}\end{cases}`,
+  "s-blockmax":String.raw`B^{(r)}_{b,i,u}=\max_{j\in[B_{block}u,B_{block}(u+1))}\tilde S^{(r)}_{b,i,j}`,
+  "s-topk":String.raw`\begin{aligned}B_u&\leftarrow+\infty,\quad u\in\mathcal L_i\\\mathcal S_{b,r,i}&=\operatorname{TopK}_{K_{block}}(B)\end{aligned}`,
   "s-mainnorm":String.raw`\tilde Q=\operatorname{RMSNorm}(Q),\qquad\tilde K=\operatorname{RMSNorm}(K)`,
   "s-rope":String.raw`\begin{aligned}(Q^r_{:D_r},K^r_{:D_r})&=\operatorname{RoPE}(\tilde Q_{:D_r},\tilde K_{:D_r};\mathbf p)\\(Q^r_{D_r:},K^r_{D_r:})&=(\tilde Q_{D_r:},\tilde K_{D_r:})\end{aligned}`,
   "s-cache":String.raw`\mathcal K[\mathrm{slot}(r,p)]\leftarrow K^r_{r,p},\qquad\mathcal V[\mathrm{slot}(r,p)]\leftarrow V_{r,p}`,
-  "s-select":String.raw`\begin{aligned}\mathcal P_{b,r,i}&=\{\mathrm{block\_table}[b,u]\mid u\in\mathcal S_{b,r,i}\}\\(K_{\mathcal S},V_{\mathcal S})&=\operatorname{gather}(\mathcal K,\mathcal V;\mathcal P_{b,r,i})\end{aligned}`,
   "s-qk":String.raw`A_{b,h,i,j}=\sum_{m=1}^{D_h}Q^r_{b,h,i,m}(K_{\mathcal S})_{b,\lfloor h/G\rfloor,j,m},\quad j\in\mathcal S_{b,\lfloor h/G\rfloor,i}`,
   "s-scale":String.raw`\bar A_{b,h,i,j}=A_{b,h,i,j}/\sqrt{D_h}`,
-  "s-mask":String.raw`\tilde A_{b,h,i,j}=\begin{cases}\bar A_{b,h,i,j},&j\in\mathcal S_i\ \land\ j\le c_b+i\\-\infty,&\text{otherwise}\end{cases}`,
+  "s-mask":String.raw`\tilde A_{b,h,i,j}=\begin{cases}\bar A_{b,h,i,j},&\mathrm{valid\_token}(b,i,j)\\-\infty,&\text{future or padding}\end{cases},\quad j\in K_{\mathcal S}`,
   "s-softmax":String.raw`P_{b,h,i,j}=\frac{\exp(\tilde A_{b,h,i,j}-\max_t\tilde A_{b,h,i,t})}{\sum_{t\in\mathcal S_i}\exp(\tilde A_{b,h,i,t}-\max_u\tilde A_{b,h,i,u})}`,
   "s-pv":String.raw`O_{b,h,i,m}=\sum_{j\in\mathcal S_i}P_{b,h,i,j}(V_{\mathcal S})_{b,\lfloor h/G\rfloor,j,m}`,
   "s-oproj":String.raw`Y_{\mathrm{attn}}=\operatorname{RowParallel}\!\left(\operatorname{Concat}_{h=1}^{N_h/TP}(O_h),W_O\right)`,
   "s-addattn":String.raw`U=X_l+Y_{\mathrm{attn}}`,
-  "s-router":String.raw`\begin{aligned}r&=UW_{\mathrm{router}}^\top\in\mathbb R^{B\times S\times E}\\s&=\sigma(r),\qquad\mathcal E=\operatorname{TopK}_K(s+b)\\\hat w_e&=s_{route}\,\frac{s_e}{\sum_{j\in\mathcal E}s_j},\quad e\in\mathcal E\end{aligned}`,
-  "s-experts":String.raw`\begin{aligned}g_e&=W_{1,e}u,\quad v_e=W_{3,e}u\\\bar g_e&=\min(g_e,c),\quad\bar v_e=\operatorname{clip}(v_e,-c,c)\\E_e(u)&=W_{2,e}[\bar g_e\odot\sigma(\alpha\bar g_e)\odot(\bar v_e+\beta)]\end{aligned}`,
+  "s-router":String.raw`r=\hat U W_{\mathrm{router}}^\top\in\mathbb R^{B\times S\times E}`,
+  "s-experts":String.raw`\begin{aligned}s&=\sigma(r),\qquad\mathcal E=\operatorname{TopK}_K(s+b)\\\hat w_e&=s_{route}\,\frac{s_e}{\sum_{j\in\mathcal E}s_j}\\Y_{\mathrm{routed}}&=\sum_{e\in\mathcal E}\hat w_eE_e(\hat U)\end{aligned}`,
   "s-shared":String.raw`E_{\mathrm{shared}}(u)=W_{2,s}\operatorname{SwiGLUOAI}(W_{1,s}u,W_{3,s}u)`,
-  "s-sum":String.raw`Y_{\mathrm{moe}}=\sum_{e\in\mathcal E}\hat w_eE_e(U)+E_{\mathrm{shared}}(U)`,
+  "s-sum":String.raw`Y_{\mathrm{moe}}=Y_{\mathrm{routed}}+E_{\mathrm{shared}}(\hat U)`,
   "s-addout":String.raw`X_{l+1}=U+Y_{\mathrm{moe}}`,
 };
 
@@ -394,30 +414,295 @@ const ATTENTION_SYMBOLS: CodeSymbol[] = [
   {symbol:"self.attn",resolvesTo:"vLLM Attention backend",meaning:"causal、长度与 block table 由 runtime metadata 提供，不要求物化稠密 mask。"},
 ];
 
-const MOE_SECTIONS: CodeSection[] = [
-  {stage:"1 · ROUTE",title:"MiniMaxM3MoE.forward：router logits",location:"nvidia/model.py · MiniMaxM3MoE.forward",url:CODE_URL,code:`router_logits, _ = self.gate(hidden_states)
-final_hidden_states = self.experts(
+const QKV_INDEX_PROJECTION_SECTIONS: CodeSection[] = [
+  {stage:"1 · FUSED LAYOUT",title:"vLLM：一次 GEMM 的五段输出布局",location:"linear.py · MinimaxM3QKVParallelLinearWithIndexer · L1319–1401",url:`${LINEAR_URL}#L1319-L1401`,code:`# One column-parallel GEMM emits:
+# [q | k | v | index_q | index_k]
+q = self.num_heads * self.head_size
+kv = self.num_kv_heads * self.head_size
+index_q = self.num_index_heads * self.index_head_size
+index_k = self.index_head_size
+self.output_sizes = [q * tp_size, kv * tp_size, kv * tp_size,
+                     index_q * tp_size, index_k * tp_size]
+
+ColumnParallelLinear.__init__(
+    self, input_size=self.hidden_size,
+    output_size=sum(self.output_sizes), gather_output=False,
+)`},
+  {stage:"2 · PROJECT",title:"vLLM：执行包含 Index Q/K 的 packed 投影",location:"nvidia/model.py · MiniMaxM3SparseAttention.forward · L565–581",url:`${CODE_URL}#L565-L581`,code:`# qkv 的名称沿用历史命名，实际包含五段：
+# [q | k | v | index_q | index_k]
+qkv, _ = self.qkv_proj(hidden_states)
+
+# 第二返回值 _ 是 bias；bias=False，因此为 None。
+# 五路投影结果全部位于 qkv。
+# 后续 fused_minimax_m3_qknorm_rope_kv_insert
+# 按五段偏移读取这个 packed tensor。`},
+  {stage:"3 · TRANSFORMERS QKV",title:"Transformers：主 Q/K/V 的独立可读投影",location:"modeling_minimax_m3_vl.py · MiniMaxM3VLAttention · L422–445",url:TRANSFORMERS_QKV_PROJECTION_URL,code:`self.q_proj = nn.Linear(hidden_size, num_attention_heads * head_dim, bias=False)
+self.k_proj = nn.Linear(hidden_size, num_key_value_heads * head_dim, bias=False)
+self.v_proj = nn.Linear(hidden_size, num_key_value_heads * head_dim, bias=False)
+
+query_states = self.q_proj(hidden_states)
+key_states = self.k_proj(hidden_states)
+value_states = self.v_proj(hidden_states)`},
+  {stage:"4 · TRANSFORMERS INDEX",title:"Transformers：Index Q/K 的独立可读投影",location:"modeling_minimax_m3_vl.py · MiniMaxM3VLIndexer · L538–563",url:TRANSFORMERS_INDEX_PROJECTION_URL,code:`self.q_proj = nn.Linear(hidden_size, index_n_heads * index_head_dim, bias=False)
+self.k_proj = nn.Linear(hidden_size, index_head_dim, bias=False)
+
+idx_q = self.q_proj(hidden_states).view(batch, q_len, -1, self.head_dim)
+idx_k = self.k_proj(hidden_states).view(batch, q_len, 1, self.head_dim)`},
+];
+
+const QKV_INDEX_PROJECTION_SYMBOLS: CodeSymbol[] = [
+  {symbol:"qkv",resolvesTo:"packed [Q | K | V | Qidx | Kidx]",meaning:"变量名叫 qkv，但在稀疏层中实际保存五路投影结果。"},
+  {symbol:"bias / _",resolvesTo:"None",meaning:"线性层的第二返回值是 bias；这里 bias=False，与 Index 输出无关。"},
+  {symbol:"index_q",resolvesTo:"Qidx · 4 个 index heads × 128",meaning:"用于计算稀疏块选择分数的 query 投影。"},
+  {symbol:"index_k",resolvesTo:"Kidx · 1 个共享 index head × 128",meaning:"写入 Indexer cache，并与 Qidx 计算候选 block 分数。"},
+];
+
+const INDEX_NORM_ROPE_SECTIONS: CodeSection[] = [
+  {stage:"TRANSFORMERS · PREPARE",title:"Index Q/K：投影后执行 Norm 与 RoPE",location:"modeling_minimax_m3_vl.py · MiniMaxM3VLIndexer.forward · L559–565",url:TRANSFORMERS_INDEX_SELECTION_URL,code:`idx_q = self.q_proj(hidden_states).view(batch, q_len, -1, self.head_dim)
+idx_q = self.q_norm(idx_q).transpose(1, 2)
+idx_k = self.k_proj(hidden_states).view(batch, q_len, 1, self.head_dim)
+idx_k = self.k_norm(idx_k).transpose(1, 2)
+idx_q, idx_k = apply_rotary_pos_emb(
+    idx_q, idx_k, cos[..., :self.head_dim], sin[..., :self.head_dim]
+)`},
+];
+
+const INDEX_CACHE_SECTIONS: CodeSection[] = [
+  {stage:"VLLM · CACHE SPEC",title:"独立的 key-only Index K side cache",location:"common/indexer.py · MiniMaxM3IndexerCache · L101–151",url:`${VLLM_INDEXER_URL}#L101-L151`,code:`class MiniMaxM3IndexerCache(nn.Module, AttentionLayerBase):
+    # one index-key vector per token; no value cache
+    def bind_kv_cache(self, kv_cache: torch.Tensor) -> None:
+        self.kv_cache = kv_cache.squeeze(1)
+
+    def get_kv_cache_spec(self, vllm_config):
+        return MLAAttentionSpec(
+            block_size=vllm_config.cache_config.block_size,
+            num_kv_heads=1,
+            head_size=self.head_dim,
+            dtype=self.dtype,
+        )`},
+  {stage:"VLLM · OWNERSHIP",title:"Indexer 实现持有并注册自己的 Index K cache",location:"common/indexer.py · MiniMaxM3IndexerImpl.__init__ · L384–391",url:`${VLLM_INDEXER_URL}#L384-L391`,code:`self.index_cache = MiniMaxM3IndexerCache(
+    head_dim=index_head_dim,
+    prefix=f"{prefix}.index_cache",
+    cache_config=cache_config,
+    indexer_kv_dtype=indexer_kv_dtype,
+    backend_cls=type(self).indexer_backend_cls,
+)`},
+];
+
+const INDEX_SCORE_SECTIONS: CodeSection[] = [
+  {stage:"VLLM · SCORE INPUT",title:"Index score kernel 读取完整 Index K cache",location:"common/indexer.py · MiniMaxM3IndexerTritonImpl.forward · L413–479",url:`${VLLM_INDEXER_URL}#L413-L479`,code:`index_md = attn_metadata[self.index_cache.prefix]
+iq = index_query[:num_tokens].view(
+    -1, self.num_index_heads, self.index_head_dim
+)
+index_k_cache = self.index_cache.kv_cache
+
+score = minimax_m3_index_score(
+    iq[nd:], index_k_cache, p.block_table,
+    p.cu_seqlens_q, p.seq_lens, p.context_lens,
+    p.max_query_len, p.max_seq_len, self.num_kv_heads,
+)`},
+  {stage:"TRANSFORMERS · SCORE",title:"每个 query/KV group 计算 Index token scores",location:"modeling_minimax_m3_vl.py · MiniMaxM3VLIndexer.forward · L570–575",url:TRANSFORMERS_INDEX_SELECTION_URL,code:`k_len = idx_k.shape[2]
+scores = torch.matmul(
+    idx_q.float(), idx_k.float().transpose(-1, -2)
+)  # [B, H_idx, S_q, S_k]`},
+];
+
+const INDEX_FUTURE_MASK_SECTIONS: CodeSection[] = [
+  {stage:"TRANSFORMERS · INDEX MASK",title:"选块前先排除未来 key 与补齐槽",location:"modeling_minimax_m3_vl.py · MiniMaxM3VLIndexer.forward · L575–579",url:TRANSFORMERS_INDEX_SELECTION_URL,code:`k_positions = torch.arange(k_len, device=idx_q.device)
+token_future = k_positions[None, None, None, :] > position_ids[:, None, :, None]
+scores = scores.masked_fill(token_future, float("-inf"))
+if pad:
+    scores = F.pad(scores, (0, pad), value=float("-inf"))`},
+];
+
+const INDEX_SELECTION_SECTIONS: CodeSection[] = [
+  {stage:"TRANSFORMERS · BLOCK MAX",title:"每 128 个 key 聚合成一个 block score",location:"modeling_minimax_m3_vl.py · MiniMaxM3VLIndexer.forward · L580–582",url:TRANSFORMERS_INDEX_SELECTION_URL,code:`scores = scores.view(
+    batch, self.num_heads, q_len, num_key_blocks, self.block_size
+)
+block_scores = scores.amax(dim=-1)`},
+  {stage:"TRANSFORMERS · TOP-K",title:"保证 local block 可见后选择 Top-16",location:"modeling_minimax_m3_vl.py · MiniMaxM3VLIndexer.forward · L584–597",url:TRANSFORMERS_INDEX_SELECTION_URL,code:`q_block = position_ids // self.block_size
+local_idx = (q_block[..., None] - local.view(1, 1, -1)).clamp(min=0)
+block_scores.scatter_(-1, local_idx, float("inf"))
+
+topk_scores, block_indices = block_scores.topk(self.topk_blocks, dim=-1)
+return block_indices.masked_fill(topk_scores == float("-inf"), -1)`},
+];
+
+const SPARSE_MASK_SECTIONS: CodeSection[] = [
+  {stage:"TRANSFORMERS · BLOCK MASK",title:"把每组 block_indices 展开到 query heads",location:"modeling_minimax_m3_vl.py · build_block_mask · L599–625",url:TRANSFORMERS_BLOCK_MASK_URL,code:`bias.scatter_(-1, safe_block_indices, 0.0)
+block_keep = (bias == 0.0).repeat_interleave(self.block_size, dim=-1)
+block_keep = block_keep.repeat_interleave(
+    num_attention_heads // n_idx_heads, dim=1
+)`},
+  {stage:"TRANSFORMERS · COMPOSE",title:"再与 padding 或 causal token mask 合并",location:"modeling_minimax_m3_vl.py · build_block_mask · L626–635",url:TRANSFORMERS_BLOCK_MASK_URL,code:`if attention_mask is not None:
+    padding_mask = attention_mask if attention_mask.dtype == torch.bool else attention_mask == 0
+    keep = block_keep & padding_mask
+else:
+    token_future = k_positions[None, None, None, :] > position_ids[:, None, :, None]
+    keep = block_keep & ~token_future
+return torch.zeros(keep.shape, dtype=dtype).masked_fill(~keep, min_dtype)`},
+];
+
+const SPARSE_PAGED_ATTENTION_SECTIONS: CodeSection[] = [
+  {stage:"VLLM · DIRECT PAGED READ",title:"Sparse Attention 直接消费 KV cache 与 Top-16 indices",location:"common/sparse_attention.py · MiniMaxM3SparseTritonImpl.forward · L418–470",url:`${VLLM_SPARSE_ATTENTION_URL}#L418-L470`,code:`topk = layer.topk_indices_buffer[:num_tokens].transpose(0, 1)
+minimax_m3_sparse_attn(
+    q[nd:],
+    kv_cache,
+    topk[:, nd:num_tokens, :],
+    p.block_table,
+    p.cu_seqlens_q,
+    p.seq_lens,
+    p.context_lens,
+    p.max_query_len,
+    self.num_kv_heads,
+    self.scale,
+    out[nd:],
+)`},
+  {stage:"TRANSFORMERS · DIRECT DISPATCH",title:"完整 K/V 与 block_indices 直接进入 Attention backend",location:"modeling_minimax_m3_vl.py · MiniMaxM3VLAttention.forward · L456–487",url:TRANSFORMERS_SPARSE_ATTENTION_URL,code:`block_indices = self.indexer(
+    hidden_states, position_embeddings, past_key_values, position_ids
+)
+attn_output, attn_weights = attention_interface(
+    self, query_states, key_states, value_states, attention_mask,
+    block_indices=block_indices,
+)`},
+];
+
+const INDEX_SELECTION_SYMBOLS: CodeSymbol[] = [
+  {symbol:"H_idx",resolvesTo:"4 index heads = 4 KV groups",meaning:"每个 Index/KV group 独立为每个 query 选择 block。"},
+  {symbol:"block_size",resolvesTo:"128 keys",meaning:"token scores 每 128 个 key 做一次 max pooling。"},
+  {symbol:"block_indices",resolvesTo:"[B,4,S,16]",meaning:"每组、每个 query 的 Top-16 逻辑 key-block 索引；无效槽为 −1。"},
+];
+
+const INDEX_CACHE_SYMBOLS: CodeSymbol[] = [
+  {symbol:"index_cache",resolvesTo:"MiniMaxM3IndexerCache",meaning:"与主 Paged KV Cache 分开的 Indexer side cache。"},
+  {symbol:"kv_cache",resolvesTo:"key-only · one vector/token",meaning:"名字沿用 KV cache 接口，但这里只保存 Index K，不保存 Index V。"},
+  {symbol:"indexer_kv_dtype",resolvesTo:"bf16 或 fp8_e4m3",meaning:"Index score 路径可独立选择 side-cache 存储精度。"},
+];
+
+const SPARSE_MASK_SYMBOLS: CodeSymbol[] = [
+  {symbol:"block_keep",resolvesTo:"Top-16 block selection",meaning:"决定哪些 key blocks 属于当前 query/KV group 的候选集合。"},
+  {symbol:"attention_mask",resolvesTo:"padding 或 causal token bounds",meaning:"在候选 blocks 内继续排除 padding 与未来 token。"},
+];
+
+const QK_NORM_SECTIONS: CodeSection[] = [
+  {stage:"1 · INIT",title:"为每个 Q/K head 创建 Gemma RMSNorm",location:"nvidia/model.py · MiniMaxM3Attention.__init__",url:`${CODE_URL}#L315-L317`,code:`self.q_norm = MiniMAXGemmaRMSNorm(
+    self.head_dim, eps=config.rms_norm_eps
+)
+self.k_norm = MiniMAXGemmaRMSNorm(
+    self.head_dim, eps=config.rms_norm_eps
+)`},
+  {stage:"2 · FUSED",title:"融合算子接收 Q/K Norm 权重与 ε",location:"nvidia/model.py · MiniMaxM3Attention.forward",url:`${CODE_URL}#L341-L354`,code:`ops.fused_minimax_m3_qknorm_rope_kv_insert(
+    qkv,
+    self.q_norm.weight,
+    self.k_norm.weight,
+    self.rotary_emb.cos_sin_cache,
+    positions,
+    self.num_heads,
+    self.num_kv_heads,
+    self.rotary_emb.rotary_dim,
+    self.q_norm.variance_epsilon,
+    kv_cache_dtype="auto",
+)`},
+];
+
+const QK_NORM_SYMBOLS: CodeSymbol[] = [
+  {symbol:"self.q_norm / self.k_norm",resolvesTo:"per-head MiniMAXGemmaRMSNorm",meaning:"分别对每个 Q head 与 K head 的 128 维向量归一化。"},
+  {symbol:"self.q_norm.weight / self.k_norm.weight",resolvesTo:"γQ / γK",meaning:"checkpoint 中独立保存的 Q/K Gemma RMSNorm 缩放权重。"},
+  {symbol:"self.q_norm.variance_epsilon",resolvesTo:"ε = 10⁻⁶",meaning:"融合算子执行 Q/K RMSNorm 时使用的数值稳定项。"},
+];
+
+const VLLM_ROPE_SECTION: CodeSection = {
+  stage:"1 · FUSED",
+  title:"vLLM：融合 Q/K Norm + Partial RoPE",
+  location:"nvidia/model.py · MiniMaxM3Attention.forward",
+  url:CODE_URL,
+  code:`ops.fused_minimax_m3_qknorm_rope_kv_insert(
+    qkv,
+    self.q_norm.weight,
+    self.k_norm.weight,
+    self.rotary_emb.cos_sin_cache,
+    positions,
+    self.num_heads,
+    self.num_kv_heads,
+    self.rotary_emb.rotary_dim,
+    self.q_norm.variance_epsilon,
+    kv_cache_dtype="auto",
+)`,
+};
+
+const TRANSFORMERS_ROPE_SECTION: CodeSection = {
+  stage:"2 · REFERENCE",
+  title:"Transformers：Partial RoPE 可读实现",
+  location:"modeling_minimax_m3_vl.py · apply_rotary_pos_emb · L365",
+  url:TRANSFORMERS_MINIMAX_M3_URL,
+  code:`rotary_dim = cos.shape[-1]
+q_rot, q_pass = q[..., :rotary_dim], q[..., rotary_dim:]
+k_rot, k_pass = k[..., :rotary_dim], k[..., rotary_dim:]
+q_rot = (q_rot * cos) + (rotate_half(q_rot) * sin)
+k_rot = (k_rot * cos) + (rotate_half(k_rot) * sin)
+q = torch.cat([q_rot, q_pass], dim=-1)
+k = torch.cat([k_rot, k_pass], dim=-1)`,
+};
+
+const TRANSFORMERS_ROPE_SYMBOL: CodeSymbol = {
+  symbol:"rotary_dim / q_pass / k_pass",
+  resolvesTo:"64 / 后 64 维 Q / 后 64 维 K",
+  meaning:"Transformers 将参与旋转的前半段与直接保留的后半段显式拆开，便于核对 vLLM 融合算子的数学语义。",
+};
+
+const ROUTER_SECTIONS: CodeSection[] = [
+  {stage:"1 · ROUTE",title:"MiniMaxM3MoE.forward：计算 router_logits",location:"nvidia/model.py · MiniMaxM3MoE.forward",url:CODE_URL,code:`router_logits, _ = self.gate(hidden_states)`},
+];
+
+const ROUTER_SYMBOLS: CodeSymbol[] = [
+  {symbol:"self.gate",resolvesTo:"GateLinear",meaning:"对每个 token 做一次 FP32 线性投影。"},
+  {symbol:"router_logits",resolvesTo:"[B,S,128] FP32",meaning:"这是 Python 层实际产生并传给 FusedMoE 的唯一 Router 输出。"},
+];
+
+const ROUTED_EXPERT_SECTIONS: CodeSection[] = [
+  {stage:"1 · CALL",title:"FusedMoE 消费 router_logits",location:"nvidia/model.py · MiniMaxM3MoE.forward",url:CODE_URL,code:`final_hidden_states = self.experts(
     hidden_states=hidden_states,
     router_logits=router_logits,
 )`},
-  {stage:"2 · SHARED",title:"共享专家复用 MiniMaxM3MLP",location:"nvidia/model.py · MiniMaxM3MoE.forward",url:CODE_URL,code:`shared_hidden_states = self.shared_experts(hidden_states)
-final_hidden_states = final_hidden_states + shared_hidden_states
-return final_hidden_states.view(num_tokens, hidden_dim)`},
-  {stage:"3 · CONFIG",title:"FusedMoEFactory：routed expert 配置",location:"nvidia/model.py · MiniMaxM3MoE.__init__",url:CODE_URL,code:`FusedMoEFactory(
+  {stage:"2 · CONFIG",title:"FusedMoEFactory：Top-4 路由与专家配置",location:"nvidia/model.py · MiniMaxM3MoE.__init__",url:CODE_URL,code:`FusedMoEFactory(
     num_experts=128,
     top_k=4,
     hidden_size=6144,
     intermediate_size=3072,
+    scoring_func="sigmoid",
+    e_score_correction_bias=self.e_score_correction_bias,
     activation="swigluoai_uninterleave",
     routed_scaling_factor=2.0,
 )`},
+  {stage:"3 · TRANSFORMERS ROUTER",title:"MiniMaxM3VLTopKRouter：可读路由实现",location:"modeling_minimax_m3_vl.py · MiniMaxM3VLTopKRouter.forward · L210–219",url:TRANSFORMERS_MOE_URL,code:`router_logits = F.linear(hidden_states.to(self.weight.dtype), self.weight)
+routing_weights = F.sigmoid(router_logits.float())
+scores_for_choice = routing_weights + self.e_score_correction_bias
+_, top_k_index = torch.topk(scores_for_choice, self.top_k, dim=-1, sorted=False)
+top_k_weights = routing_weights.gather(1, top_k_index)
+top_k_weights /= top_k_weights.sum(dim=-1, keepdim=True)`},
+  {stage:"4 · TRANSFORMERS EXPERTS",title:"MiniMaxM3VLExperts：专家计算与加权归并",location:"modeling_minimax_m3_vl.py · MiniMaxM3VLExperts.forward · L178–200",url:TRANSFORMERS_MOE_URL,code:`top_k_pos, token_idx = torch.where(mask[expert_idx])
+current = self._apply_gate(F.linear(hidden_states[token_idx], self.gate_up_proj[expert_idx]))
+current = F.linear(current, self.down_proj[expert_idx]) * top_k_weights[token_idx, top_k_pos, None]
+final.index_add_(0, token_idx, current.to(final.dtype))`},
+  {stage:"5 · TRANSFORMERS SCALE",title:"MiniMaxM3VLSparseMoeBlock：应用 routed scaling",location:"modeling_minimax_m3_vl.py · MiniMaxM3VLSparseMoeBlock.forward · L228–236",url:TRANSFORMERS_MOE_URL,code:`hidden_states = self.experts(hidden_states, selected_experts, routing_weights)
+hidden_states = hidden_states * self.routed_scaling_factor`},
 ];
 
-const MOE_SYMBOLS: CodeSymbol[] = [
-  {symbol:"self.gate",resolvesTo:"GateLinear",meaning:"输出 128 个 FP32 router logits；Top-4 路由由 fused MoE 消费。"},
-  {symbol:"self.experts",resolvesTo:"FusedMoE",meaning:"把 w1/w3 打包为 w13，并对每个 token 执行 4 个 routed experts。"},
-  {symbol:"self.shared_experts",resolvesTo:"MiniMaxM3MLP",meaning:"所有 token 都执行，内部的 self.act_fn 同样是 SiluAndMulWithClamp。"},
-  {symbol:"activation",resolvesTo:"swigluoai_uninterleave",meaning:"routed-expert fused kernel 中与 dense/shared 分支等价的 SwiGLU-OAI 语义。"},
+const ROUTED_EXPERT_SYMBOLS: CodeSymbol[] = [
+  {symbol:"self.experts",resolvesTo:"FusedMoE",meaning:"消费 hidden_states 与 router_logits，并在内部完成 Top-4 路由、专家计算与加权归并。"},
+  {symbol:"router_logits",resolvesTo:"FP32 Router 的 [B,S,128] 输出",meaning:"FusedMoE 根据它计算 sigmoid 分数、校正 Top-4 选择和混合权重。"},
+  {symbol:"scores_for_choice",resolvesTo:"sigmoid(router_logits) + correction bias",meaning:"只用于决定 Top-4 expert；bias 不直接进入最终混合权重。"},
+  {symbol:"top_k_index / top_k_weights",resolvesTo:"选中专家索引 / 归一化混合权重",meaning:"vLLM 中是 fused kernel 内部量；Transformers 参考实现将两者显式展开。"},
+  {symbol:"activation",resolvesTo:"swigluoai_uninterleave",meaning:"routed-expert fused kernel 中的 SwiGLU-OAI 实现布局。"},
+];
+
+const SHARED_EXPERT_SECTIONS: CodeSection[] = [
+  {stage:"1 · SHARED",title:"共享专家复用 MiniMaxM3MLP",location:"nvidia/model.py · MiniMaxM3MoE.forward",url:CODE_URL,code:`shared_hidden_states = self.shared_experts(hidden_states)`},
+];
+
+const MOE_SUM_SECTIONS: CodeSection[] = [
+  {stage:"1 · ADD",title:"Routed 与 Shared 输出相加",location:"nvidia/model.py · MiniMaxM3MoE.forward",url:CODE_URL,code:`final_hidden_states = final_hidden_states + shared_hidden_states
+return final_hidden_states.view(num_tokens, hidden_dim)`},
 ];
 
 const CODE_BY_ID: Record<string, CodeDetail> = {};
@@ -425,11 +710,22 @@ for(const id of ["d-norm","d-postnorm","s-norm","s-postnorm"]) CODE_BY_ID[id]={s
 CODE_BY_ID["d-gateup"]={sections:GATE_UP_SECTIONS,symbols:GATE_UP_SYMBOLS};
 CODE_BY_ID["d-swiglu"]={sections:SWIGLU_SECTIONS,symbols:SWIGLU_SYMBOLS};
 CODE_BY_ID["d-down"]={sections:DOWN_SECTIONS,symbols:DOWN_SYMBOLS};
-CODE_BY_ID["s-shared"]={sections:MLP_SECTIONS,symbols:MLP_SYMBOLS};
 for(const id of ["d-add2","s-addout"]) CODE_BY_ID[id]={sections:RESIDUAL_MERGE_SECTIONS,symbols:RESIDUAL_MERGE_SYMBOLS};
 for(const id of ["d-add1","s-addattn"]) CODE_BY_ID[id]={sections:ATTENTION_RESIDUAL_SECTIONS,symbols:ATTENTION_RESIDUAL_SYMBOLS};
-for(const id of ["d-qkv","d-split","d-qnorm","d-knorm","d-ropeq","d-ropek","d-cache","d-qk","d-scale","d-mask","d-softmax","d-pv","d-oproj","s-packed","s-split","s-mainnorm","s-rope","s-cache","s-select","s-qk","s-scale","s-mask","s-softmax","s-pv","s-oproj"]) CODE_BY_ID[id]={sections:ATTENTION_SECTIONS,symbols:ATTENTION_SYMBOLS};
-for(const id of ["s-router","s-experts","s-shared","s-sum"]) CODE_BY_ID[id]={sections:id==="s-shared"?[...MOE_SECTIONS,...MLP_SECTIONS]:MOE_SECTIONS,symbols:id==="s-shared"?[...MOE_SYMBOLS,...MLP_SYMBOLS]:MOE_SYMBOLS};
+for(const id of ["d-qkv","d-split","d-ropeq","d-ropek","d-cache","d-qk","d-scale","d-mask","d-softmax","d-pv","d-oproj","s-split","s-rope","s-cache","s-qk","s-scale","s-mask","s-softmax","s-pv","s-oproj"]) CODE_BY_ID[id]={sections:ATTENTION_SECTIONS,symbols:ATTENTION_SYMBOLS};
+for(const id of ["d-qnorm","d-knorm","s-mainnorm"]) CODE_BY_ID[id]={sections:QK_NORM_SECTIONS,symbols:QK_NORM_SYMBOLS};
+for(const id of ["d-ropeq","d-ropek","s-rope"]) CODE_BY_ID[id]={sections:[VLLM_ROPE_SECTION,TRANSFORMERS_ROPE_SECTION],symbols:[ATTENTION_SYMBOLS[1],TRANSFORMERS_ROPE_SYMBOL]};
+CODE_BY_ID["s-idxnorm"]={sections:INDEX_NORM_ROPE_SECTIONS,symbols:INDEX_SELECTION_SYMBOLS};
+CODE_BY_ID["s-idxcache"]={sections:INDEX_CACHE_SECTIONS,symbols:INDEX_CACHE_SYMBOLS};
+CODE_BY_ID["s-idxscore"]={sections:INDEX_SCORE_SECTIONS,symbols:INDEX_SELECTION_SYMBOLS};
+CODE_BY_ID["s-idxmask"]={sections:INDEX_FUTURE_MASK_SECTIONS,symbols:INDEX_SELECTION_SYMBOLS};
+for(const id of ["s-blockmax","s-topk"]) CODE_BY_ID[id]={sections:INDEX_SELECTION_SECTIONS,symbols:INDEX_SELECTION_SYMBOLS};
+for(const id of ["s-qk","s-pv"]) CODE_BY_ID[id]={sections:SPARSE_PAGED_ATTENTION_SECTIONS,symbols:ATTENTION_SYMBOLS};
+CODE_BY_ID["s-mask"]={sections:SPARSE_MASK_SECTIONS,symbols:SPARSE_MASK_SYMBOLS};
+CODE_BY_ID["s-router"]={sections:ROUTER_SECTIONS,symbols:ROUTER_SYMBOLS};
+CODE_BY_ID["s-experts"]={sections:ROUTED_EXPERT_SECTIONS,symbols:ROUTED_EXPERT_SYMBOLS};
+CODE_BY_ID["s-shared"]={sections:[...SHARED_EXPERT_SECTIONS,...MLP_SECTIONS],symbols:MLP_SYMBOLS};
+CODE_BY_ID["s-sum"]={sections:MOE_SUM_SECTIONS,symbols:[]};
 
 const INPUT_OVERRIDES: Record<string, IoBinding[]> = {
   "d-input":[{kind:"external",label:"Xₗ · hidden_states",shape:"[B,S,6144]",from:"上一 decoder layer；L0 时来自 embedding fusion"}],
@@ -448,24 +744,28 @@ const INPUT_OVERRIDES: Record<string, IoBinding[]> = {
   "d-pv":[{kind:"upstream",label:"local attention probability P",shape:"[B,64/TP,S,T]",from:"Softmax 输出"},{kind:"upstream",label:"visible V (TP-local / replicated)",shape:"[B,max(1,4/TP),T,128]",from:"Paged KV Cache 输出"}],
   "s-rope":[{kind:"upstream",label:"Q̃ · K̃",shape:"Q/K unchanged",from:"Main Q/K Norm 输出"},{kind:"external",label:"positions",shape:"[Nq]",from:"Build Position IDs 输出"}],
   "s-cache":[{kind:"upstream",label:"Kᵣ · V",shape:"KV pages",from:"Partial RoPE 与 Split 5 outputs"},{kind:"external",label:"slot_mapping + block_table",shape:"[Nq] + [B,Nblocks]",from:"Resolve KV Slots 输出"}],
+  "s-idxnorm":[{kind:"upstream",label:"Qidx · Kidx",shape:"[B,4,S,128] · [B,1,T,128]",from:"Split 5 outputs"},{kind:"external",label:"position embeddings",shape:"cos · sin",from:"Build Position IDs / RoPE cache"}],
+  "s-idxcache":[{kind:"upstream",label:"current rotated Index K",shape:"[B,S,128]",from:"Index Q/K Gemma RMSNorm + RoPE 输出"},{kind:"external",label:"index slot_mapping",shape:"[Nq]",from:"Indexer metadata builder"}],
+  "s-idxscore":[{kind:"upstream",label:"Index Q query",shape:"[B,4,S,128]",from:"Index Q/K Gemma RMSNorm + RoPE 输出"},{kind:"upstream",label:"cached Index K history",shape:"[B,T,128]",from:"Index K Cache 输出"}],
+  "s-idxmask":[{kind:"upstream",label:"Index token scores",shape:"[B,4,S,T]",from:"Index Q × Kᵀ 输出"},{kind:"external",label:"position_ids",shape:"[B,S]",from:"当前 query/key 的因果位置"}],
+  "s-blockmax":[{kind:"upstream",label:"causal Index scores",shape:"[B,4,S,T]",from:"Mask Future Index Keys 输出"}],
   "s-topk":[{kind:"upstream",label:"local block scores",shape:"[B,max(1,4/TP),S,Nblocks]",from:"Block Max 输出"},{kind:"external",label:"local / init priority",shape:"logical block flags",from:"Indexer 配置：local_blocks=1, init_blocks=0"}],
-  "s-select":[{kind:"upstream",label:"local logical block ids",shape:"[B,S,max(1,4/TP),16]",from:"Top-16 Blocks 输出"},{kind:"upstream",label:"paged K · V",shape:"KV pages",from:"Paged KV Cache 输出"},{kind:"external",label:"block_table",shape:"[B,Nblocks]",from:"KV cache manager"}],
-  "s-qk":[{kind:"upstream",label:"Qᵣ (TP-local)",shape:"[B,64/TP,S,128]",from:"Partial RoPE 输出"},{kind:"upstream",label:"selected K (local KV groups)",shape:"≤16 pages/local group",from:"Select KV Pages 输出"}],
+  "s-qk":[{kind:"upstream",label:"Qᵣ (TP-local)",shape:"[B,64/TP,S,128]",from:"Partial RoPE 输出"},{kind:"upstream",label:"paged K",shape:"KV pages",from:"Paged KV Cache 输出"},{kind:"upstream",label:"block_indices",shape:"[B,4,S,16]",from:"Top-16 Blocks 输出"}],
   "s-mask":[{kind:"upstream",label:"scaled local selected scores",shape:"[B,64/TP,S,Ksel]",from:"Scale 1/√128 输出"},{kind:"external",label:"causal / padding bounds",shape:"runtime metadata",from:"Build Attention Metadata 输出"}],
-  "s-pv":[{kind:"upstream",label:"local selected attention P",shape:"[B,64/TP,S,Ksel]",from:"Softmax 输出"},{kind:"upstream",label:"selected V (local KV groups)",shape:"≤16 pages/local group",from:"Select KV Pages 输出"}],
+  "s-pv":[{kind:"upstream",label:"local selected attention P",shape:"[B,64/TP,S,Ksel]",from:"Softmax 输出"},{kind:"upstream",label:"paged V",shape:"KV pages",from:"Paged KV Cache 输出；按同一 Top-16 顺序读取"}],
   "s-router":[{kind:"upstream",label:"post-attn normalized hidden Û",shape:"[B,S,6144]",from:"Post-attn RMSNorm 输出"}],
   "s-experts":[{kind:"upstream",label:"normalized hidden + router logits",shape:"[B,S,6144] + [B,S,128]",from:"Post-attn RMSNorm 与 FP32 Router 输出"}],
   "s-shared":[{kind:"upstream",label:"all normalized tokens Û",shape:"[B,S,6144]",from:"Post-attn RMSNorm 输出；不经过 Top-K"}],
-  "s-sum":[{kind:"upstream",label:"4 routed outputs",shape:"4 × [B,S,6144]",from:"Routed Experts ×4 输出"},{kind:"upstream",label:"shared output",shape:"[B,S,6144]",from:"Shared Expert ×1 输出"}],
+  "s-sum":[{kind:"upstream",label:"weighted routed output",shape:"[B,S,6144]",from:"Fused Top-4 Routing + Experts 输出"},{kind:"upstream",label:"shared output",shape:"[B,S,6144]",from:"Shared Expert ×1 输出"}],
   "d-add2":[{kind:"upstream",label:"U · residual stream",shape:"[B,S,6144]",from:"Attention Residual 输出"},{kind:"upstream",label:"Yffn · FFN branch",shape:"[B,S,6144]",from:"Down Projection 输出"}],
-  "s-addout":[{kind:"upstream",label:"U · residual stream",shape:"[B,S,6144]",from:"Attention Residual 输出"},{kind:"upstream",label:"Ymoe · MoE branch",shape:"[B,S,6144]",from:"Weighted Sum 输出"}],
+  "s-addout":[{kind:"upstream",label:"U · residual stream",shape:"[B,S,6144]",from:"Attention Residual 输出"},{kind:"upstream",label:"Ymoe · MoE branch",shape:"[B,S,6144]",from:"Add Routed + Shared 输出"}],
   "d-add1":[{kind:"upstream",label:"Xₗ · residual stream",shape:"[B,S,6144]",from:"本层输入旁路"},{kind:"upstream",label:"Yattn · attention branch",shape:"[B,S,6144]",from:"O Projection 输出"}],
   "s-addattn":[{kind:"upstream",label:"Xₗ · residual stream",shape:"[B,S,6144]",from:"本层输入旁路"},{kind:"upstream",label:"Yattn · sparse attention branch",shape:"[B,S,6144]",from:"O Projection 输出"}],
 };
 
 const NEXT_BY_ID: Record<string,string> = {
   "d-input":"Gemma RMSNorm","d-position":"Partial RoPE (Q/K)","d-attnmeta":"Apply Causal / Pad Bounds","d-slots":"Paged KV Cache","d-norm":"QKV Projection","d-qkv":"Split Q / K / V","d-split":"Q RMSNorm · K RMSNorm · Paged KV Cache","d-qnorm":"Partial RoPE (Q)","d-knorm":"Partial RoPE (K)","d-ropeq":"Q × Kᵀ","d-ropek":"Paged KV Cache","d-cache":"Q × Kᵀ · P × V","d-qk":"Scale 1/√128","d-scale":"Apply Causal / Pad Bounds","d-mask":"Softmax","d-softmax":"P × V","d-pv":"O Projection","d-oproj":"Attention Residual Merge","d-add1":"Post-attn Gemma RMSNorm","d-postnorm":"Gate + Up Projection","d-gateup":"Split Gate / Up","d-gatesplit":"SwiGLU-OAI","d-swiglu":"Down Projection","d-down":"Decoder Layer Residual Merge","d-add2":"下一 decoder layer / Final Norm",
-  "s-input":"Gemma RMSNorm","s-position":"Partial RoPE","s-attnmeta":"Indexer 与 Sparse Attention mask","s-slots":"Paged KV Cache","s-norm":"QKV + Index Projection","s-packed":"Split 5 outputs","s-split":"Index Q/K Norm · Main Q/K Norm · Paged KV Cache","s-idxnorm":"Index Q × Kᵀ","s-idxscore":"Block Max","s-blockmax":"Top-16 Blocks","s-topk":"Select KV Pages","s-mainnorm":"Partial RoPE","s-rope":"Paged KV Cache · Q × selected Kᵀ","s-cache":"Select KV Pages","s-select":"Q × selected Kᵀ · P × selected V","s-qk":"Scale 1/√128","s-scale":"Apply Causal / Pad Bounds","s-mask":"Softmax","s-softmax":"P × selected V","s-pv":"O Projection","s-oproj":"Attention Residual Merge","s-addattn":"Post-attn Gemma RMSNorm","s-postnorm":"FP32 Router · Routed Experts · Shared Expert","s-router":"Routed Experts ×4","s-experts":"Weighted Sum","s-shared":"Weighted Sum","s-sum":"Decoder Layer Residual Merge","s-addout":"下一 decoder layer / Final Norm",
+  "s-input":"Gemma RMSNorm","s-position":"Partial RoPE","s-attnmeta":"Indexer 与 Sparse Attention mask","s-slots":"Paged KV Cache","s-norm":"QKV + Index Projection","s-packed":"Split 5 outputs","s-split":"Index Q/K Gemma RMSNorm + RoPE · Main Q/K Gemma RMSNorm · Paged KV Cache","s-idxnorm":"Index Q query · Index K Cache","s-idxcache":"Index Q × cached Kᵀ","s-idxscore":"Mask Future Index Keys","s-idxmask":"Block Max","s-blockmax":"Top-16 Blocks","s-topk":"Q × paged Kᵀ · Top-16","s-mainnorm":"Partial RoPE","s-rope":"Paged KV Cache · Q × paged Kᵀ · Top-16","s-cache":"Q × paged Kᵀ · Top-16 · P × paged V","s-qk":"Scale 1/√128","s-scale":"Apply Token Causal / Pad Mask","s-mask":"Softmax","s-softmax":"P × paged V · same Top-16","s-pv":"O Projection","s-oproj":"Attention Residual Merge","s-addattn":"Post-attn Gemma RMSNorm","s-postnorm":"FP32 Router Logits · Fused Top-4 Routing + Experts · Shared Expert","s-router":"router_logits → Fused Top-4 Routing + Experts","s-experts":"Add Routed + Shared","s-shared":"Add Routed + Shared","s-sum":"Decoder Layer Residual Merge","s-addout":"下一 decoder layer / Final Norm",
 };
 
 const cloneOp = (base: Node, values: Partial<OpNode> & { id: string; kind: OpKind; title: string }): OpNode => {
@@ -486,11 +786,11 @@ function denseGraph(layer: number): Record<string, OpNode> {
     norm: cloneOp(norm,{id:"d-norm",kind:"norm",title:"Gemma RMSNorm",source:"nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142",sourceUrl:NORM_FORWARD_URL}),
     qkv: cloneOp(qkv,{id:"d-qkv",kind:"linear",title:"QKV Projection"}),
     split: cloneOp(qkv,{id:"d-split",kind:"split",title:"Split Q / K / V",input:"packed qkv",inputShape:"[B,S,9216]",output:"Q · K · V",outputShape:"8192 · 512 · 512",formula:"split(qkv,[8192,512,512],dim=-1)",formulaNote:"checkpoint 中三块矩阵分离；vLLM 运行时一次 GEMM 后切分。",weights:[]}),
-    qnorm: cloneOp(attn,{id:"d-qnorm",kind:"norm",title:"Q RMSNorm",input:"Q",inputShape:"[B,64,S,128]",output:"Q̃",outputShape:"[B,64,S,128]",formula:"Q̃=Q/√(mean(Q²)+ε)⊙(1+γq)",weights:attn.weights.filter(w=>w.key.includes("q_norm"))}),
-    knorm: cloneOp(attn,{id:"d-knorm",kind:"norm",title:"K RMSNorm",input:"K",inputShape:"[B,4,T,128]",output:"K̃",outputShape:"[B,4,T,128]",formula:"K̃=K/√(mean(K²)+ε)⊙(1+γk)",weights:attn.weights.filter(w=>w.key.includes("k_norm"))}),
-    ropeq: cloneOp(attn,{id:"d-ropeq",kind:"rope",title:"Partial RoPE (Q)",input:"Q̃ + positions",inputShape:"[B,64,S,128] + [S]",output:"Qᵣ",outputShape:"[B,64,S,128]",formula:"Qᵣ[:64]=RoPE(Q̃[:64],pos); Qᵣ[64:]=Q̃[64:]",weights:[]}),
-    ropek: cloneOp(attn,{id:"d-ropek",kind:"rope",title:"Partial RoPE (K)",input:"K̃ + positions",inputShape:"[B,4,T,128] + [T]",output:"Kᵣ",outputShape:"[B,4,T,128]",formula:"Kᵣ[:64]=RoPE(K̃[:64],pos); Kᵣ[64:]=K̃[64:]",weights:[]}),
-    cache: cloneOp(attn,{id:"d-cache",kind:"cache",title:"Paged KV Cache",input:"Kᵣ,V + block table",inputShape:"[T,4,128] ×2",output:"visible K,V",outputShape:"[B,4,T,128] ×2",formula:"slot = block_table[seq, logical_block] + offset",formulaNote:"Dense 层读取完整可见历史；block table 决定物理 page。",weights:[]}),
+    qnorm: cloneOp(attn,{id:"d-qnorm",kind:"norm",title:"Q Gemma RMSNorm · per-head",summary:"对每个 Q head 的 128 维向量独立执行 Gemma 风格 RMSNorm。",input:"Q",inputShape:"[B,64,S,128]",output:"Q̃",outputShape:"[B,64,S,128]",formula:"Q̃ₕ,ᵢ=Qₕ,ᵢ/√((1/Dₕ)ΣⱼQₕ,ⱼ²+ε)·(1+γQ,ᵢ)",formulaNote:"归一化轴仅为 head_dim=128；同一组 [128] q_norm.weight 应用于各个 Q head。",runtime:"fused_minimax_m3_qknorm_rope_kv_insert · Q norm stage",weights:attn.weights.filter(w=>w.key.includes("q_norm"))}),
+    knorm: cloneOp(attn,{id:"d-knorm",kind:"norm",title:"K Gemma RMSNorm · per-head",summary:"对每个 K head 的 128 维向量独立执行 Gemma 风格 RMSNorm。",input:"K",inputShape:"[B,4,T,128]",output:"K̃",outputShape:"[B,4,T,128]",formula:"K̃ₕ,ᵢ=Kₕ,ᵢ/√((1/Dₕ)ΣⱼKₕ,ⱼ²+ε)·(1+γK,ᵢ)",formulaNote:"归一化轴仅为 head_dim=128；同一组 [128] k_norm.weight 应用于各个 K head。",runtime:"fused_minimax_m3_qknorm_rope_kv_insert · K norm stage",weights:attn.weights.filter(w=>w.key.includes("k_norm"))}),
+    ropeq: cloneOp(attn,{id:"d-ropeq",kind:"rope",title:"Partial RoPE (Q)",summary:"仅对每个 Q head 的前 64/128 维应用 RoPE，后 64 维保持不变。",input:"Q̃ + positions",inputShape:"[B,64,S,128] + [S]",output:"Qᵣ",outputShape:"[B,64,S,128]",formula:"split Q̃ into Qrot(64) and Qpass(64); Qᵣ=concat(RoPE(Qrot,p),Qpass)",formulaNote:"先把每个 128 维 Q head 拆成两个 64 维分段。Qrot 使用 token 位置 p 做旋转，Qpass 不变，最后按原顺序拼回 128 维。",runtime:"fused_minimax_m3_qknorm_rope_kv_insert · Q partial RoPE stage",weights:[]}),
+    ropek: cloneOp(attn,{id:"d-ropek",kind:"rope",title:"Partial RoPE (K)",summary:"仅对每个 K head 的前 64/128 维应用 RoPE，后 64 维保持不变。",input:"K̃ + positions",inputShape:"[B,4,T,128] + [T]",output:"Kᵣ",outputShape:"[B,4,T,128]",formula:"split K̃ into Krot(64) and Kpass(64); Kᵣ=concat(RoPE(Krot,p),Kpass)",formulaNote:"先把每个 128 维 K head 拆成两个 64 维分段。Krot 使用 token 位置 p 做旋转，Kpass 不变，最后按原顺序拼回 128 维。",runtime:"fused_minimax_m3_qknorm_rope_kv_insert · K partial RoPE stage",weights:[]}),
+    cache: cloneOp(attn,{id:"d-cache",kind:"cache",title:"Paged KV Cache",summary:"L0–L2 的 Full GQA 从 Paged KV Cache 读取全部因果可见的历史与当前 K/V。",input:"Kᵣ,V + block table",inputShape:"[T,4,128] ×2",output:"visible K,V",outputShape:"[B,4,T,128] ×2",formula:"slot = block_table[seq, logical_block] + offset",formulaNote:"“全部可见”不包括未来 token 或 padding；block table 决定逻辑 KV 位置对应的物理 page。",runtime:"Attention backend · full causal Paged KV",weights:[]}),
     qk: cloneOp(attn,{id:"d-qk",kind:"matmul",title:"Q × Kᵀ",input:"Qᵣ,Kᵣ",inputShape:"[B,64/TP,S,128] · [B,max(1,4/TP),T,128]",output:"local scores",outputShape:"[B,64/TP,S,T]",formula:"A=QᵣKᵣᵀ",formulaNote:"单个 TP rank 只计算 64/TP 个 query heads；KV heads 为 max(1,4/TP)，当 TP>4 时按 vLLM 规则复制。",weights:[]}),
     scale: cloneOp(attn,{id:"d-scale",kind:"scale",title:"Scale 1/√128",input:"A",inputShape:"[B,64/TP,S,T]",output:"scaled scores",outputShape:"[B,64/TP,S,T]",formula:"A←A/√128",weights:[]}),
     mask: cloneOp(attn,{id:"d-mask",kind:"mask",title:"Apply Causal / Pad Bounds",input:"scores + attention metadata",inputShape:"[B,64/TP,S,T] + runtime metadata",output:"masked scores",outputShape:"[B,64/TP,S,T]",formula:"Aᵢⱼ←valid(i,j) ? Aᵢⱼ : −∞",formulaNote:"图中把 mask 画成逻辑算子；vLLM 后端实际以 causal、seq_lens 和 query_start_loc 实现，不物化完整 mask 矩阵。head 维为单 TP rank 的 64/TP。",weights:[]}),
@@ -501,7 +801,7 @@ function denseGraph(layer: number): Record<string, OpNode> {
     postnorm: cloneOp(norm,{id:"d-postnorm",kind:"norm",title:"Post-attn Gemma RMSNorm",summary:"输入 U 已由上游 Add 节点计算完成；此节点只执行 Gemma RMSNorm(U)，输出唯一的 Û 作为 FFN 输入。",formulaNote:"U 是上游 Add 的单一输出；本节点只计算 RMS(U) 与 (1+γpost) 缩放，不重复执行 residual add。",input:"U",inputShape:"[B,S,6144]",output:"Û",outputShape:"[B,S,6144]",source:"nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142",sourceUrl:NORM_FORWARD_URL,weights:[postNorm]}),
     gateup: cloneOp(mlp,{id:"d-gateup",kind:"linear",kicker:"DENSE FFN · H=6144 · H_dense=12288",title:"Gate + Up Projection",summary:"MergedColumnParallelLinear 让每个 TP rank 读取完整 Û，并分别计算局部 gate/up 投影；这里只做线性 GEMM。",input:"Û",inputShape:"[B,S,6144]",output:"packed gate_up (TP-local)",outputShape:"[B,S,24576/TP]",formulaNote:"Wgate⁽ʳ⁾ 与 Wup⁽ʳ⁾ 都沿输出维切分；本节点不执行 Split、clamp、SiLU 或逐元素乘。",runtime:"MergedColumnParallelLinear · gate_up_proj",weights:mlp.weights.filter(w=>!w.key.includes("down_proj"))}),
     gatesplit: cloneOp(mlp,{id:"d-gatesplit",kind:"split",kicker:"DENSE FFN · TP-LOCAL SPLIT",title:"Split Gate / Up",summary:"把当前 TP rank 的 packed gate_up 沿最后一维等分为 G⁽ʳ⁾ 和 U⁽ʳ⁾；不含权重，也不改变数值。",input:"packed gate_up (TP-local)",inputShape:"[B,S,24576/TP]",output:"G⁽ʳ⁾ · U⁽ʳ⁾",outputShape:"2 × [B,S,12288/TP]",formula:"(G⁽ʳ⁾,U⁽ʳ⁾)=split(gate_up⁽ʳ⁾,2,dim=-1)",formulaNote:"本节点只切分 view：前 H_dense/TP 个通道是 gate，后 H_dense/TP 个通道是 up；clamp 与 sigmoid 属于下一 SwiGLU-OAI 节点。",runtime:"SiluAndMulWithClamp · fused input slicing",source:"activation.py · SiluAndMulWithClamp.forward_native",sourceUrl:`${ACTIVATION_URL}#L214-L218`,weights:[]}),
-    swiglu: cloneOp(mlp,{id:"d-swiglu",kind:"activation",kicker:"DENSE FFN · TP-LOCAL ACTIVATION",title:"SiluAndMulWithClamp · SwiGLU-OAI",summary:"对当前 TP rank 的 G⁽ʳ⁾/U⁽ʳ⁾ 分片执行 gate 上界截断、up 双边截断、sigmoid、+β 与逐元素乘；不执行线性投影。",input:"G⁽ʳ⁾,U⁽ʳ⁾",inputShape:"2 × [B,S,12288/TP]",output:"Z⁽ʳ⁾",outputShape:"[B,S,12288/TP]",formulaNote:"forward_native 先以 c=7 截断两个分支，再计算 Ḡ⁽ʳ⁾⊙σ(αḠ⁽ʳ⁾)⊙(Ū⁽ʳ⁾+β)；α=1.702，β=1.0。",runtime:"SiluAndMulWithClamp.forward_native",source:"activation.py · SiluAndMulWithClamp.forward_native · L214–218",sourceUrl:`${ACTIVATION_URL}#L214-L218`,weights:[]}),
+    swiglu: cloneOp(mlp,{id:"d-swiglu",kind:"activation",kicker:"DENSE FFN · TP-LOCAL ACTIVATION",title:"SwiGLU-OAI",summary:"对当前 TP rank 的 G⁽ʳ⁾/U⁽ʳ⁾ 分片执行 gate 上界截断、up 双边截断、sigmoid、+β 与逐元素乘；不执行线性投影。",input:"G⁽ʳ⁾,U⁽ʳ⁾",inputShape:"2 × [B,S,12288/TP]",output:"Z⁽ʳ⁾",outputShape:"[B,S,12288/TP]",formulaNote:"forward_native 先以 c=7 截断两个分支，再计算 Ḡ⁽ʳ⁾⊙σ(αḠ⁽ʳ⁾)⊙(Ū⁽ʳ⁾+β)；α=1.702，β=1.0。",runtime:"vLLM: SiluAndMulWithClamp · layout: swigluoai_uninterleave",source:"activation.py · SiluAndMulWithClamp.forward_native · L214–218",sourceUrl:`${ACTIVATION_URL}#L214-L218`,weights:[]}),
     down: cloneOp(mlp,{id:"d-down",kind:"linear",kicker:"DENSE FFN · ROW PARALLEL · H=6144",title:"Down Projection",summary:"RowParallelLinear 消费每个 TP rank 的局部 activated 分片，将 H_dense/TP 投回 H，并归并各 rank 的部分结果。",input:"activated⁽ʳ⁾",inputShape:"[B,S,12288/TP]",output:"Yffn",outputShape:"[B,S,6144]",formulaNote:"本节点只执行 down projection；输入宽度为 H_dense/TP，输出隐藏宽度 H=6144。",weights:mlp.weights.filter(w=>w.key.includes("down_proj"))}),
     add2: cloneOp(mlp,{id:"d-add2",kind:"add",kicker:"DECODER LAYER · FFN RESIDUAL",title:"Decoder Layer Residual Merge",summary:"在 Decoder Layer 边界把 Dense FFN 分支 Yffn 与 residual stream U 逻辑合并，得到 Xₗ₊₁；该 merge 延迟融合到下一层 input RMSNorm。",input:"U + Yffn",inputShape:"2 × [B,S,6144]",output:"Xₗ₊₁ · logical next-layer input",outputShape:"[B,S,6144]",formula:"Xₗ₊₁=U+Yffn",formulaNote:"当前层 L776–778 返回 Yffn 与 U 两条独立流；下一 Decoder Layer 在 L758–767 的 fused input RMSNorm 中执行实际 add。",runtime:"MiniMaxM3DecoderLayer boundary · deferred residual merge",source:"nvidia/model.py · MiniMaxM3DecoderLayer.forward · L758–778",sourceUrl:`${CODE_URL}#L758-L778`,weights:[]}),
   };
@@ -513,34 +813,36 @@ function sparseGraph(layer: number): Record<string, OpNode> {
   const shard=layerShard(layer);
   const inputNorm: Weight={key:`language_model.model.layers.${layer}.input_layernorm.weight`,shape:"[6144]",dtype:"BF16",shard,params:"6,144"};
   const postNorm: Weight={key:`language_model.model.layers.${layer}.post_attention_layernorm.weight`,shape:"[6144]",dtype:"BF16",shard,params:"6,144"};
+  const routerGateWeights=router.weights.filter(weight=>weight.key.includes(".gate.weight"));
   return {
     input:cloneOp(packed,{id:"s-input",kind:"io",title:"Hidden states",input:"Xₗ",inputShape:"[B,S,6144]",output:"residual + working copy",outputShape:"2 × [B,S,6144]",weights:[]}),
     position:cloneOp(attn,{id:"s-position",kind:"route",title:"Build Position IDs",kicker:"vLLM RUNTIME I/O",input:"num_computed_tokens + query offsets",inputShape:"[B] + [Nq]",output:"positions",outputShape:"[Nq]",formula:"position(req,i)=num_computed_tokens[req]+i",formulaNote:"positions 由 vLLM runner 在模型 forward 之前构造，再传给 MiniMax-M3 的 fused QKNorm + RoPE kernel。",source:"gpu_model_runner.py · _prepare_inputs",sourceUrl:RUNNER_URL,weights:[]}),
     attnmeta:cloneOp(attn,{id:"s-attnmeta",kind:"mask",title:"Build Attention Metadata",kicker:"vLLM RUNTIME I/O",input:"query_start_loc, seq_lens, causal=True",inputShape:"[B+1] · [B] · bool",output:"implicit causal / padding layout",outputShape:"backend metadata; 非稠密 [S,T]",formula:"valid(req,q,k)=(k<seq_len[req]) ∧ (k≤context_len[req]+q)",formulaNote:"同一份边界元数据同时约束 indexer 的 block selection 和 main sparse attention。",source:"gpu_model_runner.py · CommonAttentionMetadata",sourceUrl:RUNNER_URL,weights:[]}),
     slots:cloneOp(attn,{id:"s-slots",kind:"route",title:"Resolve KV Slots",kicker:"vLLM RUNTIME I/O",input:"positions + block_table",inputShape:"[Nq] + [B,Nblocks]",output:"slot_mapping + block_table",outputShape:"[Nq] + [B,Nblocks]",formula:"slot=block_table[req,⌊position/block_size⌋]·block_size+(position mod block_size)",formulaNote:"slot_mapping 用于 K/V 写入；block_table 把 indexer 选出的逻辑 block id 翻译为物理 page。",source:"gpu_model_runner.py · compute_slot_mapping",sourceUrl:RUNNER_URL,weights:[]}),
     norm:cloneOp(normBase,{id:"s-norm",kind:"norm",title:"Gemma RMSNorm",source:"nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142",sourceUrl:NORM_FORWARD_URL,weights:[inputNorm]}),
-    packed:cloneOp(packed,{id:"s-packed",kind:"linear",title:"QKV + Index Projection"}),
+    packed:cloneOp(packed,{id:"s-packed",kind:"linear",title:"QKV + Index Projection",summary:"一次 column-parallel GEMM 同时产生 Q、K、V、Qidx、Kidx；vLLM 将五段结果保存在同一个 packed tensor 中。",formulaNote:"这是五路线性投影节点，不执行 Q/K Norm、RoPE、KV cache 写入或 Attention。",runtime:"vLLM: MinimaxM3QKVParallelLinearWithIndexer · packed [q|k|v|index_q|index_k]",codeSections:QKV_INDEX_PROJECTION_SECTIONS,codeSymbols:QKV_INDEX_PROJECTION_SYMBOLS}),
     split:cloneOp(packed,{id:"s-split",kind:"split",title:"Split 5 outputs",input:"packed projection",inputShape:"[B,S,9856]",output:"Q/K/V · Qidx/Kidx",outputShape:"8192/512/512 · 512/128",formula:"split(x,[8192,512,512,512,128],dim=-1)",weights:[]}),
-    idxnorm:cloneOp(indexer,{id:"s-idxnorm",kind:"norm",title:"Index Q/K Norm",input:"Qidx,Kidx",inputShape:"[B,S,4,128] · [B,T,1,128]",output:"Q̃idx,K̃idx",outputShape:"same",weights:indexer.weights}),
-    idxscore:cloneOp(indexer,{id:"s-idxscore",kind:"matmul",title:"Index Q × Kᵀ",input:"Q̃idx,K̃idx",inputShape:"[B,max(1,4/TP),S,128] · [B,1,T,128]",output:"local token scores",outputShape:"[B,max(1,4/TP),S,T]",formulaNote:"Index Q 与 KV heads 采用相同 TP 切分：每 rank 为 max(1,4/TP) heads；单个 Index K head 在需要时复制。",weights:[]}),
-    blockmax:cloneOp(indexer,{id:"s-blockmax",kind:"route",title:"Block Max (128 tokens)",input:"causal token scores",inputShape:"[B,max(1,4/TP),S,T]",output:"block scores",outputShape:"[B,max(1,4/TP),S,⌈T/128⌉]",weights:[]}),
-    topk:cloneOp(topk,{id:"s-topk",kind:"route",title:"Top-16 Blocks",input:"block scores + local priority",inputShape:"[B,max(1,4/TP),S,Nblocks]",output:"logical block ids",outputShape:"[B,S,max(1,4/TP),16]"}),
-    mainnorm:cloneOp(attn,{id:"s-mainnorm",kind:"norm",title:"Main Q/K Norm",input:"Q,K",inputShape:"[B,64,S,128] · [B,4,T,128]",output:"Q̃,K̃",outputShape:"same",weights:attn.weights.filter(w=>w.key.includes("_norm"))}),
+    idxnorm:cloneOp(indexer,{id:"s-idxnorm",kind:"norm",title:"Index Q/K Gemma RMSNorm + RoPE",summary:"分别对 Qidx/Kidx 执行 Gemma 风格 RMSNorm，再用同一组 position embeddings 旋转；Qidxᵣ 直接进入打分，Kidxᵣ 写入独立 Index K cache。",input:"Qidx,Kidx + position embeddings",inputShape:"[B,S,4,128] · [B,T,1,128]",output:"Index Q query · current Index K",outputShape:"[B,4,S,128] · [B,S,128]",weights:indexer.weights}),
+    idxcache:cloneOp(indexer,{id:"s-idxcache",kind:"cache",title:"Index K Cache · key-only",summary:"vLLM 为 Indexer 单独分配 side cache：每 token 只保存一个 128 维 Index K，不保存 Index V，也不与主 Paged KV Cache 混用。",input:"current Index K + index slot_mapping",inputShape:"[B,S,128] + [Nq]",output:"cached Index K history",outputShape:"key-only pages · [T,128]",formulaNote:"MiniMaxM3IndexerCache 使用独立 prefix 注册到 KV-cache manager；Indexer score kernel 通过 self.index_cache.kv_cache 读取历史 Index K。",runtime:"vLLM: MiniMaxM3IndexerCache · bf16/fp8_e4m3",source:"common/indexer.py · MiniMaxM3IndexerCache",sourceUrl:`${VLLM_INDEXER_URL}#L101-L151`,weights:[]}),
+    idxscore:cloneOp(indexer,{id:"s-idxscore",kind:"matmul",title:"Index Q × cached Kᵀ",input:"Index Q query + cached Index K",inputShape:"[B,max(1,4/TP),S,128] · [B,T,128]",output:"Index token scores",outputShape:"[B,max(1,4/TP),S,T]",formulaNote:"这里只做 Index Q 与完整 Index K history 的点积；不缩放，也不在这个节点混入 causal mask。",weights:[]}),
+    idxmask:cloneOp(indexer,{id:"s-idxmask",kind:"mask",title:"Mask Future Index Keys",summary:"在 block max 之前把未来 key 和补齐槽设为 −∞，防止不可见 token 影响选块。",input:"Index token scores + position_ids",inputShape:"[B,max(1,4/TP),S,T] + [B,S]",output:"causal Index scores",outputShape:"[B,max(1,4/TP),S,T]",weights:[]}),
+    blockmax:cloneOp(indexer,{id:"s-blockmax",kind:"route",title:"Block Max · 128 keys",input:"causal Index scores",inputShape:"[B,max(1,4/TP),S,T]",output:"block scores",outputShape:"[B,max(1,4/TP),S,⌈T/128⌉]",formulaNote:"每 128 个 key 的 Index score 取最大值，得到一个 block score。",weights:[]}),
+    topk:cloneOp(topk,{id:"s-topk",kind:"route",title:"Top-16 Blocks · per group",input:"block scores + local block priority",inputShape:"[B,max(1,4/TP),S,Nblocks]",output:"block_indices",outputShape:"[B,4,S,16]",formulaNote:"每个 query、每个 Index/KV group 独立选 16 个逻辑 blocks；local block 先以 +∞ 保证入选，无效槽记为 −1。"}),
+    mainnorm:cloneOp(attn,{id:"s-mainnorm",kind:"norm",title:"Main Q/K Gemma RMSNorm",summary:"分别对主 Attention 的每个 Q/K head 执行 Gemma 风格 RMSNorm。",input:"Q,K",inputShape:"[B,64,S,128] · [B,4,T,128]",output:"Q̃,K̃",outputShape:"same",weights:attn.weights.filter(w=>w.key.includes("_norm"))}),
     rope:cloneOp(attn,{id:"s-rope",kind:"rope",title:"Partial RoPE",input:"Q̃,K̃ + positions",inputShape:"Q/K + [S]",output:"Qᵣ,Kᵣ",outputShape:"Q/K unchanged",weights:[]}),
     cache:cloneOp(attn,{id:"s-cache",kind:"cache",title:"Paged KV Cache",input:"Kᵣ,V + block table",inputShape:"KV pages + [B,Nblocks]",output:"paged K,V",outputShape:"[Npages,128,4,128] ×2",formula:"physical_page=block_table[logical_block]",weights:[]}),
-    select:cloneOp(attn,{id:"s-select",kind:"route",title:"Select KV Pages",input:"paged K,V + Top-16 block ids",inputShape:"KV pages + [B,S,4,16]",output:"selected K,V",outputShape:"≤2048 KV tokens / group",formula:"physical_page=block_table[logical_top16]",weights:[]}),
-    qk:cloneOp(attn,{id:"s-qk",kind:"matmul",title:"Q × selected Kᵀ",input:"Qᵣ, selected K",inputShape:"[B,64/TP,S,128] · ≤16 pages/local KV group",output:"local sparse scores",outputShape:"[B,64/TP,S,≤2048]",formulaNote:"单 rank 只持有 64/TP 个 query heads；selected K 按本 rank 的 max(1,4/TP) KV groups 提供。",weights:[]}),
+    qk:cloneOp(attn,{id:"s-qk",kind:"matmul",title:"Q × paged Kᵀ · Top-16",input:"Qᵣ + paged K + block_indices",inputShape:"[B,64/TP,S,128] + KV pages + [B,4,S,16]",output:"local sparse scores",outputShape:"[B,64/TP,S,≤2048]",formulaNote:"没有独立的 KV-view 映射算子：paged-attention kernel 根据 block_indices 与 block_table 直接读取对应 K pages。",weights:[]}),
     scale:cloneOp(attn,{id:"s-scale",kind:"scale",title:"Scale 1/√128",input:"scores",inputShape:"[B,64/TP,S,≤2048]",output:"scaled scores",outputShape:"same",weights:[]}),
-    mask:cloneOp(attn,{id:"s-mask",kind:"mask",title:"Apply Causal / Pad Bounds",input:"scores + attention metadata",inputShape:"[B,64/TP,S,≤2048] + runtime metadata",output:"masked scores",outputShape:"same",formula:"Aᵢⱼ←valid_sparse(i,j) ? Aᵢⱼ : −∞",formulaNote:"Top-16 只决定候选 KV blocks；causal/padding 边界仍会在最终 Attention kernel 内再次约束可见 token。head 维为单 TP rank 的 64/TP。",weights:[]}),
+    mask:cloneOp(attn,{id:"s-mask",kind:"mask",title:"Apply Token Causal / Pad Mask",summary:"在 Top-16 候选 blocks 内继续排除未来 token 与 padding；选块范围和 token 可见性是两层不同约束。",input:"selected scores + token bounds",inputShape:"[B,64/TP,S,Ksel] + runtime metadata",output:"masked selected scores",outputShape:"[B,64/TP,S,Ksel]",formula:"Aᵢⱼ←valid_token(i,j) ? Aᵢⱼ : −∞",formulaNote:"Transformers eager/SDPA 会先把 block_indices 展开为 block_keep，再与 attention_mask 合并；部署 kernel 可直接消费 block indices 与边界元数据。",weights:[]}),
     softmax:cloneOp(attn,{id:"s-softmax",kind:"softmax",title:"Softmax",input:"masked scores",inputShape:"[B,64/TP,S,≤2048]",output:"probabilities",outputShape:"same",weights:[]}),
-    pv:cloneOp(attn,{id:"s-pv",kind:"matmul",title:"P × selected V",input:"P, selected V",inputShape:"[B,64/TP,S,≤2048] · selected V pages",output:"local heads",outputShape:"[B,S,8192/TP]",formulaNote:"P × selected V 在每个 TP rank 上输出 8192/TP 的局部 attention 宽度，再进入 RowParallel O Projection。",weights:[]}),
+    pv:cloneOp(attn,{id:"s-pv",kind:"matmul",title:"P × paged V · same Top-16",input:"P + paged V",inputShape:"[B,64/TP,S,≤2048] + KV pages",output:"local heads",outputShape:"[B,S,8192/TP]",formulaNote:"kernel 按 Q×K 阶段相同的 block_indices 顺序直接读取 V pages；不物化 selected V 张量。",weights:[]}),
     oproj:cloneOp(attn,{id:"s-oproj",kind:"linear",title:"O Projection",input:"heads",inputShape:"[B,S,8192]",output:"Yattn",outputShape:"[B,S,6144]",weights:attn.weights.filter(w=>w.key.includes("o_proj"))}),
     addattn:cloneOp(combine,{id:"s-addattn",kind:"add",kicker:"DECODER LAYER · ATTENTION RESIDUAL",title:"Attention Residual Merge",summary:"在 Decoder Layer 内把 Sparse Attention 分支 Yattn 加入 residual stream Xₗ，得到更新后的 U；图中将 fused add 与紧随其后的 post-norm 分开表达。",input:"Xₗ + Yattn",inputShape:"2 × [B,S,6144]",output:"U · updated residual stream",outputShape:"[B,S,6144]",formula:"U=Xₗ+Yattn",formulaNote:"实际调用位于 DecoderLayer.forward L773：fused kernel 先执行 residual += hidden_states，再对更新后的 residual 执行 post-attention Gemma RMSNorm。",runtime:"fused_allreduce_gemma_rms_norm · attention residual",source:"nvidia/model.py · MiniMaxM3DecoderLayer.forward · L773–775",sourceUrl:`${CODE_URL}#L773-L775`,weights:[]}),
     postnorm:cloneOp(normBase,{id:"s-postnorm",kind:"norm",title:"Post-attn Gemma RMSNorm",summary:"输入 U 已由上游 Add 节点计算完成；此节点只执行 Gemma RMSNorm(U)，输出唯一的 Û 作为 MoE 输入。",formulaNote:"U 是上游 Add 的单一输出；本节点只计算 RMS(U) 与 (1+γpost) 缩放，不重复执行 residual add。",input:"U",inputShape:"[B,S,6144]",output:"Û",outputShape:"[B,S,6144]",source:"nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142",sourceUrl:NORM_FORWARD_URL,weights:[postNorm]}),
-    router:cloneOp(router,{id:"s-router",kind:"route",title:"FP32 Router → Top-4",input:"Û",inputShape:"[B,S,6144]"}),
-    experts:cloneOp(experts,{id:"s-experts",kind:"activation",title:"Routed Experts ×4",input:"Û + expert ids + weights",inputShape:"[B,S,6144] + 2×[B,S,4]"}),
+    router:cloneOp(router,{id:"s-router",kind:"route",kicker:"FP32 ROUTER · 128 LOGITS",title:"FP32 Router Logits",summary:"每个 token 通过 GateLinear 计算 128 个 FP32 router_logits；本节点不执行 sigmoid、Top-4 或专家计算。",input:"Û",inputShape:"[B,S,6144]",output:"router_logits",outputShape:"[B,S,128]",formula:"router_logits=ÛWrouterᵀ",formulaNote:"这是 Python 层唯一显式产生的 Router 输出；下游 FusedMoE 才执行 sigmoid、correction bias、Top-4 与混合权重计算。",runtime:"GateLinear · FP32",weights:routerGateWeights}),
+    experts:cloneOp(experts,{id:"s-experts",kind:"activation",kicker:"FUSED ROUTING · TOP-4 EXPERTS",title:"Fused Top-4 Routing + Experts",summary:"FusedMoE 消费 router_logits，在内部完成 sigmoid、correction bias、Top-4、归一化混合权重和 4 个专家计算。",input:"Û + router_logits",inputShape:"[B,S,6144] + [B,S,128]",output:"weighted routed output",outputShape:"[B,S,6144]",formulaNote:"先用 σ(r) 得到路由分数 s；s+b 只用于挑选 Top-4，混合权重仍取未加 bias 的 s，归一化后乘 routed_scaling_factor，最后对 4 个专家输出加权求和。expert ids 与 router weights 都是 fused kernel 内部量。",weights:experts.weights}),
     shared:cloneOp(shared,{id:"s-shared",kind:"activation",title:"Shared Expert ×1",input:"Û",inputShape:"[B,S,6144]"}),
-    sum:cloneOp(combine,{id:"s-sum",kind:"add",title:"Weighted Sum",input:"4 routed + shared",inputShape:"5 × [B,S,6144]",output:"Ymoe",outputShape:"[B,S,6144]",weights:[]}),
+    sum:cloneOp(combine,{id:"s-sum",kind:"add",title:"Add Routed + Shared",summary:"把路由专家分支的 Y_routed 与共享专家分支的 Y_shared 逐元素相加。",input:"Y_routed + Y_shared",inputShape:"2 × [B,S,6144]",output:"Ymoe",outputShape:"[B,S,6144]",weights:[]}),
     addout:cloneOp(combine,{id:"s-addout",kind:"add",kicker:"DECODER LAYER · MOE RESIDUAL",title:"Decoder Layer Residual Merge",summary:"在 Decoder Layer 边界把 MoE 分支 Ymoe 与 residual stream U 逻辑合并，得到 Xₗ₊₁；该 merge 延迟融合到下一层 input RMSNorm。",input:"U + Ymoe",inputShape:"2 × [B,S,6144]",output:"Xₗ₊₁ · logical next-layer input",outputShape:"[B,S,6144]",formula:"Xₗ₊₁=U+Ymoe",formulaNote:"当前层 L776–778 返回 Ymoe 与 U 两条独立流；下一 Decoder Layer 在 L758–767 的 fused input RMSNorm 中执行实际 add。",runtime:"MiniMaxM3DecoderLayer boundary · deferred residual merge",source:"nvidia/model.py · MiniMaxM3DecoderLayer.forward · L758–778",sourceUrl:`${CODE_URL}#L758-L778`,weights:[]}),
   };
 }
@@ -549,7 +851,7 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
   const rootRef=useRef<HTMLDivElement>(null);
   const markerId=`graph-arrow-${useId().replace(/:/g,"")}`;
   const serializedEdges=JSON.stringify(edges);
-  const edgeKey=edges.map(edge=>`${edge.from}:${edge.fromPort??"bottom"}>${edge.to}:${edge.toPort??"top"}:${edge.route??"direct"}`).join("|");
+  const edgeKey=edges.map(edge=>`${edge.from}:${edge.fromPort??"bottom"}>${edge.to}:${edge.toPort??"top"}:${edge.route??"direct"}:${edge.fanout??"single"}`).join("|");
   const [paths,setPaths]=useState<GraphPath[]>([]);
   useLayoutEffect(()=>{
     const root=rootRef.current;
@@ -562,6 +864,8 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
       if(port==="top-right")return [x+rect.width*.66,y];
       if(port==="right")return [x+rect.width,y+rect.height/2];
       if(port==="left")return [x,y+rect.height/2];
+      if(port==="bottom-left")return [x+rect.width*.34,y+rect.height];
+      if(port==="bottom-right")return [x+rect.width*.66,y+rect.height];
       return [x+rect.width/2,y+rect.height];
     };
     const measure=()=>{
@@ -579,6 +883,7 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
         endpointCounts.set(fromKey,(endpointCounts.get(fromKey)??0)+1);
         endpointCounts.set(toKey,(endpointCounts.get(toKey)??0)+1);
       });
+      const handledFanouts=new Set<string>();
       const next=currentEdges.flatMap(edge=>{
         const source=root.querySelector<HTMLElement>(`[data-graph-id="${edge.from}"]`);
         const target=root.querySelector<HTMLElement>(`[data-graph-id="${edge.to}"]`);
@@ -587,6 +892,19 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
         const sourceRect=source.getBoundingClientRect(); const targetRect=target.getBoundingClientRect();
         const [sx,sy]=point(sourceRect,fromPort,rootRect);
         const [tx,ty]=point(targetRect,toPort,rootRect);
+        if(edge.fanout){
+          if(handledFanouts.has(edge.fanout))return [];
+          handledFanouts.add(edge.fanout);
+          const grouped=currentEdges.filter(candidate=>candidate.fanout===edge.fanout);
+          const targets=grouped.flatMap(candidate=>{
+            const groupedTarget=root.querySelector<HTMLElement>(`[data-graph-id="${candidate.to}"]`);
+            if(!groupedTarget)return [];
+            const [x,y]=point(groupedTarget.getBoundingClientRect(),candidate.toPort??"top",rootRect);
+            return [{x,y}];
+          });
+          const tone:EdgeTone=source.classList.contains("tensor-weight")?"weight":source.classList.contains("tensor-side")?"external":"data";
+          return routeGraphFanout({source:{x:sx,y:sy},targets,departure:edge.departure??72}).map(route=>({d:route.path,tone,marker:route.arrow}));
+        }
         const direction=edge.route??(fromPort==="right"||fromPort==="left"||toPort==="right"||toPort==="left"?"horizontal":"vertical");
         const safeClearance=direction==="side-left"||direction==="bus-left"
           ?Math.min(24,Math.max(4,obstacleBounds.left-8))
@@ -603,7 +921,7 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
             :source.classList.contains("tensor-side")
               ?"external"
               :"data";
-        return [{d:routeGraphEdge({source:{x:sx,y:sy},target:{x:tx,y:ty},direction,obstacleBounds,clearance:safeClearance,approach,departure:edge.departure}).path,tone}];
+        return [{d:routeGraphEdge({source:{x:sx,y:sy},target:{x:tx,y:ty},direction,obstacleBounds,clearance:safeClearance,approach,departure:edge.departure}).path,tone,marker:true}];
       });
       setPaths(next);
     };
@@ -615,7 +933,7 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
     return()=>{cancelAnimationFrame(frame);observer.disconnect()};
   },[serializedEdges]);
   const tones:EdgeTone[]=["data","weight","external","residual"];
-  return <div ref={rootRef} className={`graph-surface ${className}`}>{children}<svg className="graph-connectors" aria-hidden="true"><defs>{tones.map(tone=><marker key={tone} id={`${markerId}-${tone}`} className={`edge-marker edge-marker-${tone}`} markerWidth="10" markerHeight="10" refX="8.5" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0.5 0.8 L 8.5 5 L 0.5 9.2 Z"/></marker>)}</defs><g className="edge-halos">{paths.map((path,index)=><path key={`${edgeKey}-halo-${index}`} className="edge-halo" d={path.d}/>)}</g><g className="edge-lines">{paths.map((path,index)=><path key={`${edgeKey}-line-${index}`} className={`edge-line edge-${path.tone}`} d={path.d} markerEnd={`url(#${markerId}-${path.tone})`}/>)}</g></svg></div>;
+  return <div ref={rootRef} className={`graph-surface ${className}`}>{children}<svg className="graph-connectors" aria-hidden="true"><defs>{tones.map(tone=><marker key={tone} id={`${markerId}-${tone}`} className={`edge-marker edge-marker-${tone}`} markerWidth="10" markerHeight="10" refX="8.5" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0.5 0.8 L 8.5 5 L 0.5 9.2 Z"/></marker>)}</defs><g className="edge-halos">{paths.map((path,index)=><path key={`${edgeKey}-halo-${index}`} className="edge-halo" d={path.d}/>)}</g><g className="edge-lines">{paths.map((path,index)=><path key={`${edgeKey}-line-${index}`} className={`edge-line edge-${path.tone}`} d={path.d} markerEnd={path.marker===false?undefined:`url(#${markerId}-${path.tone})`}/>)}</g></svg></div>;
 }
 
 function GraphPan({children}:{children:ReactNode}){
@@ -717,9 +1035,9 @@ function SparseDiagram({g,active,onHover,onLeave,onSelect}:{g:Record<string,OpNo
       <section><header>INDEX PATH · causal/pad layout 来自上方 I/O</header><div className="mini-flow"><Tensor name="Qidx · Kidx" shape="[B,4,S,128] · [B,1,T,128]"/><Arrow/><N id="idxnorm"/><Arrow/><Tensor name="Q̃idx · K̃idx" shape="same"/><Arrow/><N id="idxscore"/><Arrow/><Tensor name="token scores · causal bounds" shape="[B,4,S,T] + metadata"/><Arrow/><N id="blockmax"/><Arrow/><Tensor name="block scores · local/init priority" shape="[B,4,S,⌈T/128⌉]"/><Arrow/><N id="topk"/><Arrow/><Tensor name="Top-16 block ids" shape="[B,S,4,16]"/></div></section>
       <section><header>MAIN PATH · positions 来自上方 I/O</header><div className="mini-flow"><Tensor name="Q · K" shape="[B,64,S,128] · [B,4,S,128]"/><Arrow/><N id="mainnorm"/><Arrow/><Tensor name="Q̃ · K̃ · positions" shape="same + [Nq]"/><Arrow/><N id="rope"/><Arrow/><Tensor name="Qᵣ · Kᵣ" shape="same"/></div></section>
     </div>
-    <div className="flow-row"><Tensor name="Kᵣ · V · slot_mapping" shape="KV + [Nq]"/><Arrow/><N id="cache"/><Arrow/><Tensor name="paged K · V · block_table · Top-16 ids" shape="KV pages + runtime metadata"/><Arrow/><N id="select"/><Arrow/><Tensor name="selected K · V" shape="≤2048 tokens / group"/></div>
-    <div className="flow-row attention-row"><Tensor name="Qᵣ · selected K" shape="Q · Kselected"/><Arrow/><N id="qk"/><Arrow/><Tensor name="sparse scores" shape="[B,64,S,≤2048]"/><Arrow/><N id="scale"/><Arrow/><Tensor name="scaled scores · causal/pad layout" shape="scores + runtime metadata"/><Arrow/><N id="mask"/><Arrow/><Tensor name="masked scores" shape="same"/><Arrow/><N id="softmax"/><Arrow/><Tensor name="P" shape="same"/></div>
-    <div className="flow-row"><Tensor name="P · selected V" shape="probabilities · Vselected"/><Arrow/><N id="pv"/><Arrow/><Tensor name="heads" shape="[B,S,8192]"/><Arrow/><N id="oproj"/><Arrow/><Tensor name="Yattn · Xₗ" shape="2 × [B,S,6144]"/><Arrow/><N id="addattn"/><Arrow/><Tensor name="U" shape="[B,S,6144]"/></div>
+    <div className="flow-row"><Tensor name="Kᵣ · V · slot_mapping" shape="KV + [Nq]"/><Arrow/><N id="cache"/><Arrow/><Tensor name="paged K · V · block_table · Top-16 ids" shape="KV pages + runtime metadata"/></div>
+    <div className="flow-row attention-row"><Tensor name="Qᵣ · paged K · Top-16 ids" shape="Q + KV pages + block_indices"/><Arrow/><N id="qk"/><Arrow/><Tensor name="sparse scores" shape="[B,64,S,≤2048]"/><Arrow/><N id="scale"/><Arrow/><Tensor name="scaled scores · causal/pad layout" shape="scores + runtime metadata"/><Arrow/><N id="mask"/><Arrow/><Tensor name="masked scores" shape="same"/><Arrow/><N id="softmax"/><Arrow/><Tensor name="P" shape="same"/></div>
+    <div className="flow-row"><Tensor name="P · paged V · same Top-16" shape="probabilities + KV pages"/><Arrow/><N id="pv"/><Arrow/><Tensor name="heads" shape="[B,S,8192]"/><Arrow/><N id="oproj"/><Arrow/><Tensor name="Yattn · Xₗ" shape="2 × [B,S,6144]"/><Arrow/><N id="addattn"/><Arrow/><Tensor name="U" shape="[B,S,6144]"/></div>
     <div className="flow-row moe-path"><Tensor name="U" shape="[B,S,6144]"/><Arrow/><N id="router"/><Arrow/><Tensor name="expert ids · weights" shape="Top-4 / token"/><Arrow/><div className="parallel-ops"><N id="experts"/><N id="shared"/></div><Arrow/><Tensor name="4 routed · 1 shared" shape="5 × [B,S,6144]"/><Arrow/><N id="sum"/><Arrow/><Tensor name="Ymoe · U" shape="2 × [B,S,6144]"/><Arrow/><N id="addout"/><Arrow/><Tensor name="Xₗ₊₁ · hidden_states" shape="[B,S,6144]" role="output"/></div>
   </div>;
 }
@@ -740,23 +1058,36 @@ function StageZoom({type,stage,g,active,onHover,onLeave,onSelect,onClose}:{type:
   }
   if(stage==="ffn"){
     const edges:GraphEdge[]=[
-      {from:"moe-u",to:"moe-router"},{from:"moe-wrouter",to:"moe-router",fromPort:"right",toPort:"left"},{from:"moe-router",to:"moe-ids"},{from:"moe-router",to:"moe-rweights"},{from:"moe-u",to:"moe-experts",route:"bus-right",departure:12},{from:"moe-ids",to:"moe-experts"},{from:"moe-rweights",to:"moe-experts"},{from:"moe-wexperts",to:"moe-experts",fromPort:"right",toPort:"left"},{from:"moe-experts",to:"moe-routed"},{from:"moe-u",to:"moe-shared",fromPort:"bottom",toPort:"top"},{from:"moe-wshared",to:"moe-shared",fromPort:"left",toPort:"right"},{from:"moe-shared",to:"moe-shared-out"},{from:"moe-routed",to:"moe-sum"},{from:"moe-shared-out",to:"moe-sum"},{from:"moe-sum",to:"moe-y"},
+      {from:"moe-u",to:"moe-router",fromPort:"bottom-left",approach:34},{from:"moe-wrouter",to:"moe-router",fromPort:"right",toPort:"left"},{from:"moe-router",to:"moe-router-logits"},{from:"moe-u",to:"moe-experts",toPort:"top-right",approach:38},{from:"moe-router-logits",to:"moe-experts",toPort:"top-left",approach:28},{from:"moe-wexperts",to:"moe-experts",fromPort:"right",toPort:"left"},{from:"moe-experts",to:"moe-routed"},{from:"moe-u",to:"moe-shared",fromPort:"bottom-right",toPort:"top",approach:34},{from:"moe-wshared",to:"moe-shared",fromPort:"left",toPort:"right"},{from:"moe-shared",to:"moe-shared-out"},{from:"moe-routed",to:"moe-sum",toPort:"top-left",approach:38},{from:"moe-shared-out",to:"moe-sum",toPort:"top-right",approach:38},{from:"moe-sum",to:"moe-y"},
     ];
-    return <section className="stage-zoom lesson-zoom"><header><span>TOP-4 MOE + SHARED EXPERT · L3–59</span><button onClick={onClose}>收起 ×</button></header><GraphPan><GraphSurface className="moe-node-graph" edges={edges}><Tensor name="Û" shape="[B,S,H]" graphId="moe-u"/><Tensor name="router gate · correction bias" shape="[E,H] · [E]" role="weight" graphId="moe-wrouter"/><N id="router" graphId="moe-router"/><Tensor name="expert ids" shape="[B,S,K]" graphId="moe-ids"/><Tensor name="router weights" shape="[B,S,K]" graphId="moe-rweights"/><Tensor name="routed expert weights · w1/w3/w2" shape="E × expert weights" role="weight" graphId="moe-wexperts"/><N id="experts" graphId="moe-experts"/><Tensor name="weighted routed output" shape="[B,S,H]" graphId="moe-routed"/><N id="shared" graphId="moe-shared"/><Tensor name="shared expert weights ×3" shape="gate / up / down" role="weight" graphId="moe-wshared"/><Tensor name="shared output" shape="[B,S,H]" graphId="moe-shared-out"/><N id="sum" graphId="moe-sum"/><Tensor name="Ymoe" shape="[B,S,H]" graphId="moe-y"/></GraphSurface></GraphPan></section>;
+    return <section className="stage-zoom lesson-zoom"><header><span>TOP-4 MOE + SHARED EXPERT · L3–59</span><button onClick={onClose}>收起 ×</button></header><GraphPan><GraphSurface className="moe-node-graph" edges={edges}>
+      <Tensor name="Û" shape="[B,S,H]" graphId="moe-u"/>
+      <div className="moe-expert-branches">
+        <section className="moe-expert-branch moe-routed-branch" aria-label="Routed Expert 分支">
+          <div className="moe-weighted-step moe-router-step"><Tensor name="router gate weight" shape="[E,H]" role="weight" graphId="moe-wrouter"/><N id="router" graphId="moe-router"/></div>
+          <Tensor name="router logits" shape="[B,S,128]" graphId="moe-router-logits"/>
+          <div className="moe-weighted-step moe-routed-step"><Tensor name="routed expert weights · correction bias" shape="E × expert weights · [E]" role="weight" graphId="moe-wexperts"/><N id="experts" graphId="moe-experts"/></div>
+          <Tensor name="weighted routed output" shape="[B,S,H]" graphId="moe-routed"/>
+        </section>
+        <section className="moe-expert-branch moe-shared-branch" aria-label="Shared Expert 分支">
+          <div className="moe-weighted-step moe-shared-step"><N id="shared" graphId="moe-shared"/><Tensor name="shared expert weights ×3" shape="gate / up / down" role="weight" graphId="moe-wshared"/></div>
+          <Tensor name="shared output" shape="[B,S,H]" graphId="moe-shared-out"/>
+        </section>
+      </div>
+      <N id="sum" graphId="moe-sum"/><Tensor name="Ymoe" shape="[B,S,H]" graphId="moe-y"/>
+    </GraphSurface></GraphPan></section>;
   }
   const dense=type==="dense";
   const ids=dense?{project:"qkv",split:"split",qnorm:"qnorm",knorm:"knorm",ropeq:"ropeq",ropek:"ropek"}:{project:"packed",split:"split",qnorm:"mainnorm",knorm:"mainnorm",ropeq:"rope",ropek:"rope"};
-  const keyId=dense?"attn-paged-k":"attn-selected-k"; const valueId=dense?"attn-paged-v":"attn-selected-v";
   const edges:GraphEdge[]=[
-    {from:"attn-x",to:"attn-project"},{from:"attn-project",to:"attn-packed"},{from:"attn-packed",to:"attn-split"},{from:"attn-split",to:"attn-q"},{from:"attn-split",to:"attn-k"},{from:"attn-split",to:"attn-v"},{from:"attn-q",to:"attn-qnorm",toPort:"top-left"},{from:"attn-wq",to:"attn-qnorm",toPort:"top-right"},{from:"attn-qnorm",to:"attn-qt"},{from:"attn-qt",to:"attn-qrope"},{from:"attn-posq",to:"attn-qrope",fromPort:"left",toPort:"right"},{from:"attn-qrope",to:"attn-qr"},{from:"attn-k",to:"attn-knorm",toPort:"top-left"},{from:"attn-wk",to:"attn-knorm",toPort:"top-right"},{from:"attn-knorm",to:"attn-kt"},{from:"attn-kt",to:"attn-krope"},{from:"attn-posk",to:"attn-krope",fromPort:"left",toPort:"right"},{from:"attn-krope",to:"attn-kr"},{from:"attn-kr",to:"attn-cache"},{from:"attn-v",to:"attn-cache"},{from:"attn-cache-meta",to:"attn-cache"},{from:"attn-cache",to:"attn-paged-k"},{from:"attn-cache",to:"attn-paged-v"},{from:"attn-qr",to:"attn-qk"},{from:keyId,to:"attn-qk"},{from:"attn-qk",to:"attn-scale"},{from:"attn-scale",to:"attn-scaled"},{from:"attn-scaled",to:"attn-mask"},{from:"attn-bounds",to:"attn-mask",fromPort:"left",toPort:"right"},{from:"attn-mask",to:"attn-softmax"},{from:"attn-softmax",to:"attn-p"},{from:"attn-p",to:"attn-pv"},{from:valueId,to:"attn-pv",route:"bus-right"},{from:"attn-pv",to:"attn-heads"},{from:"attn-heads",to:"attn-oproj"},{from:"attn-oproj",to:"attn-y"},
-    ...(!dense?[{from:"attn-split",to:"attn-qidx"},{from:"attn-split",to:"attn-kidx"},{from:"attn-qidx",to:"attn-idxnorm"},{from:"attn-kidx",to:"attn-idxnorm"},{from:"attn-idxnorm",to:"attn-idxscore"},{from:"attn-idxbounds",to:"attn-idxscore",fromPort:"left" as EdgePort,toPort:"right" as EdgePort},{from:"attn-idxscore",to:"attn-blockmax"},{from:"attn-blockmax",to:"attn-topk"},{from:"attn-topk",to:"attn-topids"},{from:"attn-topids",to:"attn-select"},{from:"attn-paged-k",to:"attn-select"},{from:"attn-paged-v",to:"attn-select"},{from:"attn-select",to:"attn-selected-k"},{from:"attn-select",to:"attn-selected-v"}] : []),
+    {from:"attn-x",to:"attn-project"},{from:"attn-project",to:"attn-packed"},{from:"attn-packed",to:"attn-split"},{from:"attn-split",to:"attn-q",fanout:"attn-five-way",departure:64},{from:"attn-split",to:"attn-k",fanout:"attn-five-way",departure:64},{from:"attn-split",to:"attn-v",fanout:"attn-five-way",departure:64},{from:"attn-q",to:"attn-qnorm",toPort:"top-left",approach:38},{from:"attn-wq",to:"attn-qnorm",toPort:"top-right",approach:38},{from:"attn-qnorm",to:"attn-qt"},{from:"attn-qt",to:"attn-qrope",toPort:"top-left",approach:38},{from:"attn-posq",to:"attn-qrope",toPort:"top-right",approach:38},{from:"attn-qrope",to:"attn-qr"},{from:"attn-k",to:"attn-knorm",toPort:"top-left",approach:38},{from:"attn-wk",to:"attn-knorm",toPort:"top-right",approach:38},{from:"attn-knorm",to:"attn-kt"},{from:"attn-kt",to:"attn-krope",toPort:"top-left",approach:38},{from:"attn-posk",to:"attn-krope",toPort:"top-right",approach:38},{from:"attn-krope",to:"attn-kr"},{from:"attn-kr",to:"attn-cache",toPort:"top-left",approach:72},{from:"attn-v",to:"attn-cache",toPort:"top-right",approach:72},{from:"attn-cache-meta",to:"attn-cache",fromPort:"left",toPort:"right"},{from:"attn-cache",to:"attn-paged-k",approach:54},{from:"attn-cache",to:"attn-paged-v",approach:54},{from:"attn-qr",to:"attn-qk",toPort:"top-left",approach:18},{from:"attn-paged-k",to:"attn-qk",toPort:dense?"top-right":"top",approach:28},{from:"attn-qk",to:"attn-scale"},{from:"attn-scale",to:"attn-scaled"},{from:"attn-scaled",to:"attn-mask"},{from:"attn-bounds",to:"attn-mask",fromPort:"left",toPort:"right"},{from:"attn-mask",to:"attn-softmax"},{from:"attn-softmax",to:"attn-p"},{from:"attn-p",to:"attn-pv",toPort:"top-left",approach:18},{from:"attn-paged-v",to:"attn-pv",toPort:"top-right",route:"bus-left",approach:28,departure:54},{from:"attn-pv",to:"attn-heads"},{from:"attn-heads",to:"attn-oproj"},{from:"attn-oproj",to:"attn-y"},
+    ...(!dense?([{from:"attn-split",to:"attn-qidx",fanout:"attn-five-way",departure:64},{from:"attn-split",to:"attn-kidx",fanout:"attn-five-way",departure:64},{from:"attn-qidx",to:"attn-idxnorm",toPort:"top-left",approach:34},{from:"attn-kidx",to:"attn-idxnorm",toPort:"top-right",approach:34},{from:"attn-idxnorm",to:"attn-idxquery",fromPort:"bottom-left",approach:30},{from:"attn-idxnorm",to:"attn-idxcache",fromPort:"bottom-right",approach:30},{from:"attn-idxslots",to:"attn-idxcache",fromPort:"left",toPort:"right"},{from:"attn-idxquery",to:"attn-idxscore",toPort:"top-left",approach:30},{from:"attn-idxcache",to:"attn-idxscore",toPort:"top-right",approach:30},{from:"attn-idxscore",to:"attn-idxmask"},{from:"attn-idxbounds",to:"attn-idxmask",fromPort:"left",toPort:"right"},{from:"attn-idxmask",to:"attn-blockmax"},{from:"attn-blockmax",to:"attn-topk"},{from:"attn-topk",to:"attn-topids"},{from:"attn-topids",to:"attn-qk",toPort:"top-right",approach:28}] satisfies GraphEdge[]) : []),
   ];
   return <section className="stage-zoom lesson-zoom attention-lesson"><header><span>{dense?"GQA + PARTIAL ROPE · L0–2":"MINIMAX SPARSE ATTENTION + PARTIAL ROPE · L3–59"}</span><button onClick={onClose}>收起 ×</button></header><GraphPan><GraphSurface className={`attention-flowchart connected-attention-graph ${dense?"dense-attention":"sparse-attention"}`} edges={edges}>
     <div className="compact-chain"><Tensor name="X̂" shape="[B,S,H]" graphId="attn-x"/><N id={ids.project} graphId="attn-project"/><Tensor name="packed" shape={dense?"[B,S,9216]":"[B,S,9856]"} graphId="attn-packed"/><N id={ids.split} graphId="attn-split"/></div>
-    <div className={`attention-branches ${dense?"dense":""}`}>{!dense&&<div className="index-ribbon"><div className="multi-source"><Tensor name="Qidx" shape="[B,S,4,128]" graphId="attn-qidx"/><Tensor name="Kidx" shape="[B,T,1,128]" graphId="attn-kidx"/></div><N id="idxnorm" graphId="attn-idxnorm"/><N id="idxscore" graphId="attn-idxscore"/><Tensor name="causal bounds" shape="runtime" role="side" graphId="attn-idxbounds"/><N id="blockmax" graphId="attn-blockmax"/><N id="topk" graphId="attn-topk"/><Tensor name="Top-16 block ids" shape="[B,S,4,16]" graphId="attn-topids"/></div>}
-      <div className="qkv-lanes"><section><header>Q PATH</header><IW id={ids.qnorm} inputName="Q" inputShape="[B,Nₕ,S,Dₕ]" inputGraphId="attn-q" graphId="attn-qnorm" weightGraphId="attn-wq"/><div className="two-source"><Tensor name="Q̃" shape="same" graphId="attn-qt"/><Tensor name="positions" shape="[Nq]" role="side" graphId="attn-posq"/></div><N id={ids.ropeq} graphId="attn-qrope"/><Tensor name="Qᵣ" shape="[B,Nₕ,S,Dₕ]" graphId="attn-qr"/></section><section><header>K PATH</header><IW id={ids.knorm} inputName="K" inputShape="[B,Nₖᵥ,S,Dₕ]" weightIndex={dense?0:1} inputGraphId="attn-k" graphId="attn-knorm" weightGraphId="attn-wk"/><div className="two-source"><Tensor name="K̃" shape="same" graphId="attn-kt"/><Tensor name="positions" shape="[Nq]" role="side" graphId="attn-posk"/></div><N id={ids.ropek} graphId="attn-krope"/><Tensor name="Kᵣ" shape="[B,Nₖᵥ,S,Dₕ]" graphId="attn-kr"/></section><section><header>V + KV CACHE</header><Tensor name="V" shape="[B,Nₖᵥ,S,Dₕ]" graphId="attn-v"/><Tensor name="slot_mapping · block_table" shape="runtime" role="side" graphId="attn-cache-meta"/><N id="cache" graphId="attn-cache"/><div className="two-source"><Tensor name="paged K" shape="KV pages" graphId="attn-paged-k"/><Tensor name="paged V" shape="KV pages" graphId="attn-paged-v"/></div></section></div></div>
-    {!dense&&<div className="selection-chain"><N id="select" graphId="attn-select"/><div className="two-source"><Tensor name="selected K" shape="≤2048 tokens/group" graphId="attn-selected-k"/><Tensor name="selected V" shape="≤2048 tokens/group" graphId="attn-selected-v"/></div></div>}
-    <div className="score-pipeline"><N id="qk" graphId="attn-qk"/><N id="scale" graphId="attn-scale"/><Tensor name="scaled scores" shape="[B,Nₕ,S,T]" graphId="attn-scaled"/><Tensor name="causal / pad bounds" shape="runtime metadata" role="side" graphId="attn-bounds"/><N id="mask" graphId="attn-mask"/><N id="softmax" graphId="attn-softmax"/><Tensor name="P" shape="[B,Nₕ,S,T]" graphId="attn-p"/></div>
+    <div className={`attention-branches ${dense?"dense":""}`}>{!dense&&<div className="index-ribbon"><header className="index-ribbon-label">LIGHTNING INDEXER · per query / KV group</header><div className="multi-source"><Tensor name="Qidx" shape="[B,S,4,128]" graphId="attn-qidx"/><Tensor name="Kidx" shape="[B,T,1,128]" graphId="attn-kidx"/></div><N id="idxnorm" graphId="attn-idxnorm"/><Tensor name="Index Q query" shape="[B,4,S,128]" graphId="attn-idxquery"/><N id="idxcache" graphId="attn-idxcache"/><Tensor name="index slot_mapping" shape="[Nq]" role="side" graphId="attn-idxslots"/><N id="idxscore" graphId="attn-idxscore"/><Tensor name="position_ids · future bound" shape="[B,S]" role="side" graphId="attn-idxbounds"/><N id="idxmask" graphId="attn-idxmask"/><N id="blockmax" graphId="attn-blockmax"/><N id="topk" graphId="attn-topk"/><Tensor name="block_indices · Top-16" shape="[B,4,S,16]" graphId="attn-topids"/></div>}
+      <div className="attention-data-path"><div className="qkv-lanes"><section><header>Q PATH</header><IW id={ids.qnorm} inputName="Q" inputShape="[B,Nₕ,S,Dₕ]" inputGraphId="attn-q" graphId="attn-qnorm" weightGraphId="attn-wq"/><div className="two-source"><Tensor name="Q̃" shape="same" graphId="attn-qt"/><Tensor name="positions" shape="[Nq]" role="side" graphId="attn-posq"/></div><N id={ids.ropeq} graphId="attn-qrope"/><Tensor name="Qᵣ" shape="[B,Nₕ,S,Dₕ]" graphId="attn-qr"/></section><section><header>K PATH</header><IW id={ids.knorm} inputName="K" inputShape="[B,Nₖᵥ,S,Dₕ]" weightIndex={dense?0:1} inputGraphId="attn-k" graphId="attn-knorm" weightGraphId="attn-wk"/><div className="two-source"><Tensor name="K̃" shape="same" graphId="attn-kt"/><Tensor name="positions" shape="[Nq]" role="side" graphId="attn-posk"/></div><N id={ids.ropek} graphId="attn-krope"/><Tensor name="Kᵣ" shape="[B,Nₖᵥ,S,Dₕ]" graphId="attn-kr"/></section><section><header>V PATH</header><Tensor name="V" shape="[B,Nₖᵥ,S,Dₕ]" graphId="attn-v"/></section></div><div className="kv-cache-flow"><Tensor name="slot_mapping · block_table" shape="runtime" role="side" graphId="attn-cache-meta"/><N id="cache" graphId="attn-cache"/><div className="two-source"><Tensor name="paged K" shape="KV pages" graphId="attn-paged-k"/><Tensor name="paged V" shape="KV pages" graphId="attn-paged-v"/></div></div></div></div>
+    <div className="score-pipeline"><header className="score-pipeline-label">ATTENTION SCORE PIPELINE · selected blocks 内计算概率 P</header><N id="qk" graphId="attn-qk"/><N id="scale" graphId="attn-scale"/><Tensor name="scaled scores" shape={dense?"[B,Nₕ,S,T]":"[B,Nₕ,S,Ksel]"} graphId="attn-scaled"/><Tensor name={dense?"causal / pad bounds":"token causal / pad bounds"} shape="runtime metadata" role="side" graphId="attn-bounds"/><N id="mask" graphId="attn-mask"/><N id="softmax" graphId="attn-softmax"/><Tensor name="P" shape={dense?"[B,Nₕ,S,T]":"[B,Nₕ,S,Ksel]"} graphId="attn-p"/></div>
     <div className="context-pipeline"><N id="pv" graphId="attn-pv"/><Tensor name="heads" shape="[B,S,Nₕ·Dₕ]" graphId="attn-heads"/><N id="oproj" graphId="attn-oproj"/><Tensor name="Yattn" shape="[B,S,H]" graphId="attn-y"/></div>
   </GraphSurface></GraphPan></section>;
 }
@@ -776,10 +1107,14 @@ function LayerNavigator({type,onChange}:{type:LayerType;onChange:(type:LayerType
   return <div className="layer-nav layer-type-nav"><div className="layer-nav-head"><b>{type==="dense"?"GQA + SwiGLU-OAI MLP":"MiniMax Sparse Attention + MoE"}</b></div><div className="layer-type-options"><button className={type==="dense"?"active dense":"dense"} onClick={()=>onChange("dense")}><span>L0–L2</span><b>GQA + Partial RoPE + SwiGLU-OAI MLP</b><small>3 层共享同一实现</small></button><button className={type==="sparse"?"active sparse":"sparse"} onClick={()=>onChange("sparse")}><span>L3–L59</span><b>MiniMax Sparse Attention + Partial RoPE + Top-4 MoE</b><small>57 层共享同一实现</small></button></div></div>;
 }
 
+function LatexExpression({formula,label,className=""}:{formula:string;label:string;className?:string}){
+  const html=katex.renderToString(formula,{displayMode:true,throwOnError:false,strict:"ignore",output:"htmlAndMathml"});
+  return <div className={`latex-render ${className}`.trim()} aria-label={label} dangerouslySetInnerHTML={{__html:html}}/>;
+}
+
 function LatexFormula({node}:{node:OpNode}){
   const formula=node.latex??SIMPLE_FORMULA[node.kind]??String.raw`y=f(x)`;
-  const html=katex.renderToString(formula,{displayMode:true,throwOnError:false,strict:"ignore",output:"htmlAndMathml"});
-  return <div className="latex-render" aria-label={`${node.title} 简化公式`} dangerouslySetInnerHTML={{__html:html}}/>;
+  return <LatexExpression formula={formula} label={`${node.title} 简化公式`}/>;
 }
 
 function symbolicShape(shape:string){
@@ -836,11 +1171,15 @@ function IoView({node}:{node:OpNode}){
   return <div className="io-binding-view"><section className="binding-list"><header><span>INPUT BINDINGS</span><b>{bindings.length} 路输入</b></header>{bindings.map((binding,index)=><article className={`binding binding-${binding.kind}`} key={`${binding.kind}-${binding.label}-${index}`}><div><span>{labels[binding.kind]}</span></div><b>{binding.label}</b><ShapeRows shape={binding.shape}/><p><i>来自</i>{binding.from}</p>{binding.note&&<small>{binding.note}</small>}</article>)}</section><section className="output-binding"><header><span>OUTPUT BINDING</span><b>1 路产物</b></header><article><div><span>计算产物</span></div><b>{node.output}</b><ShapeRows shape={node.outputShape}/><p><i>送往</i>{NEXT_BY_ID[node.id]??"图中下游模块"}</p></article></section></div>;
 }
 
+function codeSourceLabel(section:CodeSection){
+  return section.url?.includes("github.com/huggingface/transformers")?"Transformers":"vLLM";
+}
+
 function CodeView({node}:{node:OpNode}){
-  const sections=(node.codeSections??[]).filter(section=>/forward|INIT|CALL|ENTER|PROJECT|ATTEND|ROUTE|SHARED/.test(`${section.title} ${section.stage}`));
+  const sections=node.codeSections??[];
   return <div className="code-view">
     <a className="code-source" href={pinSource(node.sourceUrl)} target="_blank" rel="noreferrer"><span>PINNED SOURCE · {VLLM_COMMIT.slice(0,7)}</span><b>{node.source}</b><i>↗</i></a>
-    {sections.length?<section className="code-call-chain"><header><span>IMPLEMENTATION TRACE</span><b>forward → fused kernel → 数学定义</b></header>{sections.map((section,index)=><article className="code-section" key={`${node.id}-${section.stage}-${index}`}><header><div><span>{section.stage}</span><b>{section.title}</b><small>{section.location}</small></div>{section.url&&<a href={section.url} target="_blank" rel="noreferrer" aria-label={`打开 ${section.title} 固定源码`}>↗</a>}</header><pre><code>{section.code}</code></pre></article>)}</section>:<div className="code-empty"><b>此节点没有独立 forward</b><p>它由所在模块的 forward 调度，或只是一个数学拆解步骤。</p></div>}
+    {sections.length?<section className="code-call-chain"><header><span>IMPLEMENTATION TRACE</span></header>{sections.map((section,index)=>{const source=codeSourceLabel(section);return <article className="code-section" key={`${node.id}-${section.stage}-${index}`}><header><div><div className="code-section-kicker"><span>{section.stage}</span><span className={`code-source-tag source-${source.toLowerCase()}`}>{source}</span></div><b>{section.title}</b><small>{section.location}</small></div>{section.url&&<a href={section.url} target="_blank" rel="noreferrer" aria-label={`打开 ${section.title} 固定源码`}>↗</a>}</header><pre><code>{section.code}</code></pre></article>})}</section>:<div className="code-empty"><b>此节点没有独立 forward</b><p>它由所在模块的 forward 调度，或只是一个数学拆解步骤。</p></div>}
   </div>;
 }
 
@@ -870,25 +1209,26 @@ function stageOverview(type:LayerType,stage:Exclude<ExpandedStage,null>):StageOv
   };
   return {
     kicker:"SPARSE FFN · L3–L59",title:"Top-4 MoE + Shared Expert",summary:"每个 token 进入 4 个路由专家，同时经过 1 个共享专家。",
-    flow:"Û → Router Top-4 ↘ Routed Experts · Shared Expert ↗ Weighted Sum → Ymoe",
-    formula:"Ymoe=Σₑ pₑEₑ(Û)+Eshared(Û)",
-    notes:["同一个 Û 直接进入 Router、Routed Experts 与 Shared Expert。","Router 只决定专家 id 与权重；Shared Expert 不经过 Top-K。"],
+    flow:"路由选择：Û → FP32 Router → router_logits\n路由专家：Û + router_logits → Fused Top-4 Routing + Experts → Y_routed\n共享专家：Û → Shared Expert → Y_shared\n最终合并：Y_routed + Y_shared → Add → Y_moe",
+    formula:"Y_routed=Σₑ ŵₑEₑ(Û)\nY_shared=E_shared(Û)\nY_moe=Y_routed+Y_shared",
+    notes:["Router 在 Python 层只产生 [B,S,128] 的 router_logits。","expert ids 与 router weights 由 FusedMoE 内部计算；Shared Expert 不经过 Top-K。"],
     parameters:[["E","128","routed experts"],["K","4","experts / token"],["E_shared","1","shared expert"],["H_expert","3072","expert width"]],
   };
 }
 
 function StageOverviewPanel({type,stage}:{type:LayerType;stage:Exclude<ExpandedStage,null>}){
   const overview=stageOverview(type,stage);
-  return <aside className="detail-panel stage-overview-panel"><header className="stage-overview-header"><span>{overview.kicker}</span><h2>{overview.title}</h2><p>{overview.summary}</p></header><div className="stage-overview-body"><section><span>数据流</span><code>{overview.flow}</code></section><section className="stage-formula-section"><span>计算语义</span><code>{overview.formula}</code>{overview.formulaNote&&<p>{overview.formulaNote}</p>}</section><section className="stage-parameter-section"><span>关键参数</span><div className="stage-parameters">{overview.parameters.map(([symbol,value,source])=><article key={symbol}><b>{symbol}</b><strong>{value}</strong><small>{source}</small></article>)}</div></section><section><span>边界说明</span>{overview.notes.map(note=><p key={note}>{note}</p>)}</section></div><footer>展开图说明 · 点击算子查看独立详情</footer></aside>;
+  return <aside className="detail-panel stage-overview-panel"><header className="stage-overview-header"><span>{overview.kicker}</span><h2>{overview.title}</h2><p>{overview.summary}</p></header><div className="stage-overview-body"><section className="stage-flow-section"><span>数据流</span><code>{overview.flow}</code></section><section className="stage-formula-section"><span>计算语义</span><code>{overview.formula}</code>{overview.formulaNote&&<p>{overview.formulaNote}</p>}</section><section className="stage-parameter-section"><span>关键参数</span><div className="stage-parameters">{overview.parameters.map(([symbol,value,source])=><article key={symbol}><b>{symbol}</b><strong>{value}</strong><small>{source}</small></article>)}</div></section><section><span>边界说明</span>{overview.notes.map(note=><p key={note}>{note}</p>)}</section></div><footer>展开图说明 · 点击算子查看独立详情</footer></aside>;
 }
 
 function DetailPanel({node,tab,setTab,pinned,onClear,expanded,layerType}:{node:OpNode|null;tab:Tab;setTab:(t:Tab)=>void;pinned:boolean;onClear:()=>void;expanded:ExpandedStage;layerType:LayerType}){
   const tabs:[Tab,string][]=[["io","I/O + 权重"],["formula","公式"],["code","代码"]];
   if(!node&&expanded)return <StageOverviewPanel type={layerType} stage={expanded}/>;
   if(!node)return <aside className="detail-panel detail-empty"><div><span>MODULE DETAIL</span><b>尚未选择模块</b><p>点击左侧任一运算模块后，可在这里查看固定的 I/O、权重、公式和 forward 代码。</p></div></aside>;
-  return <aside className="detail-panel"><header className="detail-header"><div><span>{node.kicker}</span><h2>{node.title}</h2></div>{pinned?<button className="unpin-button" aria-label="取消固定" title="取消固定" onClick={onClear}>×</button>:<i className={`kind-dot op-${node.kind}`}/>}<p>{node.summary}</p><code>{node.runtime}</code></header><div className="detail-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div><div className={`detail-content detail-${tab}`}>
+  const formulaSteps=FORMULA_STEPS_BY_ID[node.id];
+  return <aside className="detail-panel"><header className="detail-header"><div><span>{node.kicker}</span><h2>{node.title}</h2></div>{pinned?<button className="unpin-button" aria-label="取消固定" title="取消固定" onClick={onClear}>×</button>:<i className={`kind-dot op-${node.kind}`}/>}<p>{node.summary}</p><code>{node.runtime}</code></header><div className="detail-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div><div key={tab} className={`detail-content detail-${tab}`}>
     {tab==="io"&&<IoView node={node}/>}
-    {tab==="formula"&&<div className="formula-view"><span>作用</span><div className="formula-purpose">{node.summary}</div><span>实际公式</span><LatexFormula node={node}/><div className="formula-implementation"><b>一句话解释</b><p>{node.formulaNote??FORMULA_NOTE[node.kind]}</p></div><div className="formula-terms">{formulaTerms(node).map(([symbol,meaning])=><span key={symbol}><b>{symbol}</b>{meaning}</span>)}</div></div>}
+    {tab==="formula"&&<div className="formula-view"><span>作用</span><div className="formula-purpose">{node.summary}</div><span>实际公式</span><LatexFormula node={node}/>{formulaSteps?<div className="formula-steps">{formulaSteps.map(step=><article className="formula-step" key={step.title}><header>{step.title}</header><LatexExpression formula={step.formula} label={`${step.title} 公式`} className="formula-step-math"/><p>{step.explanation}</p></article>)}</div>:<><div className="formula-implementation"><b>一句话解释</b><p>{node.formulaNote??FORMULA_NOTE[node.kind]}</p></div><div className="formula-terms">{formulaTerms(node).map(([symbol,meaning])=><span key={symbol}><b>{symbol}</b>{meaning}</span>)}</div></>}</div>}
     {tab==="code"&&<CodeView node={node}/>}
     </div><footer>vLLM @ {VLLM_COMMIT.slice(0,7)} · official safetensors</footer></aside>;
 }
@@ -907,7 +1247,7 @@ export default function Home(){
   return <main className={`atlas-app ${dark?"dark":""} ${expanded?"stage-expanded":""}`}><header className="app-header">
     <div className="brand-lockup"><span className="brand-glyph"><i/><i/><i/></span><div><b>Model Atlas</b></div></div>
     <label className="model-select"><span>MODEL</span><select aria-label="选择模型" value="minimax-m3" onChange={()=>undefined}>{MODEL_REGISTRY.map(m=><option key={m.id} value={m.id} disabled={!m.enabled}>{m.name}</option>)}</select></label>
-    <nav className="resource-links"><a href={CODE_URL} target="_blank" rel="noreferrer"><b>CODE ↗</b><small>vLLM @ {VLLM_COMMIT.slice(0,7)}</small></a><a href={WEIGHTS_URL} target="_blank" rel="noreferrer"><b>WEIGHTS ↗</b><small>Hugging Face · 59 shards</small></a></nav>
+    <nav className="resource-links"><a href={CODE_URL} target="_blank" rel="noreferrer"><b>CODE ↗</b><small>vLLM @ {VLLM_COMMIT.slice(0,7)}</small></a><a href={TRANSFORMERS_MOE_URL} target="_blank" rel="noreferrer"><b>TRANSFORMERS ↗</b><small>MiniMax-M3 readable reference</small></a><a href={WEIGHTS_URL} target="_blank" rel="noreferrer"><b>WEIGHTS ↗</b><small>Hugging Face · 59 shards</small></a></nav>
     <div className="model-facts"><span><b>428B</b><small>模型总参数量</small></span><span><b>23B</b><small>每 token 激活参数</small></span><span><b>1M</b><small>最大上下文 token</small></span><span><b>869 GB</b><small>BF16 checkpoint</small></span></div>
     <button className="help-button" onClick={()=>setHelp(true)} aria-label="查看参数和符号说明">?</button><button className="theme-button" onClick={()=>setDark(v=>!v)} aria-label="切换明暗主题">{dark?"☀":"☾"}</button>
   </header><div className="screen-grid"><section className="map-panel">

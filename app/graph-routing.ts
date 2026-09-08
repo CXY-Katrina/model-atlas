@@ -1,5 +1,11 @@
 export type RoutePoint = {x:number;y:number};
 
+export type FanoutRoute = {
+  path:string;
+  arrow:boolean;
+  role:"trunk"|"rail"|"drop";
+};
+
 type RouteDirection = "vertical" | "horizontal" | "side-left" | "side-right" | "bus-left" | "bus-right";
 
 type RouteGraphEdgeOptions = {
@@ -14,12 +20,75 @@ type RouteGraphEdgeOptions = {
 
 const n=(value:number)=>Number(value.toFixed(2));
 
-export function routeGraphEdge({source,target,direction,obstacleBounds,clearance,approach=14,departure=24}:RouteGraphEdgeOptions){
+export function routeGraphFanout({source,targets,departure=48,radius=24}:{
+  source:RoutePoint;
+  targets:RoutePoint[];
+  departure?:number;
+  radius?:number;
+}):FanoutRoute[]{
+  if(targets.length===0)return [];
+  const sx=n(source.x); const sy=n(source.y);
+  const direction=targets.reduce((sum,target)=>sum+target.y,0)/targets.length>=sy?1:-1;
+  const nearestGap=Math.min(...targets.map(target=>Math.abs(target.y-sy)));
+  const railDistance=Math.min(Math.max(8,departure),Math.max(8,nearestGap-8));
+  const railY=n(sy+direction*railDistance);
+  const xs=targets.map(target=>n(target.x));
+  const minX=Math.min(...xs); const maxX=Math.max(...xs);
+  const leftRadius=n(Math.min(radius,Math.abs(sx-minX),railDistance/2));
+  const rightRadius=n(Math.min(radius,Math.abs(maxX-sx),railDistance/2));
+  const trunkRadius=Math.max(leftRadius,rightRadius);
+  const routes:FanoutRoute[]=[{
+    path:`M ${sx} ${sy} L ${sx} ${n(railY-direction*trunkRadius)}`,
+    arrow:false,
+    role:"trunk",
+  }];
+
+  if(minX<sx){
+    routes.push({
+      path:`M ${sx} ${n(railY-direction*leftRadius)} Q ${sx} ${railY}, ${n(sx-leftRadius)} ${railY} L ${n(minX+leftRadius)} ${railY} Q ${minX} ${railY}, ${minX} ${n(railY+direction*leftRadius)}`,
+      arrow:false,
+      role:"rail",
+    });
+  }
+  if(maxX>sx){
+    routes.push({
+      path:`M ${sx} ${n(railY-direction*rightRadius)} Q ${sx} ${railY}, ${n(sx+rightRadius)} ${railY} L ${n(maxX-rightRadius)} ${railY} Q ${maxX} ${railY}, ${maxX} ${n(railY+direction*rightRadius)}`,
+      arrow:false,
+      role:"rail",
+    });
+  }
+
+  for(const target of targets){
+    const tx=n(target.x); const ty=n(target.y);
+    const isLeftEnd=tx===minX&&tx<sx;
+    const isRightEnd=tx===maxX&&tx>sx;
+    const startY=isLeftEnd?n(railY+direction*leftRadius):isRightEnd?n(railY+direction*rightRadius):railY;
+    routes.push({path:`M ${tx} ${startY} L ${tx} ${ty}`,arrow:true,role:"drop"});
+  }
+  return routes;
+}
+
+export function routeGraphEdge({source,target,direction,obstacleBounds,clearance,approach=14,departure}:RouteGraphEdgeOptions){
   const sx=n(source.x); const sy=n(source.y); const tx=n(target.x); const ty=n(target.y);
   if(direction==="vertical"){
     const sign=ty>=sy?1:-1;
     if(sx===tx)return {path:`M ${sx} ${sy} L ${tx} ${ty}`,rail:null};
     const gap=Math.abs(ty-sy);
+    if(departure!==undefined){
+      const horizontalSign=tx>=sx?1:-1;
+      const departureDistance=Math.min(Math.max(0,departure),Math.max(0,gap-8));
+      const junctionY=n(sy+sign*departureDistance);
+      const radius=n(Math.min(24,departureDistance/2,Math.abs(tx-sx)/2,Math.abs(ty-junctionY)/2));
+      const path=[
+        `M ${sx} ${sy}`,
+        `L ${sx} ${n(junctionY-sign*radius)}`,
+        `Q ${sx} ${junctionY}, ${n(sx+horizontalSign*radius)} ${junctionY}`,
+        `L ${n(tx-horizontalSign*radius)} ${junctionY}`,
+        `Q ${tx} ${junctionY}, ${tx} ${n(junctionY+sign*radius)}`,
+        `L ${tx} ${ty}`,
+      ].join(" ");
+      return {path,rail:null};
+    }
     const targetLane=Math.min(approach,gap/2);
     const terminalY=n(ty-sign*targetLane);
     const horizontalSign=tx>=sx?1:-1;
@@ -41,7 +110,7 @@ export function routeGraphEdge({source,target,direction,obstacleBounds,clearance
     const rail=n(right?obstacleBounds.right+clearance:obstacleBounds.left-clearance);
     const horizontalSign=right?1:-1;
     const terminalY=n(ty-sign*Math.min(approach,Math.abs(ty-sy)/3));
-    const junctionY=n(sy+sign*Math.min(departure,Math.abs(terminalY-sy)/3));
+    const junctionY=n(sy+sign*Math.min(departure??24,Math.abs(terminalY-sy)/3));
     const radius=n(Math.min(14,Math.abs(rail-sx)/2,Math.abs(terminalY-junctionY)/3,Math.abs(junctionY-sy)/2));
     const path=[
       `M ${sx} ${sy}`,
