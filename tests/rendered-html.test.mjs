@@ -41,7 +41,7 @@ test("expanded attention keeps labels clear and vertical spacing uniform", async
   assert.match(source, /\{from:"attn-qr",to:"attn-qk",toPort:"top-left",approach:18\}/);
   assert.match(source, /\{from:"attn-paged-k",to:"attn-qk",toPort:dense\?"top-right":"top",approach:28\}/);
   assert.match(source, /\{from:"attn-p",to:"attn-pv",toPort:"top-left",approach:18\}/);
-  assert.match(source, /\{from:"attn-paged-v",to:"attn-pv",toPort:"top-right",route:"bus-left",approach:28,departure:54\}/);
+  assert.match(source, /\{from:"attn-paged-v",to:"attn-pv",toPort:"top-right",route:"bus-right",approach:28,departure:54\}/);
 });
 
 test("expanded sparse attention keeps blocks wide and connector lanes separated", async () => {
@@ -66,7 +66,7 @@ test("expanded sparse attention keeps blocks wide and connector lanes separated"
     '{from:"attn-topids",to:"attn-qk",toPort:"top-right",approach:28}',
     '{from:"attn-paged-k",to:"attn-qk",toPort:dense?"top-right":"top",approach:28}',
     '{from:"attn-qr",to:"attn-qk",toPort:"top-left",approach:18}',
-    '{from:"attn-paged-v",to:"attn-pv",toPort:"top-right",route:"bus-left",approach:28,departure:54}',
+    '{from:"attn-paged-v",to:"attn-pv",toPort:"top-right",route:"bus-right",approach:28,departure:54}',
   ]) assert.ok(source.includes(edge), `missing separated attention edge ${edge}`);
 });
 
