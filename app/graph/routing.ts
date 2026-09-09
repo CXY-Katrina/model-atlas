@@ -139,10 +139,20 @@ export function routeGraphEdge({source,target,direction,obstacleBounds,clearance
     return {path,rail};
   }
   if(direction==="horizontal"){
-    const sign=tx>=sx?1:-1;
-    const terminalX=n(tx-sign*Math.min(14,Math.abs(tx-sx)/3));
-    const midX=n((sx+terminalX)/2);
-    return {path:`M ${sx} ${sy} C ${midX} ${sy}, ${midX} ${ty}, ${terminalX} ${ty} L ${tx} ${ty}`,rail:null};
+    const h=tx>=sx?1:-1;
+    const d=ty>=sy?1:-1;
+    const midX=n((sx+tx)/2);
+    if(Math.abs(ty-sy)<GRAPH_GEOMETRY.straightTolerance)return {path:`M ${sx} ${sy} L ${tx} ${ty}`,rail:null};
+    const radius=n(Math.min(GRAPH_GEOMETRY.cornerRadius,Math.abs(tx-sx)/2,Math.abs(ty-sy)/2));
+    const path=[
+      `M ${sx} ${sy}`,
+      `L ${n(midX-h*radius)} ${sy}`,
+      `Q ${midX} ${sy}, ${midX} ${n(sy+d*radius)}`,
+      `L ${midX} ${n(ty-d*radius)}`,
+      `Q ${midX} ${ty}, ${n(midX+h*radius)} ${ty}`,
+      `L ${tx} ${ty}`,
+    ].join(" ");
+    return {path,rail:null};
   }
 
   const right=direction==="side-right";

@@ -1,0 +1,370 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "稀疏 MLA:候选内精确注意力 + learnable sink + gated MLA",
+    "locale": "zh-CN",
+    "subtitle": "稀疏的是访问集合(每 query 仅 top-2048 token),候选内部仍是完整 softmax;QKᵀ/scale → softmax(+sink) → P·V 三步为 FlashMLA sparse 单内核的数学分解,不独立物化",
+    "output": "public/models/hy4-preview/diagrams/dsa-mla.html",
+    "viewBox": [
+      1080,
+      800
+    ],
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "visual_preset": "classic",
+    "views": [
+      {
+        "id": "kv-path",
+        "label": "KV 路径",
+        "focus": [
+          "mla-kvc",
+          "mla-kpe",
+          "mla-cache",
+          "mla-kvb",
+          "mla-score"
+        ],
+        "note": "压缩 KV cache 保存 k̃ 与 k_pe;k_nope / V 由 kv_b_proj 投影。"
+      },
+      {
+        "id": "sink-gate",
+        "label": "sink 与门控",
+        "focus": [
+          "mla-soft",
+          "mla-ctx",
+          "mla-gate",
+          "mla-oproj"
+        ],
+        "note": "sink 折进 softmax 分母;输出经 elementwise 门控后投回 hidden。"
+      }
+    ],
+    "legend": {
+      "mode": "auto"
+    }
+  },
+  "stages": [
+    {
+      "label": "子块输入"
+    },
+    {
+      "label": "cache"
+    },
+    {
+      "label": "KV 投影"
+    },
+    {
+      "label": "注意力"
+    },
+    {
+      "label": "门控输出"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "mla-q",
+      "type": "external",
+      "label": "Q(已旋转)",
+      "sublabel": "[T,64,256]",
+      "stage": 0,
+      "row": 0,
+      "width": 150
+    },
+    {
+      "id": "mla-kpe",
+      "type": "external",
+      "label": "k_pe(已旋转)",
+      "sublabel": "[T,1,64] · MQA",
+      "stage": 0,
+      "row": 1,
+      "width": 150
+    },
+    {
+      "id": "mla-kvc",
+      "type": "external",
+      "label": "k̃(当前 token)",
+      "sublabel": "[T,512] · RMSNorm 后",
+      "stage": 0,
+      "row": 2,
+      "width": 150
+    },
+    {
+      "id": "mla-cache",
+      "type": "database",
+      "label": "MLA 压缩 KV cache",
+      "sublabel": "历史 k̃ ‖ k_pe · 默认 BF16",
+      "stage": 1,
+      "row": 2,
+      "width": 170
+    },
+    {
+      "id": "mla-kvb",
+      "type": "backend",
+      "label": "kv_b_proj",
+      "sublabel": "512 → 64×448:K_nope 192 + V 256",
+      "stage": 2,
+      "row": 2,
+      "width": 180
+    },
+    {
+      "id": "mla-score",
+      "type": "backend",
+      "label": "QKᵀ / √256 + causal",
+      "sublabel": "单内核数学分解 · top-2048 候选",
+      "stage": 3,
+      "row": 1,
+      "width": 200
+    },
+    {
+      "id": "mla-soft",
+      "type": "backend",
+      "label": "softmax + learnable sink",
+      "sublabel": "softmax 分母折入 sink",
+      "stage": 3,
+      "row": 2,
+      "width": 190
+    },
+    {
+      "id": "mla-ctx",
+      "type": "backend",
+      "label": "O = P·V",
+      "sublabel": "[T,64,256] · 候选内精确",
+      "stage": 3,
+      "row": 3,
+      "width": 160
+    },
+    {
+      "id": "mla-gate",
+      "type": "backend",
+      "label": "gated MLA(⊙ σ(gate))",
+      "sublabel": "elementwise · gate = hidden·W_gateᵀ 64×256",
+      "stage": 4,
+      "row": 2,
+      "width": 190
+    },
+    {
+      "id": "mla-oproj",
+      "type": "backend",
+      "label": "o_proj",
+      "sublabel": "16384 → 6144",
+      "stage": 4,
+      "row": 3,
+      "width": 160
+    },
+    {
+      "id": "mla-y",
+      "type": "external",
+      "label": "Y_attn",
+      "sublabel": "[T,6144] · 交回 hc_post",
+      "stage": 4,
+      "row": 4,
+      "width": 160
+    }
+  ],
+  "flows": [
+    {
+      "id": "q-to-score",
+      "from": "mla-q",
+      "to": "mla-score",
+      "label": "Q(64 head)",
+      "classification": "q 侧",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [
+        [
+          240,
+          157
+        ],
+        [
+          637,
+          157
+        ],
+        [
+          637,
+          95
+        ],
+        [
+          745,
+          95
+        ]
+      ],
+      "labelAt": [
+        420,
+        95
+      ]
+    },
+    {
+      "id": "kpe-to-score",
+      "from": "mla-kpe",
+      "to": "mla-score",
+      "label": "当前 k_pe",
+      "classification": "q 侧",
+      "variant": "default",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        422,
+        314
+      ]
+    },
+    {
+      "id": "kvc-to-cache",
+      "from": "mla-kvc",
+      "to": "mla-cache",
+      "label": "写入当前 k̃",
+      "classification": "缓存",
+      "variant": "default",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        207,
+        428
+      ]
+    },
+    {
+      "id": "kpe-to-cache",
+      "from": "mla-kpe",
+      "to": "mla-cache",
+      "label": "写入 k_pe",
+      "classification": "缓存",
+      "variant": "dashed"
+    },
+    {
+      "id": "cache-to-kvb",
+      "from": "mla-cache",
+      "to": "mla-kvb",
+      "label": "历史 k̃",
+      "classification": "k 侧",
+      "variant": "default",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        422,
+        428
+      ]
+    },
+    {
+      "id": "kvb-to-score",
+      "from": "mla-kvb",
+      "to": "mla-score",
+      "label": "K_nope / V",
+      "classification": "k 侧",
+      "variant": "default"
+    },
+    {
+      "id": "score-to-soft",
+      "from": "mla-score",
+      "to": "mla-soft",
+      "label": "候选内 scores",
+      "classification": "≤2048 列",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        795,
+        314
+      ]
+    },
+    {
+      "id": "soft-to-ctx",
+      "from": "mla-soft",
+      "to": "mla-ctx",
+      "label": "P · sink 折扣",
+      "classification": "概率",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        795,
+        428
+      ]
+    },
+    {
+      "id": "ctx-to-gate",
+      "from": "mla-ctx",
+      "to": "mla-gate",
+      "label": "heads",
+      "classification": "[T,64,256]",
+      "variant": "default",
+      "fromSide": "right",
+      "toSide": "left",
+      "via": [
+        [
+          845,
+          499
+        ],
+        [
+          845,
+          385
+        ]
+      ],
+      "labelAt": [
+        890,
+        455
+      ]
+    },
+    {
+      "id": "gate-to-oproj",
+      "from": "mla-gate",
+      "to": "mla-oproj",
+      "label": "门控后 heads",
+      "classification": "输出投影",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        1010,
+        428
+      ]
+    },
+    {
+      "id": "oproj-to-y",
+      "from": "mla-oproj",
+      "to": "mla-y",
+      "label": "Y_attn",
+      "classification": "子块输出",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        1010,
+        542
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "读的是压缩 cache",
+      "items": [
+        "cache 每 token 只存 512 维 k̃ + 64 维 k_pe,不是逐头 K/V",
+        "K_nope / V 在注意力侧由 kv_b_proj 从 k̃ 恢复(每 head 192+256)",
+        "attention scale 用 qk_head_dim = 192+64 = 256,不是 v_head_dim"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "learnable sink",
+      "items": [
+        "每 head 一个 FP32 参数(checkpoint 初始 0),不随位置变化",
+        "内核把 sink 折进 softmax 分母:out × exp(lse)/(exp(lse)+exp(sink))",
+        "sink 依赖 sparse 后端;若后端不支持会禁用并告警,静默降级被禁止"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "gated MLA",
+      "items": [
+        "gate 从子块输入 hidden 投影(64×256),与注意力输出逐元素相乘",
+        "elementwise 门控在 o_proj 之前,调节每个 head 每个 V 通道",
+        "vllm 提供 HPC 单内核融合路径,数学不变"
+      ]
+    }
+  ]
+}

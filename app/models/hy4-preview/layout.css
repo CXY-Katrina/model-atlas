@@ -1,0 +1,399 @@
+/* Hy4-preview-only architecture geometry; common spacing comes from design tokens. */
+
+/* map-panel has a 4th child (archify bar) — let header rows size to content. */
+:where([data-model="hy4-preview"]) .map-panel {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+/* zoomed graphs may exceed the canvas; keep the header and scroll the workbench. */
+:where([data-model="hy4-preview"]) .layer-canvas {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+:where([data-model="hy4-preview"]) .layer-nav {
+  grid-template-columns: 1fr;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-16);
+}
+
+:where([data-model="hy4-preview"]) .layer-nav-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+:where([data-model="hy4-preview"]) .layer-nav-head b {
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+:where([data-model="hy4-preview"]) .layer-type-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-8);
+}
+
+:where([data-model="hy4-preview"]) .layer-type-options button {
+  display: grid;
+  gap: 3px;
+  align-content: center;
+  text-align: left;
+  padding: 9px var(--space-12) 10px;
+  border: 1px solid var(--field);
+  border-radius: var(--radius-10);
+  background: transparent;
+  cursor: pointer;
+  min-width: 0;
+}
+
+:where([data-model="hy4-preview"]) .layer-type-options button span {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  opacity: 0.72;
+}
+
+:where([data-model="hy4-preview"]) .layer-type-options button b {
+  font-size: 12.5px;
+  line-height: 1.25;
+}
+
+:where([data-model="hy4-preview"]) .layer-type-options button small {
+  font-size: 11px;
+  line-height: 1.3;
+  opacity: 0.7;
+}
+
+:where([data-model="hy4-preview"]) .layer-type-options button.active {
+  border-color: var(--focus-ring);
+  outline: 1px solid var(--focus-ring);
+}
+
+:where([data-model="hy4-preview"]) .layer-type-options button.dense.active { background: color-mix(in srgb, var(--dense) 12%, transparent); }
+:where([data-model="hy4-preview"]) .layer-type-options button.sparse.active { background: color-mix(in srgb, var(--route) 12%, transparent); }
+:where([data-model="hy4-preview"]) .layer-type-options button.shared.active { background: color-mix(in srgb, var(--cache) 12%, transparent); }
+
+/* Archify diagram entry + modal */
+:where([data-model="hy4-preview"]) .archify-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  padding: 0 var(--space-16);
+}
+
+:where([data-model="hy4-preview"]) .archify-bar-label {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  opacity: 0.65;
+}
+
+:where([data-model="hy4-preview"]) .archify-bar button {
+  border: 1px solid var(--field);
+  background: transparent;
+  border-radius: 999px;
+  padding: 4px var(--space-12);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+:where([data-model="hy4-preview"]) .archify-bar button:hover { border-color: var(--focus-ring); }
+
+:where([data-model="hy4-preview"]) .archify-modal {
+  width: min(1180px, 94vw);
+  height: min(880px, 92vh);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+:where([data-model="hy4-preview"]) .archify-modal header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  border-bottom: 1px solid var(--field);
+}
+
+:where([data-model="hy4-preview"]) .archify-modal header span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  opacity: 0.65;
+}
+
+:where([data-model="hy4-preview"]) .archify-modal header small {
+  display: block;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+:where([data-model="hy4-preview"]) .archify-modal-actions { display: flex; align-items: center; gap: var(--space-12); }
+
+:where([data-model="hy4-preview"]) .archify-modal-actions a { font-size: 12px; }
+
+:where([data-model="hy4-preview"]) .archify-modal iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--canvas-surface);
+}
+
+:where([data-model="hy4-preview"]) .config-source-note {
+  margin-top: var(--space-8);
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+/* decoder workbench */
+:where([data-model="hy4-preview"]) .decoder-workbench { display: grid; }
+:where([data-model="hy4-preview"]) .decoder-workbench.has-zoom { grid-template-columns: minmax(0, 1fr); gap: 0; max-height: 100%; overflow-y: auto; }
+:where([data-model="hy4-preview"]) .decoder-column { display: flex; flex-direction: column; align-items: center; gap: clamp(36px, 5vh, 56px); width: min(660px, 96%); margin-inline: auto; }
+:where([data-model="hy4-preview"]) .decoder-column .tensor-node,
+:where([data-model="hy4-preview"]) .decoder-column .op-node { width: max-content; max-width: 100%; flex: 0 0 auto; }
+:where([data-model="hy4-preview"]) .decoder-node-graph > * { flex: 0 0 auto; }
+:where([data-model="hy4-preview"]) .decoder-node-graph .input-weighted-op { display: grid; justify-items: center; row-gap: 10px; }
+:where([data-model="hy4-preview"]) .decoder-node-graph .co-input-row { display: flex; gap: var(--space-10); align-items: flex-start; justify-content: center; }
+:where([data-model="hy4-preview"]) .stage-summary { width: max-content; max-width: 100%; flex: 0 0 auto; }
+
+/* stage zoom shared */
+:where([data-model="hy4-preview"]) .lesson-zoom { container-type: inline-size; }
+:where([data-model="hy4-preview"]) .stage-zoom>header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: var(--space-10) var(--space-14);
+}
+:where([data-model="hy4-preview"]) .stage-zoom>header span { font-size: 12px; letter-spacing: 0.08em; opacity: 0.75; }
+
+/* zoom cards carry a badge row + name row + shape row; drop the shared 54px cap. */
+:where([data-model="hy4-preview"]) .stage-zoom .graph-surface :is(.op-node, .tensor-node) {
+  min-height: 40px;
+  max-height: none;
+  align-self: auto;
+}
+
+/* pan hint parked top-right where every hy4 zoom graph keeps clear space */
+:where([data-model="hy4-preview"]) .stage-zoom .graph-pan-hint {
+  right: 12px;
+  bottom: auto;
+  left: auto;
+  top: 10px;
+}
+
+:where([data-model="hy4-preview"]) .compact-chain {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-12);
+  padding: var(--space-10) var(--space-14);
+}
+
+:where([data-model="hy4-preview"]) .compact-chain :is(.op-node, .tensor-node) {
+  flex: 0 0 auto;
+}
+
+/* attention zoom: ribbon (indexer) + Q/KV lanes + score pipeline */
+:where([data-model="hy4-preview"]) .attention-flowchart {
+  padding-inline: var(--space-14);
+}
+
+:where([data-model="hy4-preview"]) .attn-branches {
+  display: grid;
+  grid-template-columns: minmax(240px, max-content) minmax(520px, 1fr);
+  gap: var(--space-10) 48px;
+  padding: var(--space-10) var(--space-14);
+  align-items: start;
+}
+
+:where([data-model="hy4-preview"]) .index-ribbon {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: clamp(40px, 5.6vh, 60px) var(--space-12);
+  padding: var(--space-14);
+  border: 1px dashed var(--route);
+  border-radius: var(--radius-10);
+  min-width: 0;
+}
+
+:where([data-model="hy4-preview"]) .index-ribbon-label {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  opacity: 0.75;
+}
+
+:where([data-model="hy4-preview"]) .index-ribbon>[data-graph-id] {
+  justify-self: center;
+  width: max-content;
+  max-width: 100%;
+}
+
+:where([data-model="hy4-preview"]) .index-ribbon [data-graph-id="attn-xh"],
+:where([data-model="hy4-preview"]) .index-ribbon [data-graph-id="attn-iscore"],
+:where([data-model="hy4-preview"]) .index-ribbon [data-graph-id="attn-topids"] {
+  grid-column: 1 / -1;
+}
+
+:where([data-model="hy4-preview"]) .index-ribbon [data-graph-id="attn-iwqb"],
+:where([data-model="hy4-preview"]) .index-ribbon [data-graph-id="attn-iquant"] { grid-column: 2; }
+
+:where([data-model="hy4-preview"]) .index-ribbon [data-graph-id="attn-iwk"],
+:where([data-model="hy4-preview"]) .index-ribbon [data-graph-id="attn-ikn"],
+:where([data-model="hy4-preview"]) .index-ribbon [data-graph-id="attn-icache"] { grid-column: 1; }
+
+:where([data-model="hy4-preview"]) .hy-lanes {
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: var(--space-14);
+  align-items: start;
+  justify-content: flex-start;
+}
+
+/* lane cards keep natural height: shared flex-basis 0 pinned 3-row cards to min-height */
+:where([data-model="hy4-preview"]) .hy-lanes>section :is(.op-node, .tensor-node) {
+  flex: 0 0 auto;
+}
+
+/* equal tracks put the inter-card gap on the lane axis so trunk lines drop through it */
+:where([data-model="hy4-preview"]) .hy-lanes .two-source {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(32px, 3.5vw, 48px);
+  justify-items: center;
+  align-items: center;
+}
+
+/* side input (positions) sits beside its consumer; trunk drops past the row's open end */
+:where([data-model="hy4-preview"]) .hy-lanes .io-row {
+  display: flex;
+  gap: var(--space-10);
+  align-items: center;
+  justify-content: center;
+}
+
+:where([data-model="hy4-preview"]) .hy-lanes .side-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: clamp(28px, 3vh, 40px);
+}
+
+:where([data-model="hy4-preview"]) .hy-lanes>section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(44px, 6vh, 64px);
+  min-width: 0;
+}
+
+:where([data-model="hy4-preview"]) .hy-lanes>section>header {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  opacity: 0.7;
+  align-self: stretch;
+}
+
+:where([data-model="hy4-preview"]) .two-source { display: flex; flex-wrap: wrap; gap: var(--space-8); }
+:where([data-model="hy4-preview"]) .input-weighted-op { display: grid; justify-items: start; row-gap: 6px; }
+:where([data-model="hy4-preview"]) .co-input-row { display: flex; gap: var(--space-10); align-items: flex-start; }
+
+:where([data-model="hy4-preview"]) .score-pipeline {
+  display: flex;
+  flex-direction: column;
+  gap: 56px;
+  padding: 48px var(--space-14) var(--space-12);
+}
+
+:where([data-model="hy4-preview"]) .pipeline-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+}
+
+/* natural card widths: never let the shared flex rule squeeze them */
+:where([data-model="hy4-preview"]) .score-pipeline :is(.op-node, .tensor-node) {
+  flex: 0 0 auto;
+}
+
+:where([data-model="hy4-preview"]) .score-pipeline-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  opacity: 0.7;
+  text-align: center;
+}
+
+/* dense FFN zoom: main column with weight cards side-placed */
+:where([data-model="hy4-preview"]) .hy-ffn-graph {
+  display: grid;
+  grid-template-columns: max-content max-content max-content;
+  justify-content: center;
+  align-content: start;
+  column-gap: clamp(28px, 3vw, 44px);
+  row-gap: clamp(48px, 7vh, 80px);
+  padding: var(--space-12) var(--space-16) var(--space-20);
+}
+
+:where([data-model="hy4-preview"]) .hy-ffn-graph>[data-graph-id] {
+  justify-self: center;
+  align-self: center;
+}
+
+:where([data-model="hy4-preview"]) .hy-ffn-graph [data-graph-id="ffn-u"] { grid-area: 1 / 2; }
+:where([data-model="hy4-preview"]) .hy-ffn-graph [data-graph-id="ffn-w"] { grid-area: 2 / 1; }
+:where([data-model="hy4-preview"]) .hy-ffn-graph [data-graph-id="ffn-gateup"] { grid-area: 2 / 2; }
+:where([data-model="hy4-preview"]) .hy-ffn-graph [data-graph-id="ffn-packed"] { grid-area: 3 / 2; }
+:where([data-model="hy4-preview"]) .hy-ffn-graph [data-graph-id="ffn-act"] { grid-area: 4 / 2; }
+:where([data-model="hy4-preview"]) .hy-ffn-graph [data-graph-id="ffn-down"] { grid-area: 5 / 2; }
+:where([data-model="hy4-preview"]) .hy-ffn-graph [data-graph-id="ffn-wdown"] { grid-area: 5 / 3; }
+:where([data-model="hy4-preview"]) .hy-ffn-graph [data-graph-id="ffn-y"] { grid-area: 6 / 2; }
+
+/* MoE zoom: router chain left-center, u feeds branches through the empty center column */
+:where([data-model="hy4-preview"]) .hy-moe-graph {
+  display: grid;
+  grid-template-columns: max-content max-content max-content max-content;
+  justify-content: center;
+  align-content: start;
+  column-gap: clamp(26px, 2.6vw, 40px);
+  row-gap: clamp(48px, 7vh, 80px);
+  padding: var(--space-12) var(--space-16) var(--space-20);
+}
+
+:where([data-model="hy4-preview"]) .hy-moe-graph>[data-graph-id] {
+  justify-self: center;
+  align-self: center;
+}
+
+:where([data-model="hy4-preview"]) .hy-moe-graph .tensor-weight { width: 230px; max-width: 100%; }
+
+:where([data-model="hy4-preview"]) .hy-moe-graph [data-graph-id="moe-u"] { grid-area: 1 / 3; }
+:where([data-model="hy4-preview"]) .hy-moe-graph [data-graph-id="moe-wrouter"] { grid-area: 2 / 1; }
+:where([data-model="hy4-preview"]) .hy-moe-graph [data-graph-id="moe-router"] { grid-area: 2 / 2; }
+:where([data-model="hy4-preview"]) .hy-moe-graph [data-graph-id="moe-logits"] { grid-area: 3 / 2; }
+:where([data-model="hy4-preview"]) .hy-moe-graph [data-graph-id="moe-select"] { grid-area: 4 / 2; }
+:where([data-model="hy4-preview"]) .hy-moe-graph [data-graph-id="moe-w"] { grid-area: 5 / 1; }
+:where([data-model="hy4-preview"]) .hy-moe-graph [data-graph-id="moe-wexp"] { grid-area: 6 / 1; }
+:where([data-model="hy4-preview"]) .hy-moe-graph [data-graph-id="moe-experts"] { grid-area: 6 / 2; }
+:where([data-model="hy4-preview"]) .hy-moe-graph [data-graph-id="moe-mshare"] { grid-area: 6 / 4; }
+:where([data-model="hy4-preview"]) .hy-moe-graph [data-graph-id="moe-msum"] { grid-area: 7 / 3; }
+:where([data-model="hy4-preview"]) .hy-moe-graph [data-graph-id="moe-y"] { grid-area: 8 / 3; }
+
+:where([data-model="hy4-preview"]) .tensor-node code,
+:where([data-model="hy4-preview"]) .op-node b { overflow-wrap: anywhere; }
+
+/* line-type vocabulary: data solid · weight dashed · external dotted · residual long-dash */
+:where([data-model="hy4-preview"]) .graph-connectors .edge-line.edge-weight { stroke-dasharray: 7 5; }
+:where([data-model="hy4-preview"]) .graph-connectors .edge-line.edge-external { stroke-dasharray: 2.5 4.5; }
+:where([data-model="hy4-preview"]) .graph-connectors .edge-line.edge-residual { stroke-dasharray: 12 7; }
+
+@media (max-width: 1160px) {
+  :where([data-model="hy4-preview"]) .attn-branches { grid-template-columns: minmax(0, 1fr); }
+  :where([data-model="hy4-preview"]) .hy-lanes { grid-template-columns: minmax(0, 1fr); }
+  :where([data-model="hy4-preview"]) .layer-type-options { grid-template-columns: minmax(0, 1fr); }
+}

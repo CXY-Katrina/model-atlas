@@ -87,7 +87,7 @@ test("horizontal routes finish perpendicular to the arrowhead base", () => {
     clearance: 24,
   });
 
-  assert.equal(route.path, "M 60 120 C 98 120, 98 150, 136 150 L 150 150");
+  assert.equal(route.path, "M 60 120 L 90 120 Q 105 120, 105 135 L 105 135 Q 105 150, 120 150 L 150 150");
 });
 
 test("vertical fan-out honors one shared departure height", () => {

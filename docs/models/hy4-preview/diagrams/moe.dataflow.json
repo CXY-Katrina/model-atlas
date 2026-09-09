@@ -1,0 +1,352 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "MoE 子块:sigmoid 路由 Top-8 + 1 共享专家(L1–L77)",
+    "locale": "zh-CN",
+    "subtitle": "routed experts 使用 clamped SwiGLU(limit 10);shared expert 不截断、不路由",
+    "output": "public/models/hy4-preview/diagrams/moe.html",
+    "viewBox": [
+      1080,
+      800
+    ],
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "visual_preset": "classic",
+    "views": [
+      {
+        "id": "route-path",
+        "label": "路由路径",
+        "focus": [
+          "moe-u",
+          "moe-gate",
+          "moe-select",
+          "moe-weight",
+          "moe-expert"
+        ],
+        "note": "FP32 路由:bias 只影响选择,混合权重用原始 sigmoid 分数。"
+      },
+      {
+        "id": "shared-path",
+        "label": "共享支路",
+        "focus": [
+          "moe-u",
+          "moe-shared",
+          "moe-combine"
+        ],
+        "note": "所有 token 必经的共享专家,形状与单个路由专家相同。"
+      }
+    ],
+    "legend": {
+      "mode": "auto"
+    }
+  },
+  "stages": [
+    {
+      "label": "子块输入"
+    },
+    {
+      "label": "FP32 路由"
+    },
+    {
+      "label": "专家计算"
+    },
+    {
+      "label": "合并"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "moe-u",
+      "type": "external",
+      "label": "Û",
+      "sublabel": "[T,6144] · norm 后",
+      "stage": 0,
+      "row": 3,
+      "width": 150
+    },
+    {
+      "id": "moe-gate",
+      "type": "backend",
+      "label": "gate",
+      "sublabel": "6144 → 256 · FP32 logits",
+      "stage": 1,
+      "row": 0,
+      "width": 160
+    },
+    {
+      "id": "moe-select",
+      "type": "backend",
+      "label": "σ + expert_bias · Top-8",
+      "sublabel": "sigmoid 打分;bias 只影响选择",
+      "stage": 1,
+      "row": 1,
+      "width": 190
+    },
+    {
+      "id": "moe-weight",
+      "type": "backend",
+      "label": "renormalize × 2.827",
+      "sublabel": "混合权重用未加 bias 的分数",
+      "stage": 1,
+      "row": 2,
+      "width": 170
+    },
+    {
+      "id": "moe-expert",
+      "type": "backend",
+      "label": "256 routed experts",
+      "sublabel": "clamped SwiGLU 2048:g≤10 · u∈±10",
+      "stage": 2,
+      "row": 2,
+      "width": 180
+    },
+    {
+      "id": "moe-shared",
+      "type": "backend",
+      "label": "1 shared expert",
+      "sublabel": "SwiGLU 2048 · 无 clamp · 全 token",
+      "stage": 2,
+      "row": 4,
+      "width": 180
+    },
+    {
+      "id": "moe-combine",
+      "type": "backend",
+      "label": "routed ⊕ shared",
+      "sublabel": "routed 已按 ŵ 加权归并",
+      "stage": 3,
+      "row": 2,
+      "width": 170
+    },
+    {
+      "id": "moe-out",
+      "type": "external",
+      "label": "Y_moe",
+      "sublabel": "[T,6144] · 交回 hc_post",
+      "stage": 3,
+      "row": 3,
+      "width": 160
+    }
+  ],
+  "flows": [
+    {
+      "id": "u-to-gate",
+      "from": "moe-u",
+      "to": "moe-gate",
+      "label": "router 输入",
+      "classification": "FP32",
+      "variant": "default",
+      "fromSide": "top",
+      "toSide": "left",
+      "via": [
+        [
+          100,
+          157
+        ]
+      ],
+      "labelAt": [
+        140,
+        300
+      ]
+    },
+    {
+      "id": "gate-to-select",
+      "from": "moe-gate",
+      "to": "moe-select",
+      "label": "256 logits",
+      "classification": "路由",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        420,
+        214
+      ]
+    },
+    {
+      "id": "select-to-weight",
+      "from": "moe-select",
+      "to": "moe-weight",
+      "label": "Top-8 集合 + 分数",
+      "classification": "路由",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        360,
+        335
+      ]
+    },
+    {
+      "id": "weight-to-expert",
+      "from": "moe-weight",
+      "to": "moe-expert",
+      "label": "ŵ(Top-8)",
+      "classification": "混合权重",
+      "variant": "emphasis",
+      "labelAt": [
+        470,
+        318
+      ],
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [
+        [
+          412,
+          385
+        ],
+        [
+          412,
+          327
+        ],
+        [
+          530,
+          327
+        ]
+      ]
+    },
+    {
+      "id": "u-to-expert",
+      "from": "moe-u",
+      "to": "moe-expert",
+      "label": "Û",
+      "classification": "专家输入",
+      "variant": "emphasis",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        300,
+        545
+      ],
+      "via": [
+        [
+          430,
+          499
+        ],
+        [
+          430,
+          385
+        ]
+      ]
+    },
+    {
+      "id": "u-to-shared",
+      "from": "moe-u",
+      "to": "moe-shared",
+      "label": "Û(不过 Top-K)",
+      "classification": "共享支路",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          100,
+          700
+        ],
+        [
+          410,
+          700
+        ],
+        [
+          410,
+          613
+        ]
+      ],
+      "labelAt": [
+        255,
+        700
+      ]
+    },
+    {
+      "id": "expert-to-combine",
+      "from": "moe-expert",
+      "to": "moe-combine",
+      "label": "Y_routed",
+      "classification": "加权归并",
+      "variant": "emphasis",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        620,
+        460
+      ]
+    },
+    {
+      "id": "shared-to-combine",
+      "from": "moe-shared",
+      "to": "moe-combine",
+      "label": "Y_shared",
+      "classification": "恒在支路",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "via": [
+        [
+          650,
+          613
+        ],
+        [
+          650,
+          455
+        ],
+        [
+          745,
+          455
+        ]
+      ],
+      "labelAt": [
+        660,
+        660
+      ]
+    },
+    {
+      "id": "combine-to-out",
+      "from": "moe-combine",
+      "to": "moe-out",
+      "label": "Y_moe",
+      "classification": "子块输出",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        795,
+        442
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "路由的三个数字",
+      "items": [
+        "256 选 8:激活参数约 49B / 总参 770B 的来源",
+        "选择用 σ(r)+bias,权重用 σ(r) 归一后 × routed_scaling_factor 2.827",
+        "n_group = topk_group = 1:无分组约束,等价朴素 Top-8"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "clamp 只在 routed",
+      "items": [
+        "routed experts:gate 截 max=10,up 截 ±10,再 silu(g)·u",
+        "shared expert 与 L0 dense FFN 用普通 SwiGLU,不截断",
+        "专家是融合 all-experts 张量:gate_up_proj [256,4096,6144] 运行时切 w1/w3"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "权重名对照",
+      "items": [
+        "checkpoint mlp.gate.e_score_correction_bias → 运行时 expert_bias",
+        "shared_experts.{gate,up,down}_proj:与单个 routed expert 同形",
+        "router 与 expert_bias 均为 FP32;专家权重 BF16(W8A8 部署见 ascend 教程)"
+      ]
+    }
+  ]
+}
