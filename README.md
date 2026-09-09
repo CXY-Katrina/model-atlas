@@ -30,11 +30,15 @@ npm run dev
 
 仓库提供 [model-atlas-adapter](app/skills/model-atlas-adapter/SKILL.md)：基于用户提供的 **vLLM 或 Transformers 源码**，研究模型结构、生成文档，并适配为本项目的交互图示。技能包位于 `app/skills/model-atlas-adapter/`，不由前端导入，也不会作为页面运行时执行。
 
+**绘图必须依赖 [tt-a1i/archify](https://github.com/tt-a1i/archify)**：生成 typed JSON → HTML/SVG，并执行验证和真实浏览器检查；不是仅参考其风格。它是 agent 使用的独立绘图技能，不是本项目的 npm 依赖。安装 model-atlas-adapter 不会自动安装 archify。
+
 ### 安装与调用
 
 在支持技能安装的 Codex 环境中，可以发送：
 
 ```text
+先使用 $skill-installer，从 tt-a1i/archify 仓库安装 archify 目录中的技能。
+
 使用 $skill-installer，从 CXY-Katrina/model-atlas 仓库安装
 app/skills/model-atlas-adapter 目录中的技能。
 ```
@@ -51,7 +55,7 @@ app/skills/model-atlas-adapter 目录中的技能。
 版本：<commit/tag；未指定时先解析并固定源码版本>
 范围：<模型变体、模态，以及需要展示的后端和推理阶段>
 
-请研究源码、生成 docs、实现并渲染页面，
+请研究源码、生成模型知识 docs，使用 archify 绘图并接入页面，
 启动图示与语义两个独立检视 agent，通过文档修复并复查。
 本次只完成本地适配，不提交或部署。
 ```
@@ -66,11 +70,24 @@ app/skills/model-atlas-adapter 目录中的技能。
 | 图示 agent | 独立检查框线／文字遮挡、走线、对称、箭头、padding、溢出与画布交互 |
 | 语义 agent | 独立核对图示、公式、源码、缓存、mask、权重及所有可见参数和符号 |
 
-研究结果写入 `docs/models/<model-id>/`；范围、候选版本、问题、答复、双审报告和截图证据写入 `.scratch/add-<model-id>/`。主 agent 是唯一实现者，检视者各写自己的报告；三方通过这些文档交接和迭代。
+主 agent 是唯一实现者，检视者各写自己的报告；三方通过协作文档交接和迭代。按用途明确区分产物：
+
+| 类型 | 路径 | 内容 |
+| --- | --- | --- |
+| 模型知识成果，供读者查阅 | `docs/models/<model-id>/` | `README.md` 成果索引、`architecture.md` 模型结构、`formulas.md` 公式、`symbols.md` 符号、`implementation.md` 源码解释、`evidence.md` 证据索引、`diagrams/*.json` Archify 图示源 |
+| 可执行适配代码 | `app/models/<model-id>/` | 实际页面模块、数据和模型专属代码；不是上述源码解释文档 |
+| 用户可见的生成图示 | `public/models/<model-id>/diagrams/` | Archify 成功交付的 HTML，原样接入模型 View；不包含生成日志或临时截图 |
+| agent 协作与验证过程 | `.scratch/add-<model-id>/` | spec、handoff、issues、responses、review、候选指纹、回执、临时截图和日志 |
+
+`docs/models/<model-id>/` **不存放 agent 之间的交互记录**。成果 Markdown 使用 `Document-Kind: model-knowledge` 标识，协作 Markdown 使用 `Document-Kind: agent-collaboration`；两者的详细所有权和状态见文档契约。已核实的讨论结论由主 agent 整理为模型知识，而不是把对话或 review 报告搬进成果目录。
+
+协作记录默认不随交付提交，也不被页面读取或复制到 `public/`、`dist/`。当前 `.scratch/` 并非自动被 Git 忽略，提交时需检查明确文件清单；需要保留审计材料时单独确定范围。
 
 验收要求真实浏览器检查和适用测试通过，且两个检视者对**同一候选版本**分别通过。源码或截图变化后，旧版验收失效；技能附带的 SHA-256 指纹工具会重新枚举文件，检测新增、修改和删除。布局约束包含直线优先、同类合流对称、内容自适应尺寸和统一留白；语义约束要求固定源码版本、区分数学分解与实际 OP，并按含义定义符号，不能把相同数字机械替换成同一维度。
 
 完整流程分别见 [图示检查](app/skills/model-atlas-adapter/references/visual-review.md)、[语义检查](app/skills/model-atlas-adapter/references/semantic-review.md) 和 [文档交接契约](app/skills/model-atlas-adapter/references/document-contract.md)。
+
+[Archify 集成约定](app/skills/model-atlas-adapter/references/archify-integration.md) 说明依赖检查、JSON 生成、`validate` / `deliver` / `visual-check`、回执保存及页面接入。图示通过自动验证不等于视觉审查通过；独立图示通过也不等于嵌入后的页面通过。未安装 archify 或其渲染器无法运行时，可以继续源码研究，但绘图验收保持阻塞。
 
 需要可用的多 agent 和浏览器能力：提供 Orca orchestration 的环境按其实际运行协议调度；其他支持原生子 agent 的环境使用对应机制。没有独立检视或真实渲染能力时会报告阻塞，不能用主 agent 自检冒充双审完成。
 
