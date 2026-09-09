@@ -35,38 +35,46 @@ test("expanded attention keeps labels clear and vertical spacing uniform", async
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
   assert.match(css, /\.graph-pan-content \.connected-attention-graph\{[^}]*--attention-row-gap:/);
-  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.qkv-lanes>section>header\{[^}]*position:relative[^}]*z-index:3[^}]*background:var\(--field\)/);
+  for (const path of ["Q", "K", "V"]) assert.match(source, new RegExp(`<header>${path} PATH<\\/header>`));
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.qkv-lanes\{[^}]*grid-template-columns:repeat\(3,max-content\)/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.qkv-lanes>section\{[^}]*grid-template-rows:28px 148px 62px 62px 62px/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.qkv-lanes>section>header\{[^}]*justify-self:start/);
   assert.match(css, /\.graph-pan-content \.connected-attention-graph \.tensor-weight\{[^}]*min-width:150px[^}]*overflow-wrap:anywhere/);
-  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.score-pipeline\{[^}]*background:transparent/);
-  assert.match(source, /\{from:"attn-qr",to:"attn-qk",toPort:"top-left",approach:18\}/);
-  assert.match(source, /\{from:"attn-paged-k",to:"attn-qk",toPort:dense\?"top-right":"top",approach:28\}/);
-  assert.match(source, /\{from:"attn-p",to:"attn-pv",toPort:"top-left",approach:18\}/);
-  assert.match(source, /\{from:"attn-paged-v",to:"attn-pv",toPort:"top-right",route:"bus-right",approach:28,departure:54\}/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.score-pipeline\{[^}]*flex:0 0 auto[^}]*width:min\(920px,100%\)[^}]*background:transparent/);
+  assert.match(source, /\{from:"attn-qr",to:"attn-qk",toPort:"top-left",approach:28\}/);
+  assert.match(source, /\{from:"attn-paged-k",to:"attn-qk"\}/);
+  assert.match(source, /\{from:"attn-p",to:"attn-pv",toPort:"top-left",approach:34\}/);
+  assert.match(source, /\{from:"attn-paged-v",to:"attn-pv",toPort:"top-right",approach:34\}/);
+  assert.equal(source.match(/graphId="attn-paged-v"/g)?.length, 1);
+  assert.match(source, /className="score-pipeline"[\s\S]*graphId="attn-p"[\s\S]*graphId="attn-paged-v"/);
+  assert.match(css, /\.score-pipeline \[data-graph-id="attn-paged-v"\]\{grid-area:7\/3\}/);
+  assert.match(css, /\.context-pipeline \[data-graph-id="attn-pv"\]\{grid-area:1\/2\/2\/4;justify-self:center\}/);
 });
 
 test("expanded sparse attention keeps blocks wide and connector lanes separated", async () => {
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
-  assert.match(css, /\.graph-pan-content \.connected-attention-graph\.sparse-attention\{[^}]*width:max\(100%,2020px\)/);
-  assert.match(css, /\.attention-branches:not\(\.dense\)\{[^}]*grid-template-columns:minmax\(1180px,2\.4fr\) minmax\(600px,1\.2fr\)/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph\.sparse-attention\{[^}]*width:max\(100%,1740px\)/);
+  assert.match(css, /\.attention-branches:not\(\.dense\)\{[^}]*grid-template-columns:max-content minmax\(600px,1fr\)/);
   assert.match(css, /\.attention-branches:not\(\.dense\)>\.attention-data-path\{[^}]*grid-area:1\/1/);
   assert.match(css, /\.attention-branches:not\(\.dense\)>\.index-ribbon\{[^}]*grid-area:1\/2/);
-  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.qkv-lanes \.co-input-row\{[^}]*grid-template-columns:minmax\(160px,\.8fr\) minmax\(220px,1\.2fr\)/);
-  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.index-ribbon\{[^}]*padding:[^;}]*52px/);
-  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.index-ribbon-label\{[^}]*position:absolute[^}]*background:var\(--field\)/);
-  assert.match(source, /className="index-ribbon-label">LIGHTNING INDEXER · per query \/ KV group<\/header>/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.qkv-lanes \.co-input-row\{[^}]*grid-template-columns:max-content max-content/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.index-ribbon\{[^}]*padding:22px var\(--group-padding-inline\)/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.index-ribbon\{[^}]*grid-template-rows:28px 90px/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.index-ribbon-label\{[^}]*grid-area:1\/3\/2\/4[^}]*transform:translateY\(-4px\)/);
+  assert.match(source, /className="index-ribbon-label">LIGHTNING INDEXER<\/header>/);
 
   for (const edge of [
-    '{from:"attn-split",to:"attn-q",fanout:"attn-five-way",departure:64}',
-    '{from:"attn-split",to:"attn-k",fanout:"attn-five-way",departure:64}',
-    '{from:"attn-split",to:"attn-v",fanout:"attn-five-way",departure:64}',
-    '{from:"attn-split",to:"attn-qidx",fanout:"attn-five-way",departure:64}',
-    '{from:"attn-split",to:"attn-kidx",fanout:"attn-five-way",departure:64}',
+    '{from:"attn-split",to:"attn-q",fanout:"attn-five-way",departure:32}',
+    '{from:"attn-split",to:"attn-k",fanout:"attn-five-way",departure:32}',
+    '{from:"attn-split",to:"attn-v",fanout:"attn-five-way",departure:32}',
+    '{from:"attn-split",to:"attn-qidx",fanout:"attn-five-way",departure:32}',
+    '{from:"attn-split",to:"attn-kidx",fanout:"attn-five-way",departure:32}',
     '{from:"attn-topids",to:"attn-qk",toPort:"top-right",approach:28}',
-    '{from:"attn-paged-k",to:"attn-qk",toPort:dense?"top-right":"top",approach:28}',
-    '{from:"attn-qr",to:"attn-qk",toPort:"top-left",approach:18}',
-    '{from:"attn-paged-v",to:"attn-pv",toPort:"top-right",route:"bus-right",approach:28,departure:54}',
+    '{from:"attn-paged-k",to:"attn-qk"}',
+    '{from:"attn-qr",to:"attn-qk",toPort:"top-left",approach:28}',
+    '{from:"attn-paged-v",to:"attn-pv",toPort:"top-right",approach:34}',
   ]) assert.ok(source.includes(edge), `missing separated attention edge ${edge}`);
 });
 
@@ -84,19 +92,19 @@ test("QKV + Index Projection detail contains only five-way projection evidence",
   assert.match(detail, /output_sizes[^\n]*|\[q \| k \| v \| index_q \| index_k\]/i);
 });
 
-test("sparse attention sends Top-16 indices and paged KV directly to attention math", async () => {
+test("sparse attention sends symbolic Top-K indices and paged KV directly to attention math", async () => {
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(source, /"s-idxmask":String\.raw/);
   assert.match(source, /idxnorm:cloneOp\([^\n]*title:"Index Q\/K Gemma RMSNorm \+ RoPE"/);
   assert.match(source, /idxmask:cloneOp\([^\n]*title:"Mask Future Index Keys"/);
   assert.doesNotMatch(source, /select:cloneOp\([^\n]*title:"Map Top-16 Blocks → KV Views"/);
   assert.match(source, /mask:cloneOp\([^\n]*title:"Apply Token Causal \/ Pad Mask"/);
-  assert.match(source, /className="index-ribbon-label">LIGHTNING INDEXER · per query \/ KV group<\/header>/);
-  assert.match(source, /Tensor name="block_indices · Top-16" shape="\[B,4,S,16\]"/);
+  assert.match(source, /className="index-ribbon-label">LIGHTNING INDEXER<\/header>/);
+  assert.match(source, /Tensor name="block_indices · Top-K_block" shape="\[B,N_idx,S,K_block\]"/);
   assert.doesNotMatch(source, /Tensor name="selected [KV] view"/);
-  assert.match(source, /title:"Q × paged Kᵀ · Top-16"/);
-  assert.match(source, /title:"P × paged V · same Top-16"/);
-  assert.match(source, /shape=\{dense\?"\[B,Nₕ,S,T\]":"\[B,Nₕ,S,Ksel\]"\}/);
+  assert.match(source, /title:"Q × paged Kᵀ · Top-K_block"/);
+  assert.match(source, /title:"P × paged V · same Top-K_block"/);
+  assert.match(source, /shape=\{dense\?"\[B,Nₕ,S,T\]":"\[B,Nₕ,S,K_sel\]"\}/);
   for (const edge of [
     '{from:"attn-idxscore",to:"attn-idxmask"}',
     '{from:"attn-idxbounds",to:"attn-idxmask",fromPort:"left",toPort:"right"}',
@@ -114,14 +122,14 @@ test("vLLM index branch exposes its independent key-only side cache", async () =
   assert.match(source, /self\.index_cache\.kv_cache/);
   assert.match(source, /"s-idxcache":String\.raw/);
   assert.match(source, /idxcache:cloneOp\([^\n]*title:"Index K Cache · key-only"/);
-  assert.match(source, /Tensor name="Index Q query" shape="\[B,4,S,128\]" graphId="attn-idxquery"/);
+  assert.match(source, /Tensor name="Index Q query" shape="\[B,N_idx,S,D_idx\]" graphId="attn-idxquery"/);
   assert.match(source, /Tensor name="index slot_mapping" shape="\[Nq\]" role="side" graphId="attn-idxslots"/);
   for (const edge of [
     '{from:"attn-idxnorm",to:"attn-idxquery",fromPort:"bottom-left",approach:30}',
-    '{from:"attn-idxnorm",to:"attn-idxcache",fromPort:"bottom-right",approach:30}',
+    '{from:"attn-idxnorm",to:"attn-idxcache"}',
     '{from:"attn-idxslots",to:"attn-idxcache",fromPort:"left",toPort:"right"}',
     '{from:"attn-idxquery",to:"attn-idxscore",toPort:"top-left",approach:30}',
-    '{from:"attn-idxcache",to:"attn-idxscore",toPort:"top-right",approach:30}',
+    '{from:"attn-idxcache",to:"attn-idxscore"}',
   ]) assert.ok(source.includes(edge), `missing Index K cache edge ${edge}`);
   assert.match(css, /\[data-graph-id="attn-idxcache"\]\{grid-area:3\/2\}/);
   assert.match(css, /\[data-graph-id="attn-idxscore"\]\{grid-area:4\/2\}/);
@@ -150,9 +158,24 @@ test("attention fan-out is shared and compact labels stay inside their nodes", a
   assert.match(css, /\[data-graph-id="attn-topids"\][^{]*\{[^}]*height:82px/);
   assert.match(css, /\[data-graph-id="attn-idxbounds"\] b[^}]*overflow-wrap:anywhere/);
   assert.match(css, /\[data-graph-id="attn-bounds"\][^{]*\{[^}]*width:min\(420px,100%\)[^}]*justify-self:start/);
-  assert.match(css, /\.attention-branches:not\(\.dense\)\{[^}]*grid-template-columns:minmax\(1180px,2\.4fr\) minmax\(600px,1\.2fr\)/);
+  assert.match(css, /\.attention-branches:not\(\.dense\)\{[^}]*grid-template-columns:max-content minmax\(600px,1fr\)/);
   assert.match(css, /\.index-ribbon\{[^}]*box-sizing:border-box[^}]*min-width:0[^}]*overflow:hidden/);
   assert.match(css, /\.index-ribbon>\[data-graph-id\][^{]*\{[^}]*box-sizing:border-box[^}]*max-width:100%/);
+});
+
+test("diagram geometry prefers straight paths, content-sized cards, and conditional panning", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+
+  assert.match(source, /\{from:"attn-p",to:"attn-pv",toPort:"top-left",approach:34\}/);
+  assert.match(source, /const \[canPan,setCanPan\]=useState\(false\)/);
+  assert.match(source, /content\.scrollWidth>viewport\.clientWidth\+1\|\|content\.scrollHeight>viewport\.clientHeight\+1/);
+  assert.match(source, /\{canPan&&<span className="graph-pan-hint">/);
+  assert.match(css, /\.graph-pan-viewport\.can-pan\{cursor:grab;touch-action:none\}/);
+  assert.match(css, /\.graph-pan-content \.graph-surface :is\(\.op-node,\.tensor-node\)\{[^}]*width:fit-content!important[^}]*padding-inline:18px!important/);
+  assert.match(css, /\.score-pipeline-label\{[^}]*grid-area:1\/1\/2\/4/);
+  assert.match(source, /Tensor name="Qidx" shape="\[B,S,N_idx,D_idx\]"/);
+  assert.match(source, /title:"Block Max · B_block keys"/);
 });
 
 test("keeps code, checkpoint, formula, and shape evidence together", async () => {
@@ -170,8 +193,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /formula/);
   assert.match(source, /weights/);
   assert.match(source, /type OpKind/);
-  assert.match(source, /Top-16 Blocks/);
-  assert.match(source, /Q × paged Kᵀ · Top-16/);
+  assert.match(source, /Top-K_block Blocks/);
+  assert.match(source, /Q × paged Kᵀ · Top-K_block/);
   assert.match(source, /side:"EXTERNAL"/);
   assert.match(source, /position\(req,i\)=num_computed_tokens\[req\]\+i/);
   assert.match(source, /CommonAttentionMetadata/);
@@ -295,7 +318,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /title:"Q Gemma RMSNorm · per-head",summary:"对每个 Q head 的 128 维向量独立执行 Gemma 风格 RMSNorm。"/);
   assert.match(source, /title:"K Gemma RMSNorm · per-head",summary:"对每个 K head 的 128 维向量独立执行 Gemma 风格 RMSNorm。"/);
   assert.match(source, /for\(const id of \["d-qnorm","d-knorm","s-mainnorm"\]\) CODE_BY_ID\[id\]=\{sections:QK_NORM_SECTIONS,symbols:QK_NORM_SYMBOLS\};/);
-  assert.match(source, /className="score-pipeline-label">ATTENTION SCORE PIPELINE · selected blocks 内计算概率 P<\/header>/);
+  assert.match(source, /className="score-pipeline-label">ATTENTION SCORE PIPELINE · 候选 blocks 内计算概率 P<\/header>/);
   assert.doesNotMatch(source, /本节点不执行 RoPE 或 Attention/);
   assert.match(source, /"d-qnorm":String\.raw`\\begin\{aligned\}\\operatorname\{RMS\}\(Q_\{b,h,s\}\)[\s\S]*\\tilde Q_\{b,h,s,i\}[\s\S]*\\operatorname\{RMS\}\(Q_\{b,h,s\}\)[\s\S]*\\end\{aligned\}`/);
   assert.match(source, /"d-knorm":String\.raw`\\begin\{aligned\}\\operatorname\{RMS\}\(K_\{b,g,s\}\)[\s\S]*\\tilde K_\{b,g,s,i\}[\s\S]*\\operatorname\{RMS\}\(K_\{b,g,s\}\)[\s\S]*\\end\{aligned\}`/);
@@ -398,9 +421,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.multiply-circle\[aria-pressed="true"\]\{[^}]*outline:2px solid #1f6c4d5c[^}]*border-color:var\(--green\)/);
   assert.match(css, /\.mlp-node-graph \[data-graph-id="mlp-wdown"\]\{grid-area:9\/5\}/);
   assert.match(css, /\.moe-node-graph/);
-  assert.match(css, /\.moe-node-graph \[data-graph-id="moe-experts"\]\{grid-area:4\/3\}/);
-  assert.match(css, /\.moe-node-graph \[data-graph-id="moe-sum"\]\{grid-area:6\/4\}/);
-  assert.match(css, /\.moe-node-graph \[data-graph-id="moe-y"\]\{grid-area:7\/4\}/);
+  assert.match(css, /\.graph-pan-content \.moe-node-graph>\[data-graph-id="moe-experts"\]\{grid-area:4\/5\}/);
+  assert.match(css, /\.graph-pan-content \.moe-node-graph>\[data-graph-id="moe-sum"\]\{grid-area:6\/5\/7\/8\}/);
+  assert.match(css, /\.graph-pan-content \.moe-node-graph>\[data-graph-id="moe-y"\]\{grid-area:7\/5\/8\/8\}/);
   assert.match(css, /\.stage-zoom\{container-type:inline-size\}/);
   assert.match(css, /\.stage-zoom \.moe-node-graph\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\);grid-template-rows:repeat\(7,minmax\(54px,1fr\)\);gap:10px clamp\(15px,1\.2vw,22px\);padding:8px clamp\(16px,1\.6vw,32px\)\}/);
   assert.match(css, /\.stage-zoom \.moe-node-graph :is\(\.tensor-node,\.op-node\)\{min-height:46px;max-height:none;padding:6px 9px;gap:2px;line-height:1\.1\}/);
@@ -450,19 +473,18 @@ test("routes MoE branches on symmetric rails without crossing nodes", async () =
 
   assert.match(
     source,
-    /\{from:"moe-u",to:"moe-shared",fromPort:"bottom-right",toPort:"top",approach:34\}/,
+    /\{from:"moe-u",to:"moe-shared",fromPort:"bottom-right",toPort:"top",approach:28\}/,
   );
   assert.doesNotMatch(
     source,
     /\{from:"moe-u",to:"moe-shared",route:"side-right",fromPort:"right",toPort:"right"\}/,
   );
   assert.doesNotMatch(source, /graphId="moe-expert-input"/);
-  assert.match(source, /\{from:"moe-u",to:"moe-experts",toPort:"top-right",approach:38\}/);
+  assert.match(source, /\{from:"moe-u",to:"moe-experts"\}/);
   assert.match(source, /\{from:"moe-router-logits",to:"moe-experts",toPort:"top-left",approach:28\}/);
-  assert.match(css, /\.moe-expert-branches\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
-  assert.match(css, /\.moe-routed-branch>\[data-graph-id="moe-router-logits"\]\{grid-area:2\/2/);
-  assert.match(source, /\{from:"moe-routed",to:"moe-sum",toPort:"top-left",approach:38\}/);
-  assert.match(source, /\{from:"moe-shared-out",to:"moe-sum",toPort:"top-right",approach:38\}/);
+  assert.doesNotMatch(source, /className="moe-expert-branches"/);
+  assert.match(source, /\{from:"moe-routed",to:"moe-sum",toPort:"top-left",approach:24\}/);
+  assert.match(source, /\{from:"moe-shared-out",to:"moe-sum",toPort:"top-right",approach:24\}/);
   assert.match(source, /name="shared expert weights ×3" shape="gate \/ up \/ down"/);
   assert.doesNotMatch(source, /name="block_sparse_moe\.shared_experts\.\{gate_proj,up_proj,down_proj\}\.weight"/);
 

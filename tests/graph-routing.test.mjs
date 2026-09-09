@@ -36,15 +36,17 @@ test("direct routes keep the arrow on one continuous path", () => {
 });
 
 test("aligned vertical routes stay straight from top to bottom", () => {
+  for (const targetX of [150, 150.01, 149.99]) {
   const route = routeGraphEdge({
     source: { x: 150, y: 60 },
-    target: { x: 150, y: 150 },
+    target: { x: targetX, y: 150 },
     direction: "vertical",
     obstacleBounds: { left: 0, right: 300 },
     clearance: 24,
   });
 
   assert.equal(route.path, "M 150 60 L 150 150");
+  }
 });
 
 test("long approaches keep a straight segment between the final curve and arrow", () => {

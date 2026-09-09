@@ -6,20 +6,19 @@ const page = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 
 test("MoE expert branches use short independent lanes and a symmetric merge", () => {
-  assert.match(page, /className="moe-expert-branches"/);
-  assert.match(css, /\.moe-expert-branches\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.doesNotMatch(page, /className="moe-expert-branches"/);
   assert.match(css, /\.lesson-zoom \.graph-pan-content\{height:100%\}/);
-  assert.match(css, /\.graph-pan-content \.moe-node-graph\{[^}]*height:100%;min-height:660px[^}]*grid-template-rows:52px minmax\(360px,1fr\) 64px 76px[^}]*gap:20px/);
-  assert.match(css, /\.moe-expert-branch\{[^}]*grid-template-rows:repeat\(4,minmax\(64px,1fr\)\)[^}]*gap:16px[^}]*padding:10px 14px/);
-  assert.match(css, /\.moe-expert-branch\{[^}]*grid-template-columns:minmax\(150px,1fr\) minmax\(220px,1\.5fr\) minmax\(150px,1fr\)/);
-  assert.match(css, /\.moe-weighted-step\{display:contents\}/);
-  assert.match(css, /\.moe-routed-branch>\[data-graph-id="moe-routed"\],\.moe-shared-branch>\[data-graph-id="moe-shared-out"\]\{grid-row:4;grid-column:2/);
+  assert.match(css, /\.graph-pan-content \.moe-node-graph\{[^}]*width:min\(1180px,100%\)[^}]*grid-template-columns:minmax\(140px,1fr\) 36px minmax\(180px,1\.15fr\) 36px minmax\(230px,1\.4fr\) 36px minmax\(180px,1\.15fr\) 36px minmax\(140px,1fr\)[^}]*grid-template-rows:52px 64px 64px 64px 72px 64px 76px[^}]*gap:24px 10px/);
+  assert.match(css, /\[data-graph-id="moe-experts"\]\{grid-area:4\/5\}/);
+  assert.match(css, /\[data-graph-id="moe-wexperts"\]\{grid-area:4\/1\}/);
+  assert.match(css, /\[data-graph-id="moe-shared"\]\{grid-area:2\/7\}/);
+  assert.match(css, /\[data-graph-id="moe-sum"\]\{grid-area:6\/5\/7\/8\}/);
   assert.doesNotMatch(page, /graphId="moe-expert-input"/);
   assert.doesNotMatch(page, /\{from:"moe-u",to:"moe-expert-input"/);
-  assert.match(page, /\{from:"moe-u",to:"moe-experts",toPort:"top-right",approach:38\}/);
+  assert.match(page, /\{from:"moe-u",to:"moe-experts"\}/);
   assert.match(page, /\{from:"moe-router-logits",to:"moe-experts",toPort:"top-left",approach:28\}/);
-  assert.match(page, /\{from:"moe-routed",to:"moe-sum",toPort:"top-left"/);
-  assert.match(page, /\{from:"moe-shared-out",to:"moe-sum",toPort:"top-right"/);
+  assert.match(page, /\{from:"moe-routed",to:"moe-sum",toPort:"top-left",approach:24\}/);
+  assert.match(page, /\{from:"moe-shared-out",to:"moe-sum",toPort:"top-right",approach:24\}/);
 });
 
 test("weight nodes and their legend use the same dashed outline", () => {
@@ -31,7 +30,7 @@ test("Router exposes only materialized logits and owns only its code", () => {
   assert.match(page, /const ROUTER_SECTIONS: CodeSection\[\] = \[\s*\{stage:"1 · ROUTE"/);
   assert.match(page, /CODE_BY_ID\["s-router"\]=\{sections:ROUTER_SECTIONS,symbols:ROUTER_SYMBOLS\};/);
   assert.match(page, /title:"FP32 Router Logits"[\s\S]*output:"router_logits"[\s\S]*outputShape:"\[B,S,128\]"/);
-  assert.match(page, /name="router logits" shape="\[B,S,128\]" graphId="moe-router-logits"/);
+  assert.match(page, /name="router logits" shape="\[B,S,E\]" graphId="moe-router-logits"/);
   assert.match(page, /\{from:"moe-router",to:"moe-router-logits"\}/);
   assert.match(page, /\{from:"moe-router-logits",to:"moe-experts",toPort:"top-left"/);
   assert.doesNotMatch(page, /graphId="moe-(?:ids|rweights)"/);

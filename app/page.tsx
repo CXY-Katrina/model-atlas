@@ -765,7 +765,7 @@ const INPUT_OVERRIDES: Record<string, IoBinding[]> = {
 
 const NEXT_BY_ID: Record<string,string> = {
   "d-input":"Gemma RMSNorm","d-position":"Partial RoPE (Q/K)","d-attnmeta":"Apply Causal / Pad Bounds","d-slots":"Paged KV Cache","d-norm":"QKV Projection","d-qkv":"Split Q / K / V","d-split":"Q RMSNorm · K RMSNorm · Paged KV Cache","d-qnorm":"Partial RoPE (Q)","d-knorm":"Partial RoPE (K)","d-ropeq":"Q × Kᵀ","d-ropek":"Paged KV Cache","d-cache":"Q × Kᵀ · P × V","d-qk":"Scale 1/√128","d-scale":"Apply Causal / Pad Bounds","d-mask":"Softmax","d-softmax":"P × V","d-pv":"O Projection","d-oproj":"Attention Residual Merge","d-add1":"Post-attn Gemma RMSNorm","d-postnorm":"Gate + Up Projection","d-gateup":"Split Gate / Up","d-gatesplit":"SwiGLU-OAI","d-swiglu":"Down Projection","d-down":"Decoder Layer Residual Merge","d-add2":"下一 decoder layer / Final Norm",
-  "s-input":"Gemma RMSNorm","s-position":"Partial RoPE","s-attnmeta":"Indexer 与 Sparse Attention mask","s-slots":"Paged KV Cache","s-norm":"QKV + Index Projection","s-packed":"Split 5 outputs","s-split":"Index Q/K Gemma RMSNorm + RoPE · Main Q/K Gemma RMSNorm · Paged KV Cache","s-idxnorm":"Index Q query · Index K Cache","s-idxcache":"Index Q × cached Kᵀ","s-idxscore":"Mask Future Index Keys","s-idxmask":"Block Max","s-blockmax":"Top-16 Blocks","s-topk":"Q × paged Kᵀ · Top-16","s-mainnorm":"Partial RoPE","s-rope":"Paged KV Cache · Q × paged Kᵀ · Top-16","s-cache":"Q × paged Kᵀ · Top-16 · P × paged V","s-qk":"Scale 1/√128","s-scale":"Apply Token Causal / Pad Mask","s-mask":"Softmax","s-softmax":"P × paged V · same Top-16","s-pv":"O Projection","s-oproj":"Attention Residual Merge","s-addattn":"Post-attn Gemma RMSNorm","s-postnorm":"FP32 Router Logits · Fused Top-4 Routing + Experts · Shared Expert","s-router":"router_logits → Fused Top-4 Routing + Experts","s-experts":"Add Routed + Shared","s-shared":"Add Routed + Shared","s-sum":"Decoder Layer Residual Merge","s-addout":"下一 decoder layer / Final Norm",
+  "s-input":"Gemma RMSNorm","s-position":"Partial RoPE","s-attnmeta":"Indexer 与 Sparse Attention mask","s-slots":"Paged KV Cache","s-norm":"QKV + Index Projection","s-packed":"Split 5 outputs","s-split":"Index Q/K Gemma RMSNorm + RoPE · Main Q/K Gemma RMSNorm · Paged KV Cache","s-idxnorm":"Index Q query · Index K Cache","s-idxcache":"Index Q × cached Kᵀ","s-idxscore":"Mask Future Index Keys","s-idxmask":"Block Max","s-blockmax":"Top-K_block Blocks","s-topk":"Q × paged Kᵀ · Top-K_block","s-mainnorm":"Partial RoPE","s-rope":"Paged KV Cache · Q × paged Kᵀ · Top-K_block","s-cache":"Q × paged Kᵀ · Top-K_block · P × paged V","s-qk":"Scale 1/√Dₕ","s-scale":"Apply Token Causal / Pad Mask","s-mask":"Softmax","s-softmax":"P × paged V · same Top-K_block","s-pv":"O Projection","s-oproj":"Attention Residual Merge","s-addattn":"Post-attn Gemma RMSNorm","s-postnorm":"FP32 Router Logits · Fused Top-4 Routing + Experts · Shared Expert","s-router":"router_logits → Fused Top-4 Routing + Experts","s-experts":"Add Routed + Shared","s-shared":"Add Routed + Shared","s-sum":"Decoder Layer Residual Merge","s-addout":"下一 decoder layer / Final Norm",
 };
 
 const cloneOp = (base: Node, values: Partial<OpNode> & { id: string; kind: OpKind; title: string }): OpNode => {
@@ -826,16 +826,16 @@ function sparseGraph(layer: number): Record<string, OpNode> {
     idxcache:cloneOp(indexer,{id:"s-idxcache",kind:"cache",title:"Index K Cache · key-only",summary:"vLLM 为 Indexer 单独分配 side cache：每 token 只保存一个 128 维 Index K，不保存 Index V，也不与主 Paged KV Cache 混用。",input:"current Index K + index slot_mapping",inputShape:"[B,S,128] + [Nq]",output:"cached Index K history",outputShape:"key-only pages · [T,128]",formulaNote:"MiniMaxM3IndexerCache 使用独立 prefix 注册到 KV-cache manager；Indexer score kernel 通过 self.index_cache.kv_cache 读取历史 Index K。",runtime:"vLLM: MiniMaxM3IndexerCache · bf16/fp8_e4m3",source:"common/indexer.py · MiniMaxM3IndexerCache",sourceUrl:`${VLLM_INDEXER_URL}#L101-L151`,weights:[]}),
     idxscore:cloneOp(indexer,{id:"s-idxscore",kind:"matmul",title:"Index Q × cached Kᵀ",input:"Index Q query + cached Index K",inputShape:"[B,max(1,4/TP),S,128] · [B,T,128]",output:"Index token scores",outputShape:"[B,max(1,4/TP),S,T]",formulaNote:"这里只做 Index Q 与完整 Index K history 的点积；不缩放，也不在这个节点混入 causal mask。",weights:[]}),
     idxmask:cloneOp(indexer,{id:"s-idxmask",kind:"mask",title:"Mask Future Index Keys",summary:"在 block max 之前把未来 key 和补齐槽设为 −∞，防止不可见 token 影响选块。",input:"Index token scores + position_ids",inputShape:"[B,max(1,4/TP),S,T] + [B,S]",output:"causal Index scores",outputShape:"[B,max(1,4/TP),S,T]",weights:[]}),
-    blockmax:cloneOp(indexer,{id:"s-blockmax",kind:"route",title:"Block Max · 128 keys",input:"causal Index scores",inputShape:"[B,max(1,4/TP),S,T]",output:"block scores",outputShape:"[B,max(1,4/TP),S,⌈T/128⌉]",formulaNote:"每 128 个 key 的 Index score 取最大值，得到一个 block score。",weights:[]}),
-    topk:cloneOp(topk,{id:"s-topk",kind:"route",title:"Top-16 Blocks · per group",input:"block scores + local block priority",inputShape:"[B,max(1,4/TP),S,Nblocks]",output:"block_indices",outputShape:"[B,4,S,16]",formulaNote:"每个 query、每个 Index/KV group 独立选 16 个逻辑 blocks；local block 先以 +∞ 保证入选，无效槽记为 −1。"}),
+    blockmax:cloneOp(indexer,{id:"s-blockmax",kind:"route",title:"Block Max · B_block keys",input:"causal Index scores",inputShape:"[B,N_idx/TP,S,T]",output:"block scores",outputShape:"[B,N_idx/TP,S,⌈T/B_block⌉]",formulaNote:"每 B_block=128 个 key 的 Index score 取最大值，得到一个 block score。",weights:[]}),
+    topk:cloneOp(topk,{id:"s-topk",kind:"route",title:"Top-K_block Blocks · per group",input:"block scores + local block priority",inputShape:"[B,N_idx/TP,S,N_blocks]",output:"block_indices",outputShape:"[B,N_idx,S,K_block]",formulaNote:"K_block=16；每个 query、每个 Index/KV group 独立选择逻辑 blocks，local block 以 +∞ 保证入选，无效槽记为 −1。"}),
     mainnorm:cloneOp(attn,{id:"s-mainnorm",kind:"norm",title:"Main Q/K Gemma RMSNorm",summary:"分别对主 Attention 的每个 Q/K head 执行 Gemma 风格 RMSNorm。",input:"Q,K",inputShape:"[B,64,S,128] · [B,4,T,128]",output:"Q̃,K̃",outputShape:"same",weights:attn.weights.filter(w=>w.key.includes("_norm"))}),
     rope:cloneOp(attn,{id:"s-rope",kind:"rope",title:"Partial RoPE",input:"Q̃,K̃ + positions",inputShape:"Q/K + [S]",output:"Qᵣ,Kᵣ",outputShape:"Q/K unchanged",weights:[]}),
     cache:cloneOp(attn,{id:"s-cache",kind:"cache",title:"Paged KV Cache",input:"Kᵣ,V + block table",inputShape:"KV pages + [B,Nblocks]",output:"paged K,V",outputShape:"[Npages,128,4,128] ×2",formula:"physical_page=block_table[logical_block]",weights:[]}),
-    qk:cloneOp(attn,{id:"s-qk",kind:"matmul",title:"Q × paged Kᵀ · Top-16",input:"Qᵣ + paged K + block_indices",inputShape:"[B,64/TP,S,128] + KV pages + [B,4,S,16]",output:"local sparse scores",outputShape:"[B,64/TP,S,≤2048]",formulaNote:"没有独立的 KV-view 映射算子：paged-attention kernel 根据 block_indices 与 block_table 直接读取对应 K pages。",weights:[]}),
-    scale:cloneOp(attn,{id:"s-scale",kind:"scale",title:"Scale 1/√128",input:"scores",inputShape:"[B,64/TP,S,≤2048]",output:"scaled scores",outputShape:"same",weights:[]}),
+    qk:cloneOp(attn,{id:"s-qk",kind:"matmul",title:"Q × paged Kᵀ · Top-K_block",input:"Qᵣ + paged K + block_indices",inputShape:"[B,Nₕ/TP,S,Dₕ] + KV pages + [B,N_idx,S,K_block]",output:"local sparse scores",outputShape:"[B,Nₕ/TP,S,K_sel]",formulaNote:"没有独立的 KV-view 映射算子：paged-attention kernel 根据 block_indices 与 block_table 直接读取对应 K pages。",weights:[]}),
+    scale:cloneOp(attn,{id:"s-scale",kind:"scale",title:"Scale 1/√Dₕ",input:"scores",inputShape:"[B,Nₕ/TP,S,K_sel]",output:"scaled scores",outputShape:"same",weights:[]}),
     mask:cloneOp(attn,{id:"s-mask",kind:"mask",title:"Apply Token Causal / Pad Mask",summary:"在 Top-16 候选 blocks 内继续排除未来 token 与 padding；选块范围和 token 可见性是两层不同约束。",input:"selected scores + token bounds",inputShape:"[B,64/TP,S,Ksel] + runtime metadata",output:"masked selected scores",outputShape:"[B,64/TP,S,Ksel]",formula:"Aᵢⱼ←valid_token(i,j) ? Aᵢⱼ : −∞",formulaNote:"Transformers eager/SDPA 会先把 block_indices 展开为 block_keep，再与 attention_mask 合并；部署 kernel 可直接消费 block indices 与边界元数据。",weights:[]}),
     softmax:cloneOp(attn,{id:"s-softmax",kind:"softmax",title:"Softmax",input:"masked scores",inputShape:"[B,64/TP,S,≤2048]",output:"probabilities",outputShape:"same",weights:[]}),
-    pv:cloneOp(attn,{id:"s-pv",kind:"matmul",title:"P × paged V · same Top-16",input:"P + paged V",inputShape:"[B,64/TP,S,≤2048] + KV pages",output:"local heads",outputShape:"[B,S,8192/TP]",formulaNote:"kernel 按 Q×K 阶段相同的 block_indices 顺序直接读取 V pages；不物化 selected V 张量。",weights:[]}),
+    pv:cloneOp(attn,{id:"s-pv",kind:"matmul",title:"P × paged V · same Top-K_block",input:"P + paged V",inputShape:"[B,Nₕ/TP,S,K_sel] + KV pages",output:"local heads",outputShape:"[B,S,NₕDₕ/TP]",formulaNote:"kernel 按 Q×K 阶段相同的 block_indices 顺序直接读取 V pages；不物化 selected V 张量。",weights:[]}),
     oproj:cloneOp(attn,{id:"s-oproj",kind:"linear",title:"O Projection",input:"heads",inputShape:"[B,S,8192]",output:"Yattn",outputShape:"[B,S,6144]",weights:attn.weights.filter(w=>w.key.includes("o_proj"))}),
     addattn:cloneOp(combine,{id:"s-addattn",kind:"add",kicker:"DECODER LAYER · ATTENTION RESIDUAL",title:"Attention Residual Merge",summary:"在 Decoder Layer 内把 Sparse Attention 分支 Yattn 加入 residual stream Xₗ，得到更新后的 U；图中将 fused add 与紧随其后的 post-norm 分开表达。",input:"Xₗ + Yattn",inputShape:"2 × [B,S,6144]",output:"U · updated residual stream",outputShape:"[B,S,6144]",formula:"U=Xₗ+Yattn",formulaNote:"实际调用位于 DecoderLayer.forward L773：fused kernel 先执行 residual += hidden_states，再对更新后的 residual 执行 post-attention Gemma RMSNorm。",runtime:"fused_allreduce_gemma_rms_norm · attention residual",source:"nvidia/model.py · MiniMaxM3DecoderLayer.forward · L773–775",sourceUrl:`${CODE_URL}#L773-L775`,weights:[]}),
     postnorm:cloneOp(normBase,{id:"s-postnorm",kind:"norm",title:"Post-attn Gemma RMSNorm",summary:"输入 U 已由上游 Add 节点计算完成；此节点只执行 Gemma RMSNorm(U)，输出唯一的 Û 作为 MoE 输入。",formulaNote:"U 是上游 Add 的单一输出；本节点只计算 RMS(U) 与 (1+γpost) 缩放，不重复执行 residual add。",input:"U",inputShape:"[B,S,6144]",output:"Û",outputShape:"[B,S,6144]",source:"nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142",sourceUrl:NORM_FORWARD_URL,weights:[postNorm]}),
@@ -847,10 +847,13 @@ function sparseGraph(layer: number): Record<string, OpNode> {
   };
 }
 
-function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:string;children:ReactNode}){
+type GraphAlignment = {node:string;between:string[]};
+
+function GraphSurface({edges,className,children,alignments=[]}:{edges:GraphEdge[];className:string;children:ReactNode;alignments?:GraphAlignment[]}){
   const rootRef=useRef<HTMLDivElement>(null);
   const markerId=`graph-arrow-${useId().replace(/:/g,"")}`;
   const serializedEdges=JSON.stringify(edges);
+  const serializedAlignments=JSON.stringify(alignments);
   const edgeKey=edges.map(edge=>`${edge.from}:${edge.fromPort??"bottom"}>${edge.to}:${edge.toPort??"top"}:${edge.route??"direct"}:${edge.fanout??"single"}`).join("|");
   const [paths,setPaths]=useState<GraphPath[]>([]);
   useLayoutEffect(()=>{
@@ -869,6 +872,18 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
       return [x+rect.width/2,y+rect.height];
     };
     const measure=()=>{
+      // Align actual card centers before routing; preserve alignment as text and viewport sizes change.
+      for(const alignment of JSON.parse(serializedAlignments) as GraphAlignment[]){
+        const node=root.querySelector<HTMLElement>(`[data-graph-id="${alignment.node}"]`);
+        const references=alignment.between.map(id=>root.querySelector<HTMLElement>(`[data-graph-id="${id}"]`));
+        if(!node||references.some(reference=>!reference))continue;
+        const centers=references.map(reference=>{const rect=reference!.getBoundingClientRect();return rect.left+rect.width/2});
+        const rect=node.getBoundingClientRect();
+        const property=`--graph-shift-${alignment.node}`;
+        const currentShift=parseFloat(root.style.getPropertyValue(property))||0;
+        const shift=currentShift+centers.reduce((sum,x)=>sum+x,0)/centers.length-(rect.left+rect.width/2);
+        root.style.setProperty(property,`${shift.toFixed(2)}px`);
+      }
       const rootRect=root.getBoundingClientRect();
       const currentEdges=JSON.parse(serializedEdges) as GraphEdge[];
       const nodeRects=[...root.querySelectorAll<HTMLElement>("[data-graph-id]")].map(node=>node.getBoundingClientRect());
@@ -883,6 +898,21 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
         endpointCounts.set(fromKey,(endpointCounts.get(fromKey)??0)+1);
         endpointCounts.set(toKey,(endpointCounts.get(toKey)??0)+1);
       });
+      const mergeLanes=new Map<string,{count:number;approach:number;maxApproach:number}>();
+      for(const edge of currentEdges){
+        if(edge.route||edge.fanout||edge.departure!==undefined)continue;
+        if(!(edge.fromPort??"bottom").startsWith("bottom")||!(edge.toPort??"top").startsWith("top"))continue;
+        const source=root.querySelector<HTMLElement>(`[data-graph-id="${edge.from}"]`);
+        const target=root.querySelector<HTMLElement>(`[data-graph-id="${edge.to}"]`);
+        if(!source||!target)continue;
+        const gap=target.getBoundingClientRect().top-source.getBoundingClientRect().bottom;
+        if(gap<=0)continue;
+        const lane=mergeLanes.get(edge.to)??{count:0,approach:0,maxApproach:Infinity};
+        lane.count++;
+        lane.approach=Math.max(lane.approach,edge.approach??30);
+        lane.maxApproach=Math.min(lane.maxApproach,gap/2);
+        mergeLanes.set(edge.to,lane);
+      }
       const handledFanouts=new Set<string>();
       const next=currentEdges.flatMap(edge=>{
         const source=root.querySelector<HTMLElement>(`[data-graph-id="${edge.from}"]`);
@@ -913,7 +943,10 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
             :24;
         const targetConnections=endpointCounts.get(`to:${edge.to}:${toPort}`)??1;
         const sourceConnections=endpointCounts.get(`from:${edge.from}:${fromPort}`)??1;
-        const approach=edge.approach??(targetConnections>1?48:sourceConnections>1?38:toPort==="top-left"||toPort==="top-right"?30:18);
+        const mergeLane=direction==="vertical"?mergeLanes.get(edge.to):undefined;
+        const approach=mergeLane&&mergeLane.count>1
+          ?Math.min(mergeLane.approach,mergeLane.maxApproach)
+          :edge.approach??(targetConnections>1?48:sourceConnections>1?38:toPort==="top-left"||toPort==="top-right"?30:18);
         const tone:EdgeTone=edge.route?.startsWith("side-")
           ?"residual"
           :source.classList.contains("tensor-weight")
@@ -931,7 +964,7 @@ function GraphSurface({edges,className,children}:{edges:GraphEdge[];className:st
     measure();
     frame=requestAnimationFrame(measure);
     return()=>{cancelAnimationFrame(frame);observer.disconnect()};
-  },[serializedEdges]);
+  },[serializedEdges,serializedAlignments]);
   const tones:EdgeTone[]=["data","weight","external","residual"];
   return <div ref={rootRef} className={`graph-surface ${className}`}>{children}<svg className="graph-connectors" aria-hidden="true"><defs>{tones.map(tone=><marker key={tone} id={`${markerId}-${tone}`} className={`edge-marker edge-marker-${tone}`} markerWidth="10" markerHeight="10" refX="8.5" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0.5 0.8 L 8.5 5 L 0.5 9.2 Z"/></marker>)}</defs><g className="edge-halos">{paths.map((path,index)=><path key={`${edgeKey}-halo-${index}`} className="edge-halo" d={path.d}/>)}</g><g className="edge-lines">{paths.map((path,index)=><path key={`${edgeKey}-line-${index}`} className={`edge-line edge-${path.tone}`} d={path.d} markerEnd={path.marker===false?undefined:`url(#${markerId}-${path.tone})`}/>)}</g></svg></div>;
 }
@@ -942,6 +975,19 @@ function GraphPan({children}:{children:ReactNode}){
   const dragRef=useRef({pointerId:-1,x:0,y:0,offsetX:0,offsetY:0});
   const [offset,setOffset]=useState({x:0,y:0});
   const [dragging,setDragging]=useState(false);
+  const [canPan,setCanPan]=useState(false);
+  useLayoutEffect(()=>{
+    const viewport=viewportRef.current; const content=contentRef.current;
+    if(!viewport||!content)return;
+    const measure=()=>{
+      const next=content.scrollWidth>viewport.clientWidth+1||content.scrollHeight>viewport.clientHeight+1;
+      setCanPan(next);
+      if(!next)setOffset({x:0,y:0});
+    };
+    const observer=new ResizeObserver(measure);
+    observer.observe(viewport); observer.observe(content); measure();
+    return()=>observer.disconnect();
+  },[]);
   const clampOffset=(x:number,y:number)=>{
     const viewport=viewportRef.current; const content=contentRef.current;
     if(!viewport||!content)return {x,y};
@@ -951,6 +997,7 @@ function GraphPan({children}:{children:ReactNode}){
     return {x:Math.max(minX,Math.min(padding,x)),y:Math.max(minY,Math.min(0,y))};
   };
   const onPointerDown=(event:ReactPointerEvent<HTMLDivElement>)=>{
+    if(!canPan)return;
     if((event.target as HTMLElement).closest("button,a"))return;
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current={pointerId:event.pointerId,x:event.clientX,y:event.clientY,offsetX:offset.x,offsetY:offset.y};
@@ -965,9 +1012,9 @@ function GraphPan({children}:{children:ReactNode}){
     dragRef.current.pointerId=-1;
     setDragging(false);
   };
-  return <div ref={viewportRef} className={`graph-pan-viewport ${dragging?"is-dragging":""}`} aria-label="可拖动的算子流程图" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={stopDragging} onPointerCancel={stopDragging}>
-    <div ref={contentRef} className="graph-pan-content" style={{transform:`translate3d(${offset.x}px,${offset.y}px,0)`}}>{children}</div>
-    <span className="graph-pan-hint">抓住空白处拖动画布</span>
+  return <div ref={viewportRef} className={`graph-pan-viewport ${canPan?"can-pan":"fits-page"} ${dragging?"is-dragging":""}`} aria-label={canPan?"可拖动的算子流程图":"完整显示的算子流程图"} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={stopDragging} onPointerCancel={stopDragging}>
+    <div ref={contentRef} className="graph-pan-content" style={{transform:canPan?`translate3d(${offset.x}px,${offset.y}px,0)`:undefined}}>{children}</div>
+    {canPan&&<span className="graph-pan-hint">抓住空白处拖动画布</span>}
   </div>;
 }
 
@@ -990,7 +1037,7 @@ function checkpointWeightName(weight?:Weight){
 
 function InputWeightedOp({node,active,onHover,onLeave,onSelect,inputName,inputShape,weightIndex=0,inputGraphId,graphId,weightGraphId,className=""}:{node:OpNode;active:boolean;onHover:(n:OpNode)=>void;onLeave:()=>void;onSelect:(n:OpNode)=>void;inputName:string;inputShape:string;weightIndex?:number;inputGraphId:string;graphId:string;weightGraphId:string;className?:string}){
   const weight=node.weights[weightIndex];
-  const symbolicWeightShape=weight?.shape.replaceAll("6144","H")??"[H]";
+  const symbolicWeightShape=weight?.shape.replaceAll("6144","H").replaceAll("128","Dₕ")??"[H]";
   return <div className={`input-weighted-op ${className}`}><div className="co-input-row"><Tensor name={inputName} shape={inputShape} graphId={inputGraphId}/><Tensor name={checkpointWeightName(weight)} shape={symbolicWeightShape} role="weight" graphId={weightGraphId}/></div><Op node={node} active={active} onHover={onHover} onLeave={onLeave} onSelect={onSelect} graphId={graphId}/></div>;
 }
 
@@ -1058,36 +1105,48 @@ function StageZoom({type,stage,g,active,onHover,onLeave,onSelect,onClose}:{type:
   }
   if(stage==="ffn"){
     const edges:GraphEdge[]=[
-      {from:"moe-u",to:"moe-router",fromPort:"bottom-left",approach:34},{from:"moe-wrouter",to:"moe-router",fromPort:"right",toPort:"left"},{from:"moe-router",to:"moe-router-logits"},{from:"moe-u",to:"moe-experts",toPort:"top-right",approach:38},{from:"moe-router-logits",to:"moe-experts",toPort:"top-left",approach:28},{from:"moe-wexperts",to:"moe-experts",fromPort:"right",toPort:"left"},{from:"moe-experts",to:"moe-routed"},{from:"moe-u",to:"moe-shared",fromPort:"bottom-right",toPort:"top",approach:34},{from:"moe-wshared",to:"moe-shared",fromPort:"left",toPort:"right"},{from:"moe-shared",to:"moe-shared-out"},{from:"moe-routed",to:"moe-sum",toPort:"top-left",approach:38},{from:"moe-shared-out",to:"moe-sum",toPort:"top-right",approach:38},{from:"moe-sum",to:"moe-y"},
+      {from:"moe-u",to:"moe-router",fromPort:"bottom-left",approach:28},{from:"moe-wrouter",to:"moe-router",fromPort:"right",toPort:"left"},{from:"moe-router",to:"moe-router-logits"},{from:"moe-u",to:"moe-experts"},{from:"moe-router-logits",to:"moe-experts",toPort:"top-left",approach:28},{from:"moe-wexperts",to:"moe-experts",fromPort:"right",toPort:"left"},{from:"moe-experts",to:"moe-routed"},{from:"moe-u",to:"moe-shared",fromPort:"bottom-right",toPort:"top",approach:28},{from:"moe-wshared",to:"moe-shared",fromPort:"left",toPort:"right"},{from:"moe-shared",to:"moe-shared-out"},{from:"moe-routed",to:"moe-sum",toPort:"top-left",approach:24},{from:"moe-shared-out",to:"moe-sum",toPort:"top-right",approach:24},{from:"moe-sum",to:"moe-y"},
     ];
     return <section className="stage-zoom lesson-zoom"><header><span>TOP-4 MOE + SHARED EXPERT · L3–59</span><button onClick={onClose}>收起 ×</button></header><GraphPan><GraphSurface className="moe-node-graph" edges={edges}>
       <Tensor name="Û" shape="[B,S,H]" graphId="moe-u"/>
-      <div className="moe-expert-branches">
-        <section className="moe-expert-branch moe-routed-branch" aria-label="Routed Expert 分支">
-          <div className="moe-weighted-step moe-router-step"><Tensor name="router gate weight" shape="[E,H]" role="weight" graphId="moe-wrouter"/><N id="router" graphId="moe-router"/></div>
-          <Tensor name="router logits" shape="[B,S,128]" graphId="moe-router-logits"/>
-          <div className="moe-weighted-step moe-routed-step"><Tensor name="routed expert weights · correction bias" shape="E × expert weights · [E]" role="weight" graphId="moe-wexperts"/><N id="experts" graphId="moe-experts"/></div>
-          <Tensor name="weighted routed output" shape="[B,S,H]" graphId="moe-routed"/>
-        </section>
-        <section className="moe-expert-branch moe-shared-branch" aria-label="Shared Expert 分支">
-          <div className="moe-weighted-step moe-shared-step"><N id="shared" graphId="moe-shared"/><Tensor name="shared expert weights ×3" shape="gate / up / down" role="weight" graphId="moe-wshared"/></div>
-          <Tensor name="shared output" shape="[B,S,H]" graphId="moe-shared-out"/>
-        </section>
-      </div>
+      <Tensor name="router gate weight" shape="[E,H]" role="weight" graphId="moe-wrouter"/><N id="router" graphId="moe-router"/>
+      <Tensor name="router logits" shape="[B,S,E]" graphId="moe-router-logits"/>
+      <Tensor name="routed expert weights · correction bias" shape="E × expert weights · [E]" role="weight" graphId="moe-wexperts"/><N id="experts" graphId="moe-experts"/>
+      <Tensor name="weighted routed output" shape="[B,S,H]" graphId="moe-routed"/>
+      <N id="shared" graphId="moe-shared"/><Tensor name="shared expert weights ×3" shape="gate / up / down" role="weight" graphId="moe-wshared"/>
+      <Tensor name="shared output" shape="[B,S,H]" graphId="moe-shared-out"/>
       <N id="sum" graphId="moe-sum"/><Tensor name="Ymoe" shape="[B,S,H]" graphId="moe-y"/>
     </GraphSurface></GraphPan></section>;
   }
   const dense=type==="dense";
   const ids=dense?{project:"qkv",split:"split",qnorm:"qnorm",knorm:"knorm",ropeq:"ropeq",ropek:"ropek"}:{project:"packed",split:"split",qnorm:"mainnorm",knorm:"mainnorm",ropeq:"rope",ropek:"rope"};
   const edges:GraphEdge[]=[
-    {from:"attn-x",to:"attn-project"},{from:"attn-project",to:"attn-packed"},{from:"attn-packed",to:"attn-split"},{from:"attn-split",to:"attn-q",fanout:"attn-five-way",departure:64},{from:"attn-split",to:"attn-k",fanout:"attn-five-way",departure:64},{from:"attn-split",to:"attn-v",fanout:"attn-five-way",departure:64},{from:"attn-q",to:"attn-qnorm",toPort:"top-left",approach:38},{from:"attn-wq",to:"attn-qnorm",toPort:"top-right",approach:38},{from:"attn-qnorm",to:"attn-qt"},{from:"attn-qt",to:"attn-qrope",toPort:"top-left",approach:38},{from:"attn-posq",to:"attn-qrope",toPort:"top-right",approach:38},{from:"attn-qrope",to:"attn-qr"},{from:"attn-k",to:"attn-knorm",toPort:"top-left",approach:38},{from:"attn-wk",to:"attn-knorm",toPort:"top-right",approach:38},{from:"attn-knorm",to:"attn-kt"},{from:"attn-kt",to:"attn-krope",toPort:"top-left",approach:38},{from:"attn-posk",to:"attn-krope",toPort:"top-right",approach:38},{from:"attn-krope",to:"attn-kr"},{from:"attn-kr",to:"attn-cache",toPort:"top-left",approach:72},{from:"attn-v",to:"attn-cache",toPort:"top-right",approach:72},{from:"attn-cache-meta",to:"attn-cache",fromPort:"left",toPort:"right"},{from:"attn-cache",to:"attn-paged-k",approach:54},{from:"attn-cache",to:"attn-paged-v",approach:54},{from:"attn-qr",to:"attn-qk",toPort:"top-left",approach:18},{from:"attn-paged-k",to:"attn-qk",toPort:dense?"top-right":"top",approach:28},{from:"attn-qk",to:"attn-scale"},{from:"attn-scale",to:"attn-scaled"},{from:"attn-scaled",to:"attn-mask"},{from:"attn-bounds",to:"attn-mask",fromPort:"left",toPort:"right"},{from:"attn-mask",to:"attn-softmax"},{from:"attn-softmax",to:"attn-p"},{from:"attn-p",to:"attn-pv",toPort:"top-left",approach:18},{from:"attn-paged-v",to:"attn-pv",toPort:"top-right",route:"bus-right",approach:28,departure:54},{from:"attn-pv",to:"attn-heads"},{from:"attn-heads",to:"attn-oproj"},{from:"attn-oproj",to:"attn-y"},
-    ...(!dense?([{from:"attn-split",to:"attn-qidx",fanout:"attn-five-way",departure:64},{from:"attn-split",to:"attn-kidx",fanout:"attn-five-way",departure:64},{from:"attn-qidx",to:"attn-idxnorm",toPort:"top-left",approach:34},{from:"attn-kidx",to:"attn-idxnorm",toPort:"top-right",approach:34},{from:"attn-idxnorm",to:"attn-idxquery",fromPort:"bottom-left",approach:30},{from:"attn-idxnorm",to:"attn-idxcache",fromPort:"bottom-right",approach:30},{from:"attn-idxslots",to:"attn-idxcache",fromPort:"left",toPort:"right"},{from:"attn-idxquery",to:"attn-idxscore",toPort:"top-left",approach:30},{from:"attn-idxcache",to:"attn-idxscore",toPort:"top-right",approach:30},{from:"attn-idxscore",to:"attn-idxmask"},{from:"attn-idxbounds",to:"attn-idxmask",fromPort:"left",toPort:"right"},{from:"attn-idxmask",to:"attn-blockmax"},{from:"attn-blockmax",to:"attn-topk"},{from:"attn-topk",to:"attn-topids"},{from:"attn-topids",to:"attn-qk",toPort:"top-right",approach:28}] satisfies GraphEdge[]) : []),
+    {from:"attn-x",to:"attn-project"},{from:"attn-project",to:"attn-packed"},{from:"attn-packed",to:"attn-split"},{from:"attn-split",to:"attn-q",fanout:"attn-five-way",departure:32},{from:"attn-split",to:"attn-k",fanout:"attn-five-way",departure:32},{from:"attn-split",to:"attn-v",fanout:"attn-five-way",departure:32},{from:"attn-q",to:"attn-qnorm",toPort:"top-left",approach:38},{from:"attn-wq",to:"attn-qnorm",toPort:"top-right",approach:38},{from:"attn-qnorm",to:"attn-qt"},{from:"attn-qt",to:"attn-qrope",toPort:"top-left",approach:38},{from:"attn-posq",to:"attn-qrope",toPort:"top-right",approach:38},{from:"attn-qrope",to:"attn-qr"},{from:"attn-k",to:"attn-knorm",toPort:"top-left",approach:38},{from:"attn-wk",to:"attn-knorm",toPort:"top-right",approach:38},{from:"attn-knorm",to:"attn-kt"},{from:"attn-kt",to:"attn-krope",toPort:"top-left",approach:38},{from:"attn-posk",to:"attn-krope",toPort:"top-right",approach:38},{from:"attn-krope",to:"attn-kr"},{from:"attn-kr",to:"attn-cache",toPort:"top-left",approach:72},{from:"attn-v",to:"attn-cache",toPort:"top-right",approach:72},
+    {from:"attn-cache-meta",to:"attn-cache",fromPort:"right",toPort:"left"},
+    {from:"attn-cache",to:"attn-paged-k",fanout:"attn-cache-outputs",departure:32},
+    {from:"attn-cache",to:"attn-paged-v",fanout:"attn-cache-outputs",departure:32},
+    {from:"attn-qr",to:"attn-qk",toPort:"top-left",approach:28},
+    {from:"attn-paged-k",to:"attn-qk"},
+    {from:"attn-qk",to:"attn-scale"},{from:"attn-scale",to:"attn-scaled"},{from:"attn-scaled",to:"attn-mask"},{from:"attn-bounds",to:"attn-mask",fromPort:"right",toPort:"left"},{from:"attn-mask",to:"attn-softmax"},{from:"attn-softmax",to:"attn-p"},{from:"attn-p",to:"attn-pv",toPort:"top-left",approach:34},{from:"attn-paged-v",to:"attn-pv",toPort:"top-right",approach:34},{from:"attn-pv",to:"attn-heads"},{from:"attn-heads",to:"attn-oproj"},{from:"attn-oproj",to:"attn-y"},
+    ...(!dense?([
+      {from:"attn-split",to:"attn-qidx",fanout:"attn-five-way",departure:32},{from:"attn-split",to:"attn-kidx",fanout:"attn-five-way",departure:32},
+      {from:"attn-qidx",to:"attn-idxnorm",toPort:"top-left",approach:34},{from:"attn-kidx",to:"attn-idxnorm"},
+      {from:"attn-idxnorm",to:"attn-idxquery",fromPort:"bottom-left",approach:30},{from:"attn-idxnorm",to:"attn-idxcache"},
+      {from:"attn-idxslots",to:"attn-idxcache",fromPort:"left",toPort:"right"},
+      {from:"attn-idxquery",to:"attn-idxscore",toPort:"top-left",approach:30},{from:"attn-idxcache",to:"attn-idxscore"},
+      {from:"attn-idxscore",to:"attn-idxmask"},{from:"attn-idxbounds",to:"attn-idxmask",fromPort:"left",toPort:"right"},{from:"attn-idxmask",to:"attn-blockmax"},{from:"attn-blockmax",to:"attn-topk"},{from:"attn-topk",to:"attn-topids"},{from:"attn-topids",to:"attn-qk",toPort:"top-right",approach:28}
+    ] satisfies GraphEdge[]) : []),
   ];
-  return <section className="stage-zoom lesson-zoom attention-lesson"><header><span>{dense?"GQA + PARTIAL ROPE · L0–2":"MINIMAX SPARSE ATTENTION + PARTIAL ROPE · L3–59"}</span><button onClick={onClose}>收起 ×</button></header><GraphPan><GraphSurface className={`attention-flowchart connected-attention-graph ${dense?"dense-attention":"sparse-attention"}`} edges={edges}>
-    <div className="compact-chain"><Tensor name="X̂" shape="[B,S,H]" graphId="attn-x"/><N id={ids.project} graphId="attn-project"/><Tensor name="packed" shape={dense?"[B,S,9216]":"[B,S,9856]"} graphId="attn-packed"/><N id={ids.split} graphId="attn-split"/></div>
-    <div className={`attention-branches ${dense?"dense":""}`}>{!dense&&<div className="index-ribbon"><header className="index-ribbon-label">LIGHTNING INDEXER · per query / KV group</header><div className="multi-source"><Tensor name="Qidx" shape="[B,S,4,128]" graphId="attn-qidx"/><Tensor name="Kidx" shape="[B,T,1,128]" graphId="attn-kidx"/></div><N id="idxnorm" graphId="attn-idxnorm"/><Tensor name="Index Q query" shape="[B,4,S,128]" graphId="attn-idxquery"/><N id="idxcache" graphId="attn-idxcache"/><Tensor name="index slot_mapping" shape="[Nq]" role="side" graphId="attn-idxslots"/><N id="idxscore" graphId="attn-idxscore"/><Tensor name="position_ids · future bound" shape="[B,S]" role="side" graphId="attn-idxbounds"/><N id="idxmask" graphId="attn-idxmask"/><N id="blockmax" graphId="attn-blockmax"/><N id="topk" graphId="attn-topk"/><Tensor name="block_indices · Top-16" shape="[B,4,S,16]" graphId="attn-topids"/></div>}
-      <div className="attention-data-path"><div className="qkv-lanes"><section><header>Q PATH</header><IW id={ids.qnorm} inputName="Q" inputShape="[B,Nₕ,S,Dₕ]" inputGraphId="attn-q" graphId="attn-qnorm" weightGraphId="attn-wq"/><div className="two-source"><Tensor name="Q̃" shape="same" graphId="attn-qt"/><Tensor name="positions" shape="[Nq]" role="side" graphId="attn-posq"/></div><N id={ids.ropeq} graphId="attn-qrope"/><Tensor name="Qᵣ" shape="[B,Nₕ,S,Dₕ]" graphId="attn-qr"/></section><section><header>K PATH</header><IW id={ids.knorm} inputName="K" inputShape="[B,Nₖᵥ,S,Dₕ]" weightIndex={dense?0:1} inputGraphId="attn-k" graphId="attn-knorm" weightGraphId="attn-wk"/><div className="two-source"><Tensor name="K̃" shape="same" graphId="attn-kt"/><Tensor name="positions" shape="[Nq]" role="side" graphId="attn-posk"/></div><N id={ids.ropek} graphId="attn-krope"/><Tensor name="Kᵣ" shape="[B,Nₖᵥ,S,Dₕ]" graphId="attn-kr"/></section><section><header>V PATH</header><Tensor name="V" shape="[B,Nₖᵥ,S,Dₕ]" graphId="attn-v"/></section></div><div className="kv-cache-flow"><Tensor name="slot_mapping · block_table" shape="runtime" role="side" graphId="attn-cache-meta"/><N id="cache" graphId="attn-cache"/><div className="two-source"><Tensor name="paged K" shape="KV pages" graphId="attn-paged-k"/><Tensor name="paged V" shape="KV pages" graphId="attn-paged-v"/></div></div></div></div>
-    <div className="score-pipeline"><header className="score-pipeline-label">ATTENTION SCORE PIPELINE · selected blocks 内计算概率 P</header><N id="qk" graphId="attn-qk"/><N id="scale" graphId="attn-scale"/><Tensor name="scaled scores" shape={dense?"[B,Nₕ,S,T]":"[B,Nₕ,S,Ksel]"} graphId="attn-scaled"/><Tensor name={dense?"causal / pad bounds":"token causal / pad bounds"} shape="runtime metadata" role="side" graphId="attn-bounds"/><N id="mask" graphId="attn-mask"/><N id="softmax" graphId="attn-softmax"/><Tensor name="P" shape={dense?"[B,Nₕ,S,T]":"[B,Nₕ,S,Ksel]"} graphId="attn-p"/></div>
+  const alignments:GraphAlignment[]=[
+    {node:"attn-kidx",between:["attn-idxnorm"]},
+    {node:"attn-paged-k",between:["attn-qk"]},
+    {node:"attn-cache",between:["attn-paged-k","attn-paged-v"]},
+  ];
+  return <section className="stage-zoom lesson-zoom attention-lesson"><header><span>{dense?"GQA + PARTIAL ROPE · L0–2":"MINIMAX SPARSE ATTENTION + PARTIAL ROPE · L3–59"}</span><button onClick={onClose}>收起 ×</button></header><GraphPan><GraphSurface className={`attention-flowchart connected-attention-graph ${dense?"dense-attention":"sparse-attention"}`} edges={edges} alignments={alignments}>
+    <div className="compact-chain"><Tensor name="X̂" shape="[B,S,H]" graphId="attn-x"/><N id={ids.project} graphId="attn-project"/><Tensor name="packed" shape={dense?"[B,S,(Nₕ+2Nₖᵥ)·Dₕ]":"[B,S,(Nₕ+2Nₖᵥ)·Dₕ+(N_idx+1)·D_idx]"} graphId="attn-packed"/><N id={ids.split} graphId="attn-split"/></div>
+    <div className={`attention-branches ${dense?"dense":""}`}>{!dense&&<div className="index-ribbon"><header className="index-ribbon-label">LIGHTNING INDEXER</header><div className="multi-source"><Tensor name="Qidx" shape="[B,S,N_idx,D_idx]" graphId="attn-qidx"/><Tensor name="Kidx" shape="[B,T,1,D_idx]" graphId="attn-kidx"/></div><N id="idxnorm" graphId="attn-idxnorm"/><Tensor name="Index Q query" shape="[B,N_idx,S,D_idx]" graphId="attn-idxquery"/><N id="idxcache" graphId="attn-idxcache"/><Tensor name="index slot_mapping" shape="[Nq]" role="side" graphId="attn-idxslots"/><N id="idxscore" graphId="attn-idxscore"/><Tensor name="position_ids · future bound" shape="[B,S]" role="side" graphId="attn-idxbounds"/><N id="idxmask" graphId="attn-idxmask"/><N id="blockmax" graphId="attn-blockmax"/><N id="topk" graphId="attn-topk"/><Tensor name="block_indices · Top-K_block" shape="[B,N_idx,S,K_block]" graphId="attn-topids"/></div>}
+      <div className="attention-data-path"><div className="qkv-lanes"><section><header>Q PATH</header><IW id={ids.qnorm} inputName="Q" inputShape="[B,Nₕ,S,Dₕ]" inputGraphId="attn-q" graphId="attn-qnorm" weightGraphId="attn-wq"/><div className="two-source"><Tensor name="Q̃" shape="same" graphId="attn-qt"/><Tensor name="positions" shape="[Nq]" role="side" graphId="attn-posq"/></div><N id={ids.ropeq} graphId="attn-qrope"/><Tensor name="Qᵣ" shape="[B,Nₕ,S,Dₕ]" graphId="attn-qr"/></section><section><header>K PATH</header><IW id={ids.knorm} inputName="K" inputShape="[B,Nₖᵥ,S,Dₕ]" weightIndex={dense?0:1} inputGraphId="attn-k" graphId="attn-knorm" weightGraphId="attn-wk"/><div className="two-source"><Tensor name="K̃" shape="same" graphId="attn-kt"/><Tensor name="positions" shape="[Nq]" role="side" graphId="attn-posk"/></div><N id={ids.ropek} graphId="attn-krope"/><Tensor name="Kᵣ" shape="[B,Nₖᵥ,S,Dₕ]" graphId="attn-kr"/></section><section><header>V PATH</header><Tensor name="V" shape="[B,Nₖᵥ,S,Dₕ]" graphId="attn-v"/></section></div><div className="kv-cache-flow"><Tensor name="slot_mapping · block_table" shape="runtime" role="side" graphId="attn-cache-meta"/><N id="cache" graphId="attn-cache"/><div className="two-source"><Tensor name="paged K" shape="KV pages" graphId="attn-paged-k"/></div></div></div></div>
+    <div className="score-pipeline"><header className="score-pipeline-label">ATTENTION SCORE PIPELINE · 候选 blocks 内计算概率 P</header><N id="qk" graphId="attn-qk"/><N id="scale" graphId="attn-scale"/><Tensor name="scaled scores" shape={dense?"[B,Nₕ,S,T]":"[B,Nₕ,S,K_sel]"} graphId="attn-scaled"/><Tensor name={dense?"causal / pad bounds":"token causal / pad bounds"} shape="runtime metadata" role="side" graphId="attn-bounds"/><N id="mask" graphId="attn-mask"/><N id="softmax" graphId="attn-softmax"/><Tensor name="P" shape={dense?"[B,Nₕ,S,T]":"[B,Nₕ,S,K_sel]"} graphId="attn-p"/><Tensor name="paged V" shape="KV pages" graphId="attn-paged-v"/></div>
     <div className="context-pipeline"><N id="pv" graphId="attn-pv"/><Tensor name="heads" shape="[B,S,Nₕ·Dₕ]" graphId="attn-heads"/><N id="oproj" graphId="attn-oproj"/><Tensor name="Yattn" shape="[B,S,H]" graphId="attn-y"/></div>
   </GraphSurface></GraphPan></section>;
 }
@@ -1137,7 +1196,7 @@ function symbolicShape(shape:string){
     .replaceAll("[B,S,6144]","[B,S,H]")
     .replaceAll("[B,S,8192]","[B,S,Nₕ·Dₕ]")
     .replaceAll("[B,S,9216]","[B,S,(Nₕ+2Nₖᵥ)·Dₕ]")
-    .replaceAll("[B,S,9856]","[B,S,QKV+Index]")
+    .replaceAll("[B,S,9856]","[B,S,(Nₕ+2Nₖᵥ)·Dₕ+(N_idx+1)·D_idx]")
     .replaceAll("24576/TP","2H_dense/TP")
     .replaceAll("12288/TP","H_dense/TP")
     .replaceAll("8192/TP","Nₕ·Dₕ/TP")
@@ -1148,7 +1207,7 @@ function symbolicShape(shape:string){
     .replaceAll("6144","H")
     .replaceAll("8192","Nₕ·Dₕ")
     .replaceAll("9216","(Nₕ+2Nₖᵥ)·Dₕ")
-    .replaceAll("9856","QKV+Index")
+    .replaceAll("9856","(Nₕ+2Nₖᵥ)·Dₕ+(N_idx+1)·D_idx")
     .replaceAll("200064","V");
 }
 

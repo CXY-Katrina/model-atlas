@@ -72,7 +72,8 @@ export function routeGraphEdge({source,target,direction,obstacleBounds,clearance
   const sx=n(source.x); const sy=n(source.y); const tx=n(target.x); const ty=n(target.y);
   if(direction==="vertical"){
     const sign=ty>=sy?1:-1;
-    if(sx===tx)return {path:`M ${sx} ${sy} L ${tx} ${ty}`,rail:null};
+    // DOM layout and center alignment can differ by a few hundredths of a pixel.
+    if(Math.abs(sx-tx)<0.05)return {path:`M ${sx} ${sy} L ${sx} ${ty}`,rail:null};
     const gap=Math.abs(ty-sy);
     if(departure!==undefined){
       const horizontalSign=tx>=sx?1:-1;
