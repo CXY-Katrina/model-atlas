@@ -10,7 +10,8 @@
     "check": "tsc --noEmit",
     "build": "npm run check && vite build --base=./",
     "preview": "vite preview",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs && npm run test:skill",
+    "test:skill": "node --test app/skills/model-atlas-adapter/scripts/fingerprint.test.mjs",
     "test:browser": "node tests/browser-regression.mjs"
   },
   "dependencies": {
