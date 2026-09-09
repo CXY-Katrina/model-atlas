@@ -1,0 +1,78 @@
+export const CONFIG_GROUPS = [
+  {title:"顶层多模态配置",rows:[
+    ["architectures","MiniMaxM3SparseForConditionalGeneration"],["auto_map.AutoConfig","configuration_minimax_m3_vl.MiniMaxM3VLConfig"],["model_type","minimax_m3_vl"],["torch_dtype","bfloat16"],["transformers_version","4.52.4"],["image_seq_length","576"],["image_token_index","200025"],["video_token_index","200026"],["multimodal_projector_bias","true"],["num_reward_heads","0"],["process_image_mode","dynamic_res"],["projector_hidden_act","gelu"],["projector_hidden_size","6144"],["vision_feature_layer","−1"],["vision_feature_select_strategy","full"],["image_grid_pinpoints","336…2016（步长 336）的 6×6 全组合"],
+  ]},
+  {title:"text_config",rows:[
+    ["architectures","MiniMaxM3SparseForCausalLM"],["hidden_size","6144"],["intermediate_size","3072"],["dense_intermediate_size","12288"],["shared_intermediate_size","3072"],["num_hidden_layers","60"],["num_attention_heads","64"],["num_key_value_heads","4"],["head_dim","128"],["vocab_size","200064"],["max_position_embeddings","1048576"],["rms_norm_eps","1e−6"],["use_gemma_norm","true"],["attention_output_gate","false"],["rope_theta","5000000"],["rotary_dim","64"],["partial_rotary_factor","0.5"],["hidden_act","swigluoai"],["use_qk_norm","true"],["qk_norm_type","per_head"],["tie_word_embeddings","false"],["num_local_experts","128"],["num_experts_per_tok","4"],["n_shared_experts","1"],["scoring_func","sigmoid"],["use_routing_bias","true"],["moe_layer_freq","L0–2: 0 · L3–59: 1"],["num_mtp_modules","7"],["num_nextn_predict_layers","1"],["swiglu_alpha","1.702"],["swiglu_beta","1.0"],["swiglu_limit","7.0"],["routed_scaling_factor","2.0"],
+  ]},
+  {title:"text_config.sparse_attention_config",rows:[
+    ["use_sparse_attention","true"],["sparse_index_dim","128"],["sparse_num_index_heads","4"],["sparse_topk_blocks","16"],["sparse_block_size","128"],["sparse_disable_index_value","L0–2: 0 · L3–59: 1"],["sparse_score_type","max"],["sparse_init_block","0"],["sparse_local_block","1"],["sparse_attention_freq","L0–2: 0 · L3–59: 1"],
+  ]},
+  {title:"vision_config",rows:[
+    ["model_type","clip_vision_model"],["hidden_size","1280"],["num_attention_heads","16"],["num_hidden_layers","32"],["intermediate_size","5120"],["patch_size","14"],["image_size","2016"],["projection_dim","6144"],["position_embedding_type","rope"],["rope_mode","3d"],["rope_theta","10000.0"],["attention_dropout","0.0"],["hidden_act","gelu"],["initializer_factor","1.0"],["initializer_range","0.02"],["layer_norm_eps","1e−5"],["num_channels","3"],["vocab_size","32000"],["vision_segment_max_frames","4"],
+  ]},
+  {title:"图像 token 压缩（顶层与 vision_config 内相同）",rows:[
+    ["image_token_compression_method","patch_merge"],["spatial_merge_size","2"],["temporal_patch_size","2"],
+  ]},
+] as const;
+
+export const CONFIG_SYMBOLS: Record<string,string> = {
+  "顶层多模态配置:image_seq_length":"S_img",
+  "顶层多模态配置:image_token_index":"t_img",
+  "顶层多模态配置:video_token_index":"t_video",
+  "顶层多模态配置:multimodal_projector_bias":"b_proj",
+  "顶层多模态配置:num_reward_heads":"N_reward",
+  "顶层多模态配置:projector_hidden_act":"φ_proj",
+  "顶层多模态配置:projector_hidden_size":"H",
+  "顶层多模态配置:vision_feature_layer":"L_feature",
+  "text_config:hidden_size":"H",
+  "text_config:intermediate_size":"H_expert",
+  "text_config:dense_intermediate_size":"H_dense",
+  "text_config:shared_intermediate_size":"H_shared",
+  "text_config:num_hidden_layers":"L",
+  "text_config:num_attention_heads":"Nₕ",
+  "text_config:num_key_value_heads":"Nₖᵥ",
+  "text_config:head_dim":"Dₕ",
+  "text_config:vocab_size":"V",
+  "text_config:max_position_embeddings":"S_max",
+  "text_config:rms_norm_eps":"ε_rms",
+  "text_config:rope_theta":"θ_base",
+  "text_config:rotary_dim":"Dᵣ",
+  "text_config:partial_rotary_factor":"Dᵣ/Dₕ",
+  "text_config:num_local_experts":"E",
+  "text_config:num_experts_per_tok":"K",
+  "text_config:n_shared_experts":"E_shared",
+  "text_config:num_mtp_modules":"N_mtp",
+  "text_config:num_nextn_predict_layers":"L_mtp",
+  "text_config:swiglu_alpha":"α",
+  "text_config:swiglu_beta":"β",
+  "text_config:swiglu_limit":"c",
+  "text_config:routed_scaling_factor":"s_route",
+  "text_config.sparse_attention_config:sparse_index_dim":"D_idx",
+  "text_config.sparse_attention_config:sparse_num_index_heads":"N_idx",
+  "text_config.sparse_attention_config:sparse_topk_blocks":"K_block",
+  "text_config.sparse_attention_config:sparse_block_size":"B_block",
+  "text_config.sparse_attention_config:sparse_init_block":"B_init",
+  "text_config.sparse_attention_config:sparse_local_block":"B_local",
+  "vision_config:hidden_size":"Hᵥ",
+  "vision_config:num_attention_heads":"Nₕᵥ",
+  "vision_config:num_hidden_layers":"Lᵥ",
+  "vision_config:intermediate_size":"H_ffnᵥ",
+  "vision_config:patch_size":"P",
+  "vision_config:image_size":"R",
+  "vision_config:projection_dim":"H",
+  "vision_config:rope_theta":"θᵥ",
+  "vision_config:attention_dropout":"p_attn",
+  "vision_config:initializer_factor":"s_init",
+  "vision_config:initializer_range":"σ_init",
+  "vision_config:layer_norm_eps":"ε_ln",
+  "vision_config:num_channels":"C",
+  "vision_config:vocab_size":"Vᵥ",
+  "vision_config:vision_segment_max_frames":"F_max",
+  "图像 token 压缩（顶层与 vision_config 内相同）:spatial_merge_size":"Mₛ",
+  "图像 token 压缩（顶层与 vision_config 内相同）:temporal_patch_size":"Pₜ",
+};
+
+export function configSymbol(group:string,key:string){
+  return CONFIG_SYMBOLS[`${group}:${key}`]??"—";
+}

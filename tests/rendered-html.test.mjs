@@ -1,3 +1,4 @@
+import { readModelSource, readStyles } from "./source-helpers.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -8,7 +9,7 @@ test("builds a static GitHub Pages entry", async () => {
     readFile(new URL("../index.html", import.meta.url), "utf8"),
     readFile(new URL("../dist/index.html", import.meta.url), "utf8"),
     readFile(new URL("../app/main.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readModelSource(),
   ]);
 
   assert.match(html, /<html lang="zh-CN">/);
@@ -30,15 +31,162 @@ test("builds a static GitHub Pages entry", async () => {
   assert.doesNotMatch(`${html}\n${builtHtml}\n${main}`, /_next|vinext|wrangler|cloudflare/i);
 });
 
+test("expanded attention keeps labels clear and vertical spacing uniform", async () => {
+  const source = readModelSource();
+  const css = readStyles();
+
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph\{[^}]*--attention-row-gap:/);
+  for (const path of ["Q", "K", "V"]) assert.match(source, new RegExp(`<header>${path} PATH<\\/header>`));
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.qkv-lanes\{[^}]*grid-template-columns:repeat\(3,max-content\)/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.qkv-lanes>section\{[^}]*grid-template-rows:28px 148px 62px 62px 62px/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.qkv-lanes>section>header\{[^}]*justify-self:start/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.tensor-weight\{[^}]*min-width:150px[^}]*overflow-wrap:anywhere/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.score-pipeline\{[^}]*flex:0 0 auto[^}]*width:min\(920px,100%\)[^}]*background:transparent/);
+  assert.match(source, /\{from:"attn-qr",to:"attn-qk",toPort:"top-left",approach:28\}/);
+  assert.match(source, /\{from:"attn-paged-k",to:"attn-qk"\}/);
+  assert.match(source, /\{from:"attn-p",to:"attn-pv",toPort:"top-left",approach:34\}/);
+  assert.match(source, /\{from:"attn-paged-v",to:"attn-pv",toPort:"top-right",approach:34\}/);
+  assert.equal(source.match(/graphId="attn-paged-v"/g)?.length, 1);
+  assert.match(source, /className="score-pipeline"[\s\S]*graphId="attn-p"[\s\S]*graphId="attn-paged-v"/);
+  assert.match(css, /\.score-pipeline \[data-graph-id="attn-paged-v"\]\{grid-area:7\/3\}/);
+  assert.match(css, /\.context-pipeline \[data-graph-id="attn-pv"\]\{grid-area:1\/2\/2\/4;justify-self:center\}/);
+});
+
+test("expanded sparse attention keeps blocks wide and connector lanes separated", async () => {
+  const source = readModelSource();
+  const css = readStyles();
+
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph\.sparse-attention\{[^}]*width:max\(100%,1740px\)/);
+  assert.match(css, /\.attention-branches:not\(\.dense\)\{[^}]*grid-template-columns:max-content minmax\(600px,1fr\)/);
+  assert.match(css, /\.attention-branches:not\(\.dense\)>\.attention-data-path\{[^}]*grid-area:1\/1/);
+  assert.match(css, /\.attention-branches:not\(\.dense\)>\.index-ribbon\{[^}]*grid-area:1\/2/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.qkv-lanes \.co-input-row\{[^}]*grid-template-columns:max-content max-content/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.index-ribbon\{[^}]*padding:22px var\(--group-padding-inline\)/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.index-ribbon\{[^}]*grid-template-rows:28px 90px/);
+  assert.match(css, /\.graph-pan-content \.connected-attention-graph \.index-ribbon-label\{[^}]*grid-area:1\/3\/2\/4[^}]*transform:translateY\(-4px\)/);
+  assert.match(source, /className="index-ribbon-label">LIGHTNING INDEXER<\/header>/);
+
+  for (const edge of [
+    '{from:"attn-split",to:"attn-q",fanout:"attn-five-way",departure:32}',
+    '{from:"attn-split",to:"attn-k",fanout:"attn-five-way",departure:32}',
+    '{from:"attn-split",to:"attn-v",fanout:"attn-five-way",departure:32}',
+    '{from:"attn-split",to:"attn-qidx",fanout:"attn-five-way",departure:32}',
+    '{from:"attn-split",to:"attn-kidx",fanout:"attn-five-way",departure:32}',
+    '{from:"attn-topids",to:"attn-qk",toPort:"top-right",approach:28}',
+    '{from:"attn-paged-k",to:"attn-qk"}',
+    '{from:"attn-qr",to:"attn-qk",toPort:"top-left",approach:28}',
+    '{from:"attn-paged-v",to:"attn-pv",toPort:"top-right",approach:34}',
+  ]) assert.ok(source.includes(edge), `missing separated attention edge ${edge}`);
+});
+
+test("QKV + Index Projection detail contains only five-way projection evidence", async () => {
+  const source = readModelSource();
+  assert.match(source, /const QKV_INDEX_PROJECTION_SECTIONS: CodeSection\[\] = \[/);
+  assert.match(source, /packed:cloneOp\(packed,\{id:"s-packed",kind:"linear",title:"QKV \+ Index Projection"[^}]*codeSections:QKV_INDEX_PROJECTION_SECTIONS/);
+
+  const start = source.indexOf("const QKV_INDEX_PROJECTION_SECTIONS");
+  const end = source.indexOf("\nconst ", start + 1);
+  const detail = source.slice(start, end);
+  assert.doesNotMatch(detail, /ATTEND|self\.attn\(/);
+  assert.match(detail, /(?:q_?(?:idx|index)|(?:idx|index)_q)/i);
+  assert.match(detail, /(?:k_?(?:idx|index)|(?:idx|index)_k)/i);
+  assert.match(detail, /output_sizes[^\n]*|\[q \| k \| v \| index_q \| index_k\]/i);
+});
+
+test("sparse attention sends symbolic Top-K indices and paged KV directly to attention math", async () => {
+  const source = readModelSource();
+  assert.match(source, /"s-idxmask":String\.raw/);
+  assert.match(source, /idxnorm:cloneOp\([^\n]*title:"Index Q\/K Gemma RMSNorm \+ RoPE"/);
+  assert.match(source, /idxmask:cloneOp\([^\n]*title:"Mask Future Index Keys"/);
+  assert.doesNotMatch(source, /select:cloneOp\([^\n]*title:"Map Top-16 Blocks → KV Views"/);
+  assert.match(source, /mask:cloneOp\([^\n]*title:"Apply Token Causal \/ Pad Mask"/);
+  assert.match(source, /className="index-ribbon-label">LIGHTNING INDEXER<\/header>/);
+  assert.match(source, /Tensor name="block_indices · Top-K_block" shape="\[B,N_idx,S,K_block\]"/);
+  assert.doesNotMatch(source, /Tensor name="selected [KV] view"/);
+  assert.match(source, /title:"Q × paged Kᵀ · Top-K_block"/);
+  assert.match(source, /title:"P × paged V · same Top-K_block"/);
+  assert.match(source, /shape=\{dense\?"\[B,Nₕ,S,T\]":"\[B,Nₕ,S,K_sel\]"\}/);
+  for (const edge of [
+    '{from:"attn-idxscore",to:"attn-idxmask"}',
+    '{from:"attn-idxbounds",to:"attn-idxmask",fromPort:"left",toPort:"right"}',
+    '{from:"attn-idxmask",to:"attn-blockmax"}',
+  ]) assert.ok(source.includes(edge), `missing index mask edge ${edge}`);
+  assert.match(source, /const SPARSE_MASK_SECTIONS: CodeSection\[\] = \[/);
+});
+
+test("vLLM index branch exposes its independent key-only side cache", async () => {
+  const source = readModelSource();
+  const css = readStyles();
+  assert.match(source, /VLLM_INDEXER_URL/);
+  assert.match(source, /const INDEX_CACHE_SECTIONS: CodeSection\[\] = \[/);
+  assert.match(source, /MiniMaxM3IndexerCache/);
+  assert.match(source, /self\.index_cache\.kv_cache/);
+  assert.match(source, /"s-idxcache":String\.raw/);
+  assert.match(source, /idxcache:cloneOp\([^\n]*title:"Index K Cache · key-only"/);
+  assert.match(source, /Tensor name="Index Q query" shape="\[B,N_idx,S,D_idx\]" graphId="attn-idxquery"/);
+  assert.match(source, /Tensor name="index slot_mapping" shape="\[Nq\]" role="side" graphId="attn-idxslots"/);
+  for (const edge of [
+    '{from:"attn-idxnorm",to:"attn-idxquery",fromPort:"bottom-left",approach:30}',
+    '{from:"attn-idxnorm",to:"attn-idxcache"}',
+    '{from:"attn-idxslots",to:"attn-idxcache",fromPort:"left",toPort:"right"}',
+    '{from:"attn-idxquery",to:"attn-idxscore",toPort:"top-left",approach:30}',
+    '{from:"attn-idxcache",to:"attn-idxscore"}',
+  ]) assert.ok(source.includes(edge), `missing Index K cache edge ${edge}`);
+  assert.match(css, /\[data-graph-id="attn-idxcache"\]\{grid-area:3\/2\}/);
+  assert.match(css, /\[data-graph-id="attn-idxscore"\]\{grid-area:4\/2\}/);
+});
+
+test("Q and K RoPE inputs use symmetric top ports", async () => {
+  const source = readModelSource();
+  for (const edge of [
+    '{from:"attn-qt",to:"attn-qrope",toPort:"top-left",approach:38}',
+    '{from:"attn-posq",to:"attn-qrope",toPort:"top-right",approach:38}',
+    '{from:"attn-kt",to:"attn-krope",toPort:"top-left",approach:38}',
+    '{from:"attn-posk",to:"attn-krope",toPort:"top-right",approach:38}',
+  ]) assert.ok(source.includes(edge), `missing symmetric RoPE edge ${edge}`);
+  assert.doesNotMatch(source, /from:"attn-pos[ qk]+",to:"attn-[qk]rope",fromPort:"left",toPort:"right"/);
+});
+
+test("attention fan-out is shared and compact labels stay inside their nodes", async () => {
+  const source = readModelSource();
+  const css = readStyles();
+
+  assert.match(source, /title:"Main Q\/K Gemma RMSNorm"/);
+  for (const target of ["attn-q", "attn-k", "attn-v", "attn-qidx", "attn-kidx"]) {
+    assert.ok(source.includes(`to:"${target}",fanout:"attn-five-way"`), `missing shared fan-out target ${target}`);
+  }
+  assert.match(css, /\[data-graph-id="attn-idxbounds"\][^{]*\{[^}]*height:78px/);
+  assert.match(css, /\[data-graph-id="attn-topids"\][^{]*\{[^}]*height:82px/);
+  assert.match(css, /\[data-graph-id="attn-idxbounds"\] b[^}]*overflow-wrap:anywhere/);
+  assert.match(css, /\[data-graph-id="attn-bounds"\][^{]*\{[^}]*width:min\(420px,100%\)/);
+  assert.match(css, /\[data-graph-id="attn-bounds"\]\{grid-area:5\/1;justify-self:end\}/);
+  assert.match(css, /\.attention-branches:not\(\.dense\)\{[^}]*grid-template-columns:max-content minmax\(600px,1fr\)/);
+  assert.match(css, /\.index-ribbon\{[^}]*box-sizing:border-box[^}]*min-width:0[^}]*overflow:hidden/);
+  assert.match(css, /\.index-ribbon>\[data-graph-id\][^{]*\{[^}]*box-sizing:border-box[^}]*max-width:100%/);
+});
+
+test("diagram geometry prefers straight paths, content-sized cards, and conditional panning", async () => {
+  const source = readModelSource();
+  const css = readStyles();
+
+  assert.match(source, /\{from:"attn-p",to:"attn-pv",toPort:"top-left",approach:34\}/);
+  assert.match(source, /const \[canPan,setCanPan\]=useState\(false\)/);
+  assert.match(source, /content\.scrollWidth>viewport\.clientWidth\+1\|\|content\.scrollHeight>viewport\.clientHeight\+1/);
+  assert.match(source, /\{canPan&&<span className="graph-pan-hint">/);
+  assert.match(css, /\.graph-pan-viewport\.can-pan\{cursor:grab;touch-action:none\}/);
+  assert.match(css, /\.graph-pan-content \.graph-surface :is\(\.op-node,\.tensor-node\)\{[^}]*width:fit-content!important[^}]*padding-inline:18px!important/);
+  assert.match(css, /\.score-pipeline-label\{[^}]*grid-area:1\/1\/2\/4/);
+  assert.match(source, /Tensor name="Qidx" shape="\[B,S,N_idx,D_idx\]"/);
+  assert.match(source, /title:"Block Max · B_block keys"/);
+});
+
 test("keeps code, checkpoint, formula, and shape evidence together", async () => {
-  const [page, modelData, shared, hy4, css] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/model-data.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/atlas-shared.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/models/hy4.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  const [page, modelData, css] = await Promise.all([
+    readModelSource(),
+    readFile(new URL("../app/models/minimax-m3/data.ts", import.meta.url), "utf8"),
+    readStyles(),
   ]);
-  const source = `${page}\n${modelData}\n${shared}\n${hy4}`;
+  const source = `${page}\n${modelData}`;
 
   assert.match(source, /MinimaxM3QKVParallelLinearWithIndexer/);
   assert.match(source, /block_sparse_moe\.experts\.0\.w1\.weight/);
@@ -47,8 +195,8 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /formula/);
   assert.match(source, /weights/);
   assert.match(source, /type OpKind/);
-  assert.match(source, /Top-16 Blocks/);
-  assert.match(source, /Select KV Pages/);
+  assert.match(source, /Top-K_block Blocks/);
+  assert.match(source, /Q × paged Kᵀ · Top-K_block/);
   assert.match(source, /side:"EXTERNAL"/);
   assert.match(source, /position\(req,i\)=num_computed_tokens\[req\]\+i/);
   assert.match(source, /CommonAttentionMetadata/);
@@ -58,13 +206,16 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /LATEX_BY_ID/);
   assert.match(source, /实际公式/);
   assert.match(source, /operatorname\{TopK\}_K/);
-  assert.match(source, /theta_\{p,j\}/);
+  assert.match(source, /Q_\{\\mathrm\{rot\}\},Q_\{\\mathrm\{pass\}\}/);
+  assert.match(source, /operatorname\{Concat\}\(\\operatorname\{RoPE\}/);
+  assert.match(source, /先把每个 128 维 Q head 拆成两个 64 维分段/);
   assert.doesNotMatch(source, /权重名称为什么与代码不同/);
   assert.match(source, /SiluAndMulWithClamp/);
   assert.match(source, /self\.act_fn/);
   assert.match(source, /forward_native/);
   assert.match(source, /torch\.clamp\(x\[\.\.\., :d\], max=self\.swiglu_limit\)/);
   assert.match(source, /IMPLEMENTATION TRACE/);
+  assert.doesNotMatch(source, /forward → fused kernel → 数学定义/);
   assert.match(source, /NORM_FORWARD_URL.*#L130-L142/);
   assert.match(source, /FLASHINFER_GEMMA_NORM_URL/);
   assert.match(source, /gemma_fused_add_rmsnorm\(x, residual/);
@@ -90,7 +241,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /NEXT_BY_ID/);
   assert.doesNotMatch(source, /\["weights","权重"\]/);
   assert.doesNotMatch(page, /type="range"/);
-  assert.match(source, /MODEL_REGISTRY/);
+  assert.match(source, /id: "minimax-m3"/);
   assert.match(source, /尚未选择模块/);
   assert.match(source, /LayerType/);
   assert.match(source, /const active=detail\.pinned\?\?detail\.hovered/);
@@ -111,10 +262,14 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /id:"d-gatesplit",kind:"split",kicker:"DENSE FFN · TP-LOCAL SPLIT",title:"Split Gate \/ Up"/);
   assert.match(source, /graphId="mlp-packed"/);
   assert.match(source, /graphId="mlp-split"/);
-  assert.match(source, /data-graph-id="mlp-gate-act"[\s\S]{0,600}clamp → Ḡ⁽ʳ⁾·σ\(αḠ⁽ʳ⁾\)/);
-  assert.match(source, /data-graph-id="mlp-up-act"[\s\S]{0,600}clamp → Ū⁽ʳ⁾ \+ β/);
+  assert.match(source, /<Tensor name="G⁽ʳ⁾" shape="\[B,S,H_dense\/TP\]" graphId="mlp-gate"\/>/);
+  assert.match(source, /<Tensor name="U⁽ʳ⁾" shape="\[B,S,H_dense\/TP\]" graphId="mlp-up"\/>/);
+  assert.match(source, /data-graph-id="mlp-gate-act"[\s\S]{0,700}min\(G⁽ʳ⁾, C\) · σ\(α·min\(G⁽ʳ⁾, C\)\)/);
+  assert.match(source, /data-graph-id="mlp-up-act"[\s\S]{0,700}clip\(U⁽ʳ⁾, −C, C\) \+ β/);
+  assert.match(source, /title="逐元素相乘"[\s\S]{0,300}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4\.25 4\.25 11\.75 11\.75M11\.75 4\.25 4\.25 11\.75"\/><\/svg><\/button>/);
   assert.match(source, /className="mini-math activation-step"/);
-  assert.match(source, /title:"SiluAndMulWithClamp · SwiGLU-OAI"/);
+  assert.match(source, /title:"SwiGLU-OAI"/);
+  assert.match(source, /runtime:"vLLM: SiluAndMulWithClamp · layout: swigluoai_uninterleave"/);
   assert.match(source, /<Tensor name="Z⁽ʳ⁾" shape="\[B,S,H_dense\/TP\]" graphId="mlp-activated"\/>/);
   assert.doesNotMatch(source, /Z⁽ʳ⁾ · activated⁽ʳ⁾/);
   assert.match(source, /CODE_BY_ID\["d-swiglu"\]=\{sections:SWIGLU_SECTIONS,symbols:SWIGLU_SYMBOLS\}/);
@@ -159,9 +314,25 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.doesNotMatch(source, /title:"\+ MLP Residual"/);
   assert.doesNotMatch(page, /DECODER LAYER TYPE|Dense GQA · SwiGLU MLP|Indexer Attention · Top-4 MoE/);
   assert.match(source, /block_sparse_moe\.gate\.weight/);
-  assert.match(source, /name="routed expert weights · w1\/w3\/w2"/);
+  assert.match(source, /name="routed expert weights · correction bias"/);
   assert.match(source, /title:"Gemma RMSNorm"/);
   assert.match(source, /title:"Post-attn Gemma RMSNorm"/);
+  assert.match(source, /title:"Q Gemma RMSNorm · per-head",summary:"对每个 Q head 的 128 维向量独立执行 Gemma 风格 RMSNorm。"/);
+  assert.match(source, /title:"K Gemma RMSNorm · per-head",summary:"对每个 K head 的 128 维向量独立执行 Gemma 风格 RMSNorm。"/);
+  assert.match(source, /for\(const id of \["d-qnorm","d-knorm","s-mainnorm"\]\) CODE_BY_ID\[id\]=\{sections:QK_NORM_SECTIONS,symbols:QK_NORM_SYMBOLS\};/);
+  assert.match(source, /className="score-pipeline-label">ATTENTION SCORE PIPELINE · 候选 blocks 内计算概率 P<\/header>/);
+  assert.doesNotMatch(source, /本节点不执行 RoPE 或 Attention/);
+  assert.match(source, /"d-qnorm":String\.raw`\\begin\{aligned\}\\operatorname\{RMS\}\(Q_\{b,h,s\}\)[\s\S]*\\tilde Q_\{b,h,s,i\}[\s\S]*\\operatorname\{RMS\}\(Q_\{b,h,s\}\)[\s\S]*\\end\{aligned\}`/);
+  assert.match(source, /"d-knorm":String\.raw`\\begin\{aligned\}\\operatorname\{RMS\}\(K_\{b,g,s\}\)[\s\S]*\\tilde K_\{b,g,s,i\}[\s\S]*\\operatorname\{RMS\}\(K_\{b,g,s\}\)[\s\S]*\\end\{aligned\}`/);
+  assert.match(source, /title:"Partial RoPE \(Q\)",summary:"仅对每个 Q head 的前 64\/128 维应用 RoPE，后 64 维保持不变。"/);
+  assert.match(source, /"d-ropeq":String\.raw`\\begin\{aligned\}\(Q_\{\\mathrm\{rot\}\},Q_\{\\mathrm\{pass\}\}\)&=\\operatorname\{Split\}/);
+  assert.match(source, /TRANSFORMERS_MINIMAX_M3_URL/);
+  assert.match(source, /const detail=CODE_BY_ID\[values\.id\]/);
+  assert.match(source, /const sections=node\.codeSections\?\?\[\];/);
+  assert.match(source, /title:"Transformers：Partial RoPE 可读实现"/);
+  assert.match(source, /q_rot, q_pass = q\[\.\.\., :rotary_dim\], q\[\.\.\., rotary_dim:\]/);
+  assert.match(source, /for\(const id of \["d-ropeq","d-ropek","s-rope"\]\) CODE_BY_ID\[id\]=\{sections:\[VLLM_ROPE_SECTION,TRANSFORMERS_ROPE_SECTION\]/);
+  assert.match(source, /title:"Paged KV Cache",summary:"L0–L2 的 Full GQA 从 Paged KV Cache 读取全部因果可见的历史与当前 K\/V。"/);
   assert.doesNotMatch(source, /title:"RMSNorm"/);
   assert.match(source, /toPort:"top-left"/);
   assert.match(source, /toPort:"top-right"/);
@@ -183,10 +354,11 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.deepEqual([...graphEndpoints].filter((id) => !graphNodes.has(id)), [], "every graph edge needs rendered endpoints");
   assert.match(source, /L0–L2/);
   assert.match(source, /L3–L59/);
-  assert.match(source, /同一个 Û 直接进入 Router、Routed Experts 与 Shared Expert/);
+  assert.match(source, /Router 在 Python 层只产生 \[B,S,128\] 的 router_logits/);
+  assert.match(source, /expert ids 与 router weights 由 FusedMoE 内部计算/);
   assert.match(source, /symbolicShape/);
   assert.doesNotMatch(source, /CURRENT OPERATOR|className=\{`io-operator/);
-  assert.match(source, /<i>符号<\/i><code title=\{symbolic\(shape\)\}>/);
+  assert.match(source, /<i>符号<\/i><code title=\{symbolicShape\(shape\)\}>/);
   assert.match(source, /<i>实际<\/i><code title=\{shape\}>/);
   assert.match(source, /replaceAll\("6144","H"\)/);
   assert.match(source, /完整 config\.json/);
@@ -202,8 +374,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /overflow:hidden/);
   assert.match(css, /--font-geist-sans:Consolas,"Microsoft YaHei",monospace;--font-geist-mono:Consolas,"Microsoft YaHei",monospace/);
   assert.match(css, /\.tensor-node/);
-  assert.match(css, /tensor artifact → compute operator → tensor artifact/);
-  assert.match(css, /\.runtime-io/);
+  assert.match(source, /title="颜色区分算子类型"/);
+  assert.match(css, /\.operator-swatch\{[^}]*linear-gradient\(90deg,var\(--linear\).*var\(--norm\).*var\(--split\).*var\(--activation\).*var\(--route\)/);
+  assert.doesNotMatch(css, /\.runtime-io/);
   assert.match(css, /\.tensor-input/);
   assert.match(css, /\.tensor-output/);
   assert.match(css, /\.latex-render/);
@@ -217,20 +390,21 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.decoder-column/);
   assert.match(css, /\.layer-type-options button\{[^}]*align-content:center/);
   assert.match(css, /\.decoder-workbench\.has-zoom\{grid-template-columns:minmax\(0,1fr\);gap:0\}/);
-  assert.match(source, /\{!expanded&&<GraphSurface className="decoder-column decoder-node-graph"/);
+  assert.match(source, /\{!expanded&&<GraphPan><GraphSurface className="decoder-column decoder-node-graph"/);
+  assert.match(css, /\.decoder-workbench:not\(\.has-zoom\)>\.graph-pan-viewport/);
   assert.match(source, /\{expanded&&<StageZoom/);
   assert.match(css, /\.stage-zoom/);
   assert.match(css, /\.stage-zoom>header\{align-items:center\}/);
-  assert.match(css, /\.parallel-experts/);
+  assert.doesNotMatch(css, /\.parallel-experts/);
   assert.match(css, /\.add-circle/);
-  assert.match(css, /\.weighted-op/);
+  assert.doesNotMatch(css, /\.weighted-op/);
   assert.match(css, /\.input-weighted-op/);
   assert.match(css, /\.co-input-row/);
-  assert.match(css, /\.parallel-gate-up/);
+  assert.doesNotMatch(css, /\.parallel-gate-up/);
   assert.match(css, /\.graph-connectors/);
   assert.doesNotMatch(css, /\.graph-arrowheads/);
   assert.match(css, /\.decoder-node-graph/);
-  assert.match(css, /\.decoder-node-graph>\.input-weighted-op\{[^}]*row-gap:clamp\(18px,2\.4vh,28px\)/);
+  assert.match(css, /\.decoder-node-graph>\.input-weighted-op\{[^}]*row-gap:clamp\(44px,5vh,64px\)/);
   assert.match(css, /\.decoder-column\{[^}]*width:min\(680px,96%\)/);
   assert.match(css, /\.decoder-node-graph \.co-input-row\{[^}]*grid-template-columns:max-content max-content/);
   assert.match(css, /\.decoder-node-graph \.co-input-row>\.tensor-node\{[^}]*width:max-content/);
@@ -240,25 +414,25 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.decoder-node-graph>\.stage-summary\{[^}]*width:max-content/);
   assert.match(css, /\.connected-attention-graph/);
   assert.match(css, /\.mlp-node-graph/);
-  assert.match(css, /\.mlp-node-graph\{width:min\(600px,96%\);gap:8px 6px;padding:8px 8px\}/);
+  assert.match(css, /\.mlp-node-graph\{width:min\(600px,96%\);padding:8px 8px\}/);
   assert.match(css, /\.mlp-node-graph>\[data-graph-id\]\{[^}]*width:max-content[^}]*max-width:260px/);
   assert.match(css, /\.stage-overview-panel\{grid-template-rows:auto minmax\(0,1fr\) 28px\}/);
   assert.match(css, /\.stage-formula-section code\{white-space:pre-line\}/);
   assert.match(css, /\.activation-step\{cursor:pointer\}/);
-  assert.match(css, /\.multiply-circle\[aria-pressed="true"\]\{[^}]*outline:2px solid #1f6c4d5c[^}]*border-color:var\(--green\)/);
+  assert.match(css, /\.multiply-circle\[aria-pressed="true"\]\{[^}]*outline:2px solid var\(--focus-ring\)[^}]*border-color:var\(--green\)/);
   assert.match(css, /\.mlp-node-graph \[data-graph-id="mlp-wdown"\]\{grid-area:9\/5\}/);
   assert.match(css, /\.moe-node-graph/);
-  assert.match(css, /\.moe-node-graph \[data-graph-id="moe-experts"\]\{grid-area:4\/3\}/);
-  assert.match(css, /\.moe-node-graph \[data-graph-id="moe-sum"\]\{grid-area:6\/4\}/);
-  assert.match(css, /\.moe-node-graph \[data-graph-id="moe-y"\]\{grid-area:7\/4\}/);
+  assert.match(css, /\.graph-pan-content \.moe-node-graph>\[data-graph-id="moe-experts"\]\{grid-area:4\/5\}/);
+  assert.match(css, /\.graph-pan-content \.moe-node-graph>\[data-graph-id="moe-sum"\]\{grid-area:6\/5\/7\/8\}/);
+  assert.match(css, /\.graph-pan-content \.moe-node-graph>\[data-graph-id="moe-y"\]\{grid-area:7\/5\/8\/8\}/);
   assert.match(css, /\.stage-zoom\{container-type:inline-size\}/);
-  assert.match(css, /\.stage-zoom \.moe-node-graph\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\);grid-template-rows:repeat\(7,minmax\(54px,1fr\)\);gap:10px clamp\(15px,1\.2vw,22px\);padding:8px clamp\(16px,1\.6vw,32px\)\}/);
+  assert.match(css, /\.stage-zoom \.moe-node-graph\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\);padding:8px clamp\(16px,1\.6vw,32px\)\}/);
   assert.match(css, /\.stage-zoom \.moe-node-graph :is\(\.tensor-node,\.op-node\)\{min-height:46px;max-height:none;padding:6px 9px;gap:2px;line-height:1\.1\}/);
   assert.match(css, /\.stage-zoom \.moe-node-graph \.tensor-weight\{width:210px;max-width:100%;min-height:60px;padding:8px 11px\}/);
   assert.match(source, /const safeClearance=direction==="side-left"/);
-  assert.match(source, /Math\.min\(24,Math\.max\(4,obstacleBounds\.left-8\)\)/);
+  assert.match(source, /Math\.min\(GRAPH_GEOMETRY.clearance,Math\.max\(4,obstacleBounds\.left-GRAPH_GEOMETRY.arrowClearance\)\)/);
   assert.match(css, /\.shape-rows/);
-  assert.match(css, /\.shape-rows code\{[^}]*white-space:normal[^}]*overflow:visible[^}]*text-overflow:clip[^}]*overflow-wrap:anywhere/);
+  assert.match(css, /\.shape-rows code\{[^}]*min-width:0[^}]*overflow:visible[^}]*text-overflow:clip/);
   assert.match(css, /@media\(min-width:1160px\)\{\.screen-grid\{grid-template-columns:minmax\(680px,1fr\) 460px\}\}/);
   assert.match(css, /\.shape-rows\{display:flex!important;flex-direction:column;align-items:stretch;gap:6px\}/);
   assert.match(css, /\.shape-rows>span\{width:100%;grid-template-columns:46px minmax\(0,1fr\)\}/);
@@ -279,17 +453,14 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.config-reference table\{[^}]*table-layout:fixed/);
   assert.match(css, /\.config-tabs\{[^}]*flex-wrap:wrap/);
   assert.doesNotMatch(css, /font-weight:(?:750|800)/);
-  assert.match(css, /\.detail-formula\{overflow:hidden/);
+  assert.match(css, /\.detail-formula\{overflow:auto/);
   assert.match(css, /\.unpin-button\{[^}]*width:28px[^}]*height:28px/);
   assert.doesNotMatch(css, /\.op-node\{[^}]*border-left/);
 });
 
 test("renders every operator equation as valid LaTeX", async () => {
-  const [page, hy4] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/models/hy4.tsx", import.meta.url), "utf8"),
-  ]);
-  const equations = [...`${page}\n${hy4}`.matchAll(/String\.raw`([^`]*)`/g)].map((match) => match[1]);
+  const page = readModelSource();
+  const equations = [...page.matchAll(/String\.raw`([^`]*)`/g)].map((match) => match[1]);
 
   assert.ok(equations.length >= 40, `expected a complete formula set, got ${equations.length}`);
   for (const equation of equations) {
@@ -297,29 +468,34 @@ test("renders every operator equation as valid LaTeX", async () => {
   }
 });
 
-test("routes the MoE hidden tensor into the shared expert without crossing its weight tensor", async () => {
-  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+test("routes MoE branches on symmetric rails without crossing nodes", async () => {
+  const source = readModelSource();
+  const css = readStyles();
 
   assert.match(
     source,
-    /\{from:"moe-u",to:"moe-shared",fromPort:"bottom",toPort:"top"\}/,
+    /\{from:"moe-u",to:"moe-shared",fromPort:"bottom-right",toPort:"top",approach:28\}/,
   );
   assert.doesNotMatch(
     source,
     /\{from:"moe-u",to:"moe-shared",route:"side-right",fromPort:"right",toPort:"right"\}/,
   );
-  assert.match(source, /\{from:"moe-u",to:"moe-experts",toPort:"top-right"\}/);
-  assert.doesNotMatch(source, /\{from:"moe-u",to:"moe-experts",route:"side-left"/);
+  assert.doesNotMatch(source, /graphId="moe-expert-input"/);
+  assert.match(source, /\{from:"moe-u",to:"moe-experts"\}/);
+  assert.match(source, /\{from:"moe-router-logits",to:"moe-experts",toPort:"top-left",approach:28\}/);
+  assert.doesNotMatch(source, /className="moe-expert-branches"/);
+  assert.match(source, /\{from:"moe-routed",to:"moe-sum",toPort:"top-left",approach:24\}/);
+  assert.match(source, /\{from:"moe-shared-out",to:"moe-sum",toPort:"top-right",approach:24\}/);
   assert.match(source, /name="shared expert weights ×3" shape="gate \/ up \/ down"/);
   assert.doesNotMatch(source, /name="block_sparse_moe\.shared_experts\.\{gate_proj,up_proj,down_proj\}\.weight"/);
 
   const edgeBlock = source.match(/const edges:GraphEdge\[\]=\[\s*\{from:"moe-u"([\s\S]*?)\n\s*\];/)?.[0] ?? "";
   const artifacts = new Set([
-    "moe-u", "moe-wrouter", "moe-ids", "moe-rweights", "moe-wexperts",
+    "moe-u", "moe-wrouter", "moe-router-logits", "moe-wexperts",
     "moe-routed", "moe-wshared", "moe-shared-out", "moe-y",
   ]);
   const edges = [...edgeBlock.matchAll(/\{from:"([^"]+)",to:"([^"]+)"/g)];
-  assert.equal(edges.length, 15, "expected every MoE graph edge in the invariant check");
+  assert.equal(edges.length, 13, "expected every MoE graph edge in the invariant check");
   for (const [, from, to] of edges) {
     assert.notEqual(
       artifacts.has(from),
