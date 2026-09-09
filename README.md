@@ -1,6 +1,6 @@
 # Model Atlas
 
-MiniMax-M3 模型结构与算子连线的纯静态交互页面。项目使用 Vite、React 和 KaTeX，可直接部署到 GitHub Pages，不依赖服务器、数据库或 Cloudflare Workers。
+支持按模块扩展模型的纯静态架构交互页面，当前提供 MiniMax-M3 的算子图与源码证据。项目使用 Vite、React 和 KaTeX，可直接部署到 GitHub Pages，不依赖服务器、数据库或 Cloudflare Workers。
 
 ## 本地开发
 
@@ -17,6 +17,13 @@ npm run dev
 - `npm run build`：生成 `dist/` 静态文件
 - `npm test`：构建并运行全部测试
 - `npm run preview`：本地预览生产构建
+- `npm run test:browser`：开发服务启动后，执行图示布局、主题与模型切换的浏览器回归
+
+## 代码结构与模型扩展
+
+公共画布位于 `app/graph/`，颜色、间距、字号和圆角变量位于 `app/styles/tokens.css`。每个模型的图示、配置和源码证据独立存放在 `app/models/<model-id>/`。
+
+新增模型实现 `ModelDefinition` 并注册到 `app/models/index.ts` 即可。完整说明见 [模型扩展与公共样式](docs/model-extension.md)。
 
 ## GitHub Pages 部署
 

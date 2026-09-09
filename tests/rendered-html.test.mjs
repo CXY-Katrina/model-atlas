@@ -1,3 +1,4 @@
+import { readModelSource, readStyles } from "./source-helpers.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -8,7 +9,7 @@ test("builds a static GitHub Pages entry", async () => {
     readFile(new URL("../index.html", import.meta.url), "utf8"),
     readFile(new URL("../dist/index.html", import.meta.url), "utf8"),
     readFile(new URL("../app/main.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readModelSource(),
   ]);
 
   assert.match(html, /<html lang="zh-CN">/);
@@ -31,8 +32,8 @@ test("builds a static GitHub Pages entry", async () => {
 });
 
 test("expanded attention keeps labels clear and vertical spacing uniform", async () => {
-  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const source = readModelSource();
+  const css = readStyles();
 
   assert.match(css, /\.graph-pan-content \.connected-attention-graph\{[^}]*--attention-row-gap:/);
   for (const path of ["Q", "K", "V"]) assert.match(source, new RegExp(`<header>${path} PATH<\\/header>`));
@@ -52,8 +53,8 @@ test("expanded attention keeps labels clear and vertical spacing uniform", async
 });
 
 test("expanded sparse attention keeps blocks wide and connector lanes separated", async () => {
-  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const source = readModelSource();
+  const css = readStyles();
 
   assert.match(css, /\.graph-pan-content \.connected-attention-graph\.sparse-attention\{[^}]*width:max\(100%,1740px\)/);
   assert.match(css, /\.attention-branches:not\(\.dense\)\{[^}]*grid-template-columns:max-content minmax\(600px,1fr\)/);
@@ -79,7 +80,7 @@ test("expanded sparse attention keeps blocks wide and connector lanes separated"
 });
 
 test("QKV + Index Projection detail contains only five-way projection evidence", async () => {
-  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const source = readModelSource();
   assert.match(source, /const QKV_INDEX_PROJECTION_SECTIONS: CodeSection\[\] = \[/);
   assert.match(source, /packed:cloneOp\(packed,\{id:"s-packed",kind:"linear",title:"QKV \+ Index Projection"[^}]*codeSections:QKV_INDEX_PROJECTION_SECTIONS/);
 
@@ -93,7 +94,7 @@ test("QKV + Index Projection detail contains only five-way projection evidence",
 });
 
 test("sparse attention sends symbolic Top-K indices and paged KV directly to attention math", async () => {
-  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const source = readModelSource();
   assert.match(source, /"s-idxmask":String\.raw/);
   assert.match(source, /idxnorm:cloneOp\([^\n]*title:"Index Q\/K Gemma RMSNorm \+ RoPE"/);
   assert.match(source, /idxmask:cloneOp\([^\n]*title:"Mask Future Index Keys"/);
@@ -114,8 +115,8 @@ test("sparse attention sends symbolic Top-K indices and paged KV directly to att
 });
 
 test("vLLM index branch exposes its independent key-only side cache", async () => {
-  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const source = readModelSource();
+  const css = readStyles();
   assert.match(source, /VLLM_INDEXER_URL/);
   assert.match(source, /const INDEX_CACHE_SECTIONS: CodeSection\[\] = \[/);
   assert.match(source, /MiniMaxM3IndexerCache/);
@@ -136,7 +137,7 @@ test("vLLM index branch exposes its independent key-only side cache", async () =
 });
 
 test("Q and K RoPE inputs use symmetric top ports", async () => {
-  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const source = readModelSource();
   for (const edge of [
     '{from:"attn-qt",to:"attn-qrope",toPort:"top-left",approach:38}',
     '{from:"attn-posq",to:"attn-qrope",toPort:"top-right",approach:38}',
@@ -147,8 +148,8 @@ test("Q and K RoPE inputs use symmetric top ports", async () => {
 });
 
 test("attention fan-out is shared and compact labels stay inside their nodes", async () => {
-  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const source = readModelSource();
+  const css = readStyles();
 
   assert.match(source, /title:"Main Q\/K Gemma RMSNorm"/);
   for (const target of ["attn-q", "attn-k", "attn-v", "attn-qidx", "attn-kidx"]) {
@@ -157,15 +158,16 @@ test("attention fan-out is shared and compact labels stay inside their nodes", a
   assert.match(css, /\[data-graph-id="attn-idxbounds"\][^{]*\{[^}]*height:78px/);
   assert.match(css, /\[data-graph-id="attn-topids"\][^{]*\{[^}]*height:82px/);
   assert.match(css, /\[data-graph-id="attn-idxbounds"\] b[^}]*overflow-wrap:anywhere/);
-  assert.match(css, /\[data-graph-id="attn-bounds"\][^{]*\{[^}]*width:min\(420px,100%\)[^}]*justify-self:start/);
+  assert.match(css, /\[data-graph-id="attn-bounds"\][^{]*\{[^}]*width:min\(420px,100%\)/);
+  assert.match(css, /\[data-graph-id="attn-bounds"\]\{grid-area:5\/1;justify-self:end\}/);
   assert.match(css, /\.attention-branches:not\(\.dense\)\{[^}]*grid-template-columns:max-content minmax\(600px,1fr\)/);
   assert.match(css, /\.index-ribbon\{[^}]*box-sizing:border-box[^}]*min-width:0[^}]*overflow:hidden/);
   assert.match(css, /\.index-ribbon>\[data-graph-id\][^{]*\{[^}]*box-sizing:border-box[^}]*max-width:100%/);
 });
 
 test("diagram geometry prefers straight paths, content-sized cards, and conditional panning", async () => {
-  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const source = readModelSource();
+  const css = readStyles();
 
   assert.match(source, /\{from:"attn-p",to:"attn-pv",toPort:"top-left",approach:34\}/);
   assert.match(source, /const \[canPan,setCanPan\]=useState\(false\)/);
@@ -180,9 +182,9 @@ test("diagram geometry prefers straight paths, content-sized cards, and conditio
 
 test("keeps code, checkpoint, formula, and shape evidence together", async () => {
   const [page, modelData, css] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/model-data.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readModelSource(),
+    readFile(new URL("../app/models/minimax-m3/data.ts", import.meta.url), "utf8"),
+    readStyles(),
   ]);
   const source = `${page}\n${modelData}`;
 
@@ -239,7 +241,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /NEXT_BY_ID/);
   assert.doesNotMatch(source, /\["weights","权重"\]/);
   assert.doesNotMatch(page, /type="range"/);
-  assert.match(source, /MODEL_REGISTRY/);
+  assert.match(source, /id: "minimax-m3"/);
   assert.match(source, /尚未选择模块/);
   assert.match(source, /LayerType/);
   assert.match(source, /const active=detail\.pinned\?\?detail\.hovered/);
@@ -372,10 +374,9 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /overflow:hidden/);
   assert.match(css, /--font-geist-sans:Consolas,"Microsoft YaHei",monospace;--font-geist-mono:Consolas,"Microsoft YaHei",monospace/);
   assert.match(css, /\.tensor-node/);
-  assert.match(css, /tensor artifact → compute operator → tensor artifact/);
   assert.match(source, /title="颜色区分算子类型"/);
   assert.match(css, /\.operator-swatch\{[^}]*linear-gradient\(90deg,var\(--linear\).*var\(--norm\).*var\(--split\).*var\(--activation\).*var\(--route\)/);
-  assert.match(css, /\.runtime-io/);
+  assert.doesNotMatch(css, /\.runtime-io/);
   assert.match(css, /\.tensor-input/);
   assert.match(css, /\.tensor-output/);
   assert.match(css, /\.latex-render/);
@@ -394,16 +395,16 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(source, /\{expanded&&<StageZoom/);
   assert.match(css, /\.stage-zoom/);
   assert.match(css, /\.stage-zoom>header\{align-items:center\}/);
-  assert.match(css, /\.parallel-experts/);
+  assert.doesNotMatch(css, /\.parallel-experts/);
   assert.match(css, /\.add-circle/);
-  assert.match(css, /\.weighted-op/);
+  assert.doesNotMatch(css, /\.weighted-op/);
   assert.match(css, /\.input-weighted-op/);
   assert.match(css, /\.co-input-row/);
-  assert.match(css, /\.parallel-gate-up/);
+  assert.doesNotMatch(css, /\.parallel-gate-up/);
   assert.match(css, /\.graph-connectors/);
   assert.doesNotMatch(css, /\.graph-arrowheads/);
   assert.match(css, /\.decoder-node-graph/);
-  assert.match(css, /\.decoder-node-graph>\.input-weighted-op\{[^}]*row-gap:clamp\(18px,2\.4vh,28px\)/);
+  assert.match(css, /\.decoder-node-graph>\.input-weighted-op\{[^}]*row-gap:clamp\(44px,5vh,64px\)/);
   assert.match(css, /\.decoder-column\{[^}]*width:min\(680px,96%\)/);
   assert.match(css, /\.decoder-node-graph \.co-input-row\{[^}]*grid-template-columns:max-content max-content/);
   assert.match(css, /\.decoder-node-graph \.co-input-row>\.tensor-node\{[^}]*width:max-content/);
@@ -413,25 +414,25 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
   assert.match(css, /\.decoder-node-graph>\.stage-summary\{[^}]*width:max-content/);
   assert.match(css, /\.connected-attention-graph/);
   assert.match(css, /\.mlp-node-graph/);
-  assert.match(css, /\.mlp-node-graph\{width:min\(600px,96%\);gap:8px 6px;padding:8px 8px\}/);
+  assert.match(css, /\.mlp-node-graph\{width:min\(600px,96%\);padding:8px 8px\}/);
   assert.match(css, /\.mlp-node-graph>\[data-graph-id\]\{[^}]*width:max-content[^}]*max-width:260px/);
   assert.match(css, /\.stage-overview-panel\{grid-template-rows:auto minmax\(0,1fr\) 28px\}/);
   assert.match(css, /\.stage-formula-section code\{white-space:pre-line\}/);
   assert.match(css, /\.activation-step\{cursor:pointer\}/);
-  assert.match(css, /\.multiply-circle\[aria-pressed="true"\]\{[^}]*outline:2px solid #1f6c4d5c[^}]*border-color:var\(--green\)/);
+  assert.match(css, /\.multiply-circle\[aria-pressed="true"\]\{[^}]*outline:2px solid var\(--focus-ring\)[^}]*border-color:var\(--green\)/);
   assert.match(css, /\.mlp-node-graph \[data-graph-id="mlp-wdown"\]\{grid-area:9\/5\}/);
   assert.match(css, /\.moe-node-graph/);
   assert.match(css, /\.graph-pan-content \.moe-node-graph>\[data-graph-id="moe-experts"\]\{grid-area:4\/5\}/);
   assert.match(css, /\.graph-pan-content \.moe-node-graph>\[data-graph-id="moe-sum"\]\{grid-area:6\/5\/7\/8\}/);
   assert.match(css, /\.graph-pan-content \.moe-node-graph>\[data-graph-id="moe-y"\]\{grid-area:7\/5\/8\/8\}/);
   assert.match(css, /\.stage-zoom\{container-type:inline-size\}/);
-  assert.match(css, /\.stage-zoom \.moe-node-graph\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\);grid-template-rows:repeat\(7,minmax\(54px,1fr\)\);gap:10px clamp\(15px,1\.2vw,22px\);padding:8px clamp\(16px,1\.6vw,32px\)\}/);
+  assert.match(css, /\.stage-zoom \.moe-node-graph\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\);padding:8px clamp\(16px,1\.6vw,32px\)\}/);
   assert.match(css, /\.stage-zoom \.moe-node-graph :is\(\.tensor-node,\.op-node\)\{min-height:46px;max-height:none;padding:6px 9px;gap:2px;line-height:1\.1\}/);
   assert.match(css, /\.stage-zoom \.moe-node-graph \.tensor-weight\{width:210px;max-width:100%;min-height:60px;padding:8px 11px\}/);
   assert.match(source, /const safeClearance=direction==="side-left"/);
-  assert.match(source, /Math\.min\(24,Math\.max\(4,obstacleBounds\.left-8\)\)/);
+  assert.match(source, /Math\.min\(GRAPH_GEOMETRY.clearance,Math\.max\(4,obstacleBounds\.left-GRAPH_GEOMETRY.arrowClearance\)\)/);
   assert.match(css, /\.shape-rows/);
-  assert.match(css, /\.shape-rows code\{[^}]*white-space:normal[^}]*overflow:visible[^}]*text-overflow:clip[^}]*overflow-wrap:anywhere/);
+  assert.match(css, /\.shape-rows code\{[^}]*min-width:0[^}]*overflow:visible[^}]*text-overflow:clip/);
   assert.match(css, /@media\(min-width:1160px\)\{\.screen-grid\{grid-template-columns:minmax\(680px,1fr\) 460px\}\}/);
   assert.match(css, /\.shape-rows\{display:flex!important;flex-direction:column;align-items:stretch;gap:6px\}/);
   assert.match(css, /\.shape-rows>span\{width:100%;grid-template-columns:46px minmax\(0,1fr\)\}/);
@@ -458,7 +459,7 @@ test("keeps code, checkpoint, formula, and shape evidence together", async () =>
 });
 
 test("renders every operator equation as valid LaTeX", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const page = readModelSource();
   const equations = [...page.matchAll(/String\.raw`([^`]*)`/g)].map((match) => match[1]);
 
   assert.ok(equations.length >= 40, `expected a complete formula set, got ${equations.length}`);
@@ -468,8 +469,8 @@ test("renders every operator equation as valid LaTeX", async () => {
 });
 
 test("routes MoE branches on symmetric rails without crossing nodes", async () => {
-  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const source = readModelSource();
+  const css = readStyles();
 
   assert.match(
     source,

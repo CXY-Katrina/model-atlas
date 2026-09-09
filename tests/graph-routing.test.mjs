@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { routeGraphEdge, routeGraphFanout } from "../app/graph-routing.ts";
+import { routeGraphEdge, routeGraphFanout } from "../app/graph/routing.ts";
 
 test("side routes clear every node before turning toward the target", () => {
   const route = routeGraphEdge({
@@ -37,15 +37,15 @@ test("direct routes keep the arrow on one continuous path", () => {
 
 test("aligned vertical routes stay straight from top to bottom", () => {
   for (const targetX of [150, 150.01, 149.99]) {
-  const route = routeGraphEdge({
-    source: { x: 150, y: 60 },
-    target: { x: targetX, y: 150 },
-    direction: "vertical",
-    obstacleBounds: { left: 0, right: 300 },
-    clearance: 24,
-  });
+    const route = routeGraphEdge({
+      source: { x: 150, y: 60 },
+      target: { x: targetX, y: 150 },
+      direction: "vertical",
+      obstacleBounds: { left: 0, right: 300 },
+      clearance: 24,
+    });
 
-  assert.equal(route.path, "M 150 60 L 150 150");
+    assert.equal(route.path, "M 150 60 L 150 150");
   }
 });
 

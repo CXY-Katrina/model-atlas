@@ -1,3 +1,14 @@
+/** Model-independent routing policy; each model chooses its approach/departure lanes. */
+export const GRAPH_GEOMETRY = {
+  portNear: 0.34,
+  portFar: 0.66,
+  clearance: 24,
+  cornerRadius: 24,
+  arrowClearance: 8,
+  straightTolerance: 0.05,
+  panPadding: 28,
+} as const;
+
 export type RoutePoint = {x:number;y:number};
 
 export type FanoutRoute = {
@@ -20,7 +31,7 @@ type RouteGraphEdgeOptions = {
 
 const n=(value:number)=>Number(value.toFixed(2));
 
-export function routeGraphFanout({source,targets,departure=48,radius=24}:{
+export function routeGraphFanout({source,targets,departure=48,radius=GRAPH_GEOMETRY.cornerRadius}:{
   source:RoutePoint;
   targets:RoutePoint[];
   departure?:number;
@@ -73,13 +84,13 @@ export function routeGraphEdge({source,target,direction,obstacleBounds,clearance
   if(direction==="vertical"){
     const sign=ty>=sy?1:-1;
     // DOM layout and center alignment can differ by a few hundredths of a pixel.
-    if(Math.abs(sx-tx)<0.05)return {path:`M ${sx} ${sy} L ${sx} ${ty}`,rail:null};
+    if(Math.abs(sx-tx)<GRAPH_GEOMETRY.straightTolerance)return {path:`M ${sx} ${sy} L ${sx} ${ty}`,rail:null};
     const gap=Math.abs(ty-sy);
     if(departure!==undefined){
       const horizontalSign=tx>=sx?1:-1;
       const departureDistance=Math.min(Math.max(0,departure),Math.max(0,gap-8));
       const junctionY=n(sy+sign*departureDistance);
-      const radius=n(Math.min(24,departureDistance/2,Math.abs(tx-sx)/2,Math.abs(ty-junctionY)/2));
+      const radius=n(Math.min(GRAPH_GEOMETRY.cornerRadius,departureDistance/2,Math.abs(tx-sx)/2,Math.abs(ty-junctionY)/2));
       const path=[
         `M ${sx} ${sy}`,
         `L ${sx} ${n(junctionY-sign*radius)}`,
@@ -94,7 +105,7 @@ export function routeGraphEdge({source,target,direction,obstacleBounds,clearance
     const terminalY=n(ty-sign*targetLane);
     const horizontalSign=tx>=sx?1:-1;
     const finalStraight=Math.min(14,targetLane*.45);
-    const radius=n(Math.min(24,approach*.55,Math.abs(tx-sx)/2,Math.abs(terminalY-sy),Math.max(0,targetLane-finalStraight)));
+    const radius=n(Math.min(GRAPH_GEOMETRY.cornerRadius,approach*.55,Math.abs(tx-sx)/2,Math.abs(terminalY-sy),Math.max(0,targetLane-finalStraight)));
     const path=[
       `M ${sx} ${sy}`,
       `L ${sx} ${n(terminalY-sign*radius)}`,

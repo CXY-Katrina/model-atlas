@@ -1,9 +1,9 @@
+import { readModelSource, readStyles } from "./source-helpers.mjs";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const page = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
-const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+const page = readModelSource();
+const css = readStyles();
 
 test("MoE expert branches use short independent lanes and a symmetric merge", () => {
   assert.doesNotMatch(page, /className="moe-expert-branches"/);
@@ -51,7 +51,7 @@ test("FusedMoE formula explains every symbol and shows both implementations", ()
 });
 
 test("source navigation, code provenance, and formula overflow stay usable", () => {
-  assert.match(page, /href=\{TRANSFORMERS_MOE_URL\}[\s\S]*<b>TRANSFORMERS ↗<\/b>/);
+  assert.match(page, /label: "TRANSFORMERS"[^\n]+url: TRANSFORMERS_MOE_URL/);
   assert.match(page, /function codeSourceLabel\(section:CodeSection\)/);
   assert.match(page, /className=\{`code-source-tag source-\$\{source\.toLowerCase\(\)\}`\}/);
   assert.match(page, />\{source\}<\/span>/);

@@ -10,7 +10,8 @@
     "check": "tsc --noEmit",
     "build": "npm run check && vite build --base=./",
     "preview": "vite preview",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/detail-selection.test.mjs tests/graph-routing.test.mjs tests/moe-layout-contract.test.mjs"
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "test:browser": "node tests/browser-regression.mjs"
   },
   "dependencies": {
     "katex": "^0.18.4",
