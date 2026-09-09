@@ -1,0 +1,4 @@
+interface:
+  display_name: "Model Atlas 模型适配"
+  short_description: "从 vLLM 或 Transformers 源码适配模型图示，文档驱动三 agent 双审闭环"
+  default_prompt: "使用 $model-atlas-adapter，基于我提供的模型源码，为 model-atlas 新增结构介绍，由主 agent 实现，并启动图示和语义两个独立 agent 通过文档检视、修复和复查。"
