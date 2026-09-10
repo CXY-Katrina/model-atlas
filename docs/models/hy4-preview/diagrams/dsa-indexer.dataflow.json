@@ -1,0 +1,380 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "DSA lightning indexer:top-2048 稀疏索引(仅 21 个 full 层)",
+    "locale": "zh-CN",
+    "subtitle": "每层独立打分过于昂贵;57 个 shared 层直接复用最近前驱 full 层写入的索引",
+    "output": "public/models/hy4-preview/diagrams/dsa-indexer.html",
+    "viewBox": [
+      1080,
+      800
+    ],
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "visual_preset": "classic",
+    "views": [
+      {
+        "id": "score-path",
+        "label": "打分路径",
+        "focus": [
+          "idx-qr",
+          "idx-hidden",
+          "idx-wqb",
+          "idx-wk",
+          "idx-rope",
+          "idx-knorm",
+          "idx-quant",
+          "idx-cache",
+          "idx-score"
+        ],
+        "note": "q 侧与 k 侧两条链在加权打分处汇合。"
+      },
+      {
+        "id": "share-reuse",
+        "label": "full / shared",
+        "focus": [
+          "idx-topk",
+          "idx-buffer",
+          "idx-reuse"
+        ],
+        "note": "full 层写 buffer;shared 层(57)不建 indexer,直接复用;MTP 层自建 full indexer(draft step 0 自算并写同一 buffer,step≥1 才复用)。"
+      }
+    ],
+    "legend": {
+      "mode": "auto"
+    }
+  },
+  "stages": [
+    {
+      "label": "输入"
+    },
+    {
+      "label": "投影"
+    },
+    {
+      "label": "变换"
+    },
+    {
+      "label": "量化 / 缓存"
+    },
+    {
+      "label": "打分与选择"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "idx-qr",
+      "type": "external",
+      "label": "q̃(q_a RMSNorm 输出)",
+      "sublabel": "[T,2048]",
+      "stage": 0,
+      "row": 0,
+      "width": 150
+    },
+    {
+      "id": "idx-hidden",
+      "type": "external",
+      "label": "hidden",
+      "sublabel": "[T,6144] · 子块输入",
+      "stage": 0,
+      "row": 2,
+      "width": 150
+    },
+    {
+      "id": "idx-wqb",
+      "type": "backend",
+      "label": "wq_b",
+      "sublabel": "2048 → 32×128 索引查询",
+      "stage": 1,
+      "row": 0,
+      "width": 170
+    },
+    {
+      "id": "idx-wk",
+      "type": "backend",
+      "label": "wk_weights_proj",
+      "sublabel": "6144 → [k 128 | w 32] 融合 GEMM",
+      "stage": 1,
+      "row": 2,
+      "width": 180
+    },
+    {
+      "id": "idx-rope",
+      "type": "backend",
+      "label": "interleaved RoPE 64",
+      "sublabel": "q / k 索引头 · θ=1e7",
+      "stage": 2,
+      "row": 0,
+      "width": 170
+    },
+    {
+      "id": "idx-knorm",
+      "type": "backend",
+      "label": "k_norm = LayerNorm",
+      "sublabel": "128 维 · ε=1e−6(非 RMSNorm)",
+      "stage": 2,
+      "row": 2,
+      "width": 170
+    },
+    {
+      "id": "idx-quant",
+      "type": "backend",
+      "label": "q FP8 量化",
+      "sublabel": "per-token-group 128 · ue8m0",
+      "stage": 3,
+      "row": 0,
+      "width": 150
+    },
+    {
+      "id": "idx-cache",
+      "type": "database",
+      "label": "indexer key cache",
+      "sublabel": "FP8 key-only · 128+scale",
+      "stage": 3,
+      "row": 2,
+      "width": 150
+    },
+    {
+      "id": "idx-score",
+      "type": "backend",
+      "label": "加权打分",
+      "sublabel": "w·⟨Qidx,k⟩ /√128/√32 · w 来自 wk GEMM",
+      "stage": 4,
+      "row": 0,
+      "width": 170
+    },
+    {
+      "id": "idx-topk",
+      "type": "backend",
+      "label": "Top-2048 token",
+      "sublabel": "causal 内选择 · 不足 −1 填充",
+      "stage": 4,
+      "row": 1,
+      "width": 160
+    },
+    {
+      "id": "idx-buffer",
+      "type": "database",
+      "label": "topk_indices_buffer",
+      "sublabel": "[T,2048] int32 · 模型级共享",
+      "stage": 4,
+      "row": 2,
+      "width": 170
+    },
+    {
+      "id": "idx-reuse",
+      "type": "external",
+      "label": "shared 层(57)/ MTP",
+      "sublabel": "shared 复用;MTP 自建 indexer",
+      "stage": 4,
+      "row": 3,
+      "width": 170
+    }
+  ],
+  "flows": [
+    {
+      "id": "qr-to-wqb",
+      "from": "idx-qr",
+      "to": "idx-wqb",
+      "label": "索引查询投影",
+      "classification": "q 侧",
+      "variant": "default",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        200,
+        214
+      ]
+    },
+    {
+      "id": "hidden-to-wk",
+      "from": "idx-hidden",
+      "to": "idx-wk",
+      "label": "k 与 head 权重",
+      "classification": "k 侧 · 融合 GEMM",
+      "variant": "default",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        207,
+        428
+      ]
+    },
+    {
+      "id": "wqb-to-rope",
+      "from": "idx-wqb",
+      "to": "idx-rope",
+      "label": "32×128",
+      "classification": "q 侧",
+      "variant": "default",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        422,
+        200
+      ]
+    },
+    {
+      "id": "wk-to-knorm",
+      "from": "idx-wk",
+      "to": "idx-knorm",
+      "label": "k [T,128]",
+      "classification": "k 侧",
+      "variant": "default",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        422,
+        428
+      ]
+    },
+    {
+      "id": "rope-to-quant",
+      "from": "idx-rope",
+      "to": "idx-quant",
+      "label": "旋转后 q",
+      "classification": "q 侧",
+      "variant": "default",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        642,
+        124
+      ]
+    },
+    {
+      "id": "knorm-to-cache",
+      "from": "idx-knorm",
+      "to": "idx-cache",
+      "label": "LayerNorm 后 k",
+      "classification": "k 侧 · 插 cache 时融合量化",
+      "variant": "default",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        640,
+        428
+      ]
+    },
+    {
+      "id": "quant-to-score",
+      "from": "idx-quant",
+      "to": "idx-score",
+      "label": "FP8 q + scale",
+      "classification": "q 侧",
+      "variant": "emphasis",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        700,
+        214
+      ]
+    },
+    {
+      "id": "cache-to-score",
+      "from": "idx-cache",
+      "to": "idx-score",
+      "label": "历史 k",
+      "classification": "k 侧",
+      "variant": "default",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        850,
+        124
+      ],
+      "via": [
+        [
+          845,
+          385
+        ],
+        [
+          845,
+          157
+        ]
+      ]
+    },
+    {
+      "id": "score-to-topk",
+      "from": "idx-score",
+      "to": "idx-topk",
+      "label": "token 分数",
+      "classification": "选择",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        1010,
+        200
+      ]
+    },
+    {
+      "id": "topk-to-buffer",
+      "from": "idx-topk",
+      "to": "idx-buffer",
+      "label": "写入索引",
+      "classification": "共享",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        1010,
+        314
+      ]
+    },
+    {
+      "id": "buffer-to-reuse",
+      "from": "idx-buffer",
+      "to": "idx-reuse",
+      "label": "复用最近 full 层索引",
+      "classification": "共享",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        1010,
+        428
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "为什么只要 32 个索引头",
+      "items": [
+        "索引头只负责“挑出重要的 2048 个 token”,不生成内容",
+        "k 与 head 权重 w 由同一条 wk_weights_proj GEMM 产出(图中 k 边连向打分,w 以文字标注)",
+        "softmax_scale = 128^(-1/2),再乘头数归一 32^(-1/2)"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "FP8 细节",
+      "items": [
+        "q 在投影后按 128 元素一组做 FP8 量化,scale 为 ue8m0 幂次",
+        "k 在写入独立 key-only cache 时融合量化,不占 MLA 主 cache", "候选不足 2048 的行以 −1(no-token sentinel)填充,消费端把 −1 视为空位",
+        "head 权重 w 在打分前折叠 q_scale / √128 / √32"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "full 与 shared 的分工",
+      "items": [
+        "indexer_types 共 78 项:full 恰在 L0, L1, L5, L9, …, L77(21 层)",
+        "checkpoint 权重索引证实:只有这 21 层有 indexer.* 权重",
+        "shared 层跳过打分,直接读 buffer 中最近前驱 full 层的索引", "MTP 层例外:恒建自己的 full indexer,draft step 0 自算索引写入共享 buffer,step≥1 才跳过"
+      ]
+    }
+  ]
+}

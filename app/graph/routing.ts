@@ -79,6 +79,46 @@ export function routeGraphFanout({source,targets,departure=48,radius=GRAPH_GEOME
   return routes;
 }
 
+export function routeGraphFanin({sources,target,departure=36,radius=GRAPH_GEOMETRY.cornerRadius}:{
+  sources:RoutePoint[];
+  target:RoutePoint;
+  departure?:number;
+  radius?:number;
+}):FanoutRoute[]{
+  if(sources.length===0)return [];
+  const tx=n(target.x); const ty=n(target.y);
+  const direction=sources.reduce((sum,s)=>sum+s.y,0)/sources.length<=ty?1:-1;
+  const nearestGap=Math.min(...sources.map(s=>Math.abs(ty-s.y)));
+  const railDistance=Math.min(Math.max(8,departure),Math.max(8,nearestGap-8));
+  const railY=n(ty-direction*railDistance);
+  // rail ends at the elbow landing points (sx±r), never at the raw source x,
+  // otherwise the rail tip pokes out past the rounded corner.
+  const joins=sources.map(s=>{
+    const sx=n(s.x); const sy=n(s.y);
+    const aligned=Math.abs(sx-tx)<GRAPH_GEOMETRY.straightTolerance;
+    const r=n(Math.min(radius,Math.abs(railY-sy),Math.abs(ty-railY)/2));
+    const h=sx<tx?1:-1;
+    return {sx,sy,aligned,r,joinX:aligned?sx:n(sx+h*r)};
+  });
+  const minX=Math.min(...joins.map(j=>j.joinX),tx);
+  const maxX=Math.max(...joins.map(j=>j.joinX),tx);
+  const routes:FanoutRoute[]=[];
+  if(maxX>minX){
+    routes.push({path:`M ${minX} ${railY} L ${maxX} ${railY}`,arrow:false,role:"rail"});
+  }
+  for(const j of joins){
+    if(j.aligned){
+      routes.push({path:`M ${j.sx} ${j.sy} L ${j.sx} ${ty}`,arrow:true,role:"drop"});
+      continue;
+    }
+    routes.push({path:`M ${j.sx} ${j.sy} L ${j.sx} ${n(railY-direction*j.r)} Q ${j.sx} ${railY}, ${j.joinX} ${railY}`,arrow:false,role:"drop"});
+  }
+  if(!joins.some(j=>j.aligned)){
+    routes.push({path:`M ${tx} ${railY} L ${tx} ${ty}`,arrow:true,role:"drop"});
+  }
+  return routes;
+}
+
 export function routeGraphEdge({source,target,direction,obstacleBounds,clearance,approach=14,departure}:RouteGraphEdgeOptions){
   const sx=n(source.x); const sy=n(source.y); const tx=n(target.x); const ty=n(target.y);
   if(direction==="vertical"){
@@ -139,10 +179,20 @@ export function routeGraphEdge({source,target,direction,obstacleBounds,clearance
     return {path,rail};
   }
   if(direction==="horizontal"){
-    const sign=tx>=sx?1:-1;
-    const terminalX=n(tx-sign*Math.min(14,Math.abs(tx-sx)/3));
-    const midX=n((sx+terminalX)/2);
-    return {path:`M ${sx} ${sy} C ${midX} ${sy}, ${midX} ${ty}, ${terminalX} ${ty} L ${tx} ${ty}`,rail:null};
+    const h=tx>=sx?1:-1;
+    const d=ty>=sy?1:-1;
+    const midX=n((sx+tx)/2);
+    if(Math.abs(ty-sy)<GRAPH_GEOMETRY.straightTolerance)return {path:`M ${sx} ${sy} L ${tx} ${ty}`,rail:null};
+    const radius=n(Math.min(GRAPH_GEOMETRY.cornerRadius,Math.abs(tx-sx)/2,Math.abs(ty-sy)/2));
+    const path=[
+      `M ${sx} ${sy}`,
+      `L ${n(midX-h*radius)} ${sy}`,
+      `Q ${midX} ${sy}, ${midX} ${n(sy+d*radius)}`,
+      `L ${midX} ${n(ty-d*radius)}`,
+      `Q ${midX} ${ty}, ${n(midX+h*radius)} ${ty}`,
+      `L ${tx} ${ty}`,
+    ].join(" ");
+    return {path,rail:null};
   }
 
   const right=direction==="side-right";

@@ -1,0 +1,350 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Hy4-preview 模型总览",
+    "locale": "zh-CN",
+    "subtitle": "HYV4ForCausalLM · 770B / ~49B 激活 · 78 层 iHC + DSA 稀疏 MoE(vLLM b2f6858)",
+    "output": "public/models/hy4-preview/diagrams/overview.html",
+    "viewBox": [
+      1080,
+      800
+    ],
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "visual_preset": "classic",
+    "views": [
+      {
+        "id": "main-path",
+        "label": "主干路径",
+        "focus": [
+          "input-tokens",
+          "embed",
+          "layer-stack",
+          "hc-head",
+          "final-norm",
+          "lm-head"
+        ],
+        "note": "token 从嵌入到 FP32 logits 的主干计算;残差以 4 通道携带。"
+      },
+      {
+        "id": "sparse-state",
+        "label": "稀疏状态",
+        "focus": [
+          "layer-stack",
+          "topk-buffer",
+          "kv-cache"
+        ],
+        "note": "full 层写 top-2048 索引,shared 层复用;KV 与 indexer cache 分离。"
+      },
+      {
+        "id": "mtp-draft",
+        "label": "MTP 草稿",
+        "focus": [
+          "embed",
+          "mtp-layer"
+        ],
+        "note": "单个 MTP 草稿层复用嵌入与 lm_head,块内无 iHC。"
+      }
+    ],
+    "legend": {
+      "mode": "auto"
+    }
+  },
+  "stages": [
+    {
+      "label": "输入"
+    },
+    {
+      "label": "嵌入"
+    },
+    {
+      "label": "Decoder ×78"
+    },
+    {
+      "label": "输出头"
+    },
+    {
+      "label": "MTP 草稿"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "input-tokens",
+      "type": "external",
+      "label": "input_ids",
+      "sublabel": "[B,S]",
+      "stage": 0,
+      "row": 2,
+      "width": 150
+    },
+    {
+      "id": "embed",
+      "type": "backend",
+      "label": "embed_tokens",
+      "sublabel": "[120832, 6144] · BF16",
+      "stage": 1,
+      "row": 2,
+      "width": 150
+    },
+    {
+      "id": "layer-stack",
+      "type": "backend",
+      "label": "HYV4DecoderLayer ×78",
+      "sublabel": "L0 dense FFN · L1–77 MoE · iHC",
+      "stage": 2,
+      "row": 2,
+      "width": 200
+    },
+    {
+      "id": "topk-buffer",
+      "type": "database",
+      "label": "top-k 索引 buffer",
+      "sublabel": "[T,2048] int32",
+      "stage": 2,
+      "row": 0,
+      "width": 170
+    },
+    {
+      "id": "kv-cache",
+      "type": "database",
+      "label": "MLA KV cache",
+      "sublabel": "512+64/token · 默认 BF16",
+      "stage": 2,
+      "row": 4,
+      "width": 170
+    },
+    {
+      "id": "hc-head",
+      "type": "backend",
+      "label": "hc_head",
+      "sublabel": "4 通道 → 1 · 24576→4",
+      "stage": 3,
+      "row": 1,
+      "width": 150
+    },
+    {
+      "id": "final-norm",
+      "type": "backend",
+      "label": "model.norm",
+      "sublabel": "RMSNorm · ε=1e−5",
+      "stage": 3,
+      "row": 2,
+      "width": 150
+    },
+    {
+      "id": "lm-head",
+      "type": "backend",
+      "label": "lm_head",
+      "sublabel": "[6144, 120832] · FP32 logits",
+      "stage": 3,
+      "row": 3,
+      "width": 160
+    },
+    {
+      "id": "mtp-layer",
+      "type": "backend",
+      "label": "MTP 草稿层 ×1",
+      "sublabel": "无 iHC · 共享 embed/lm_head",
+      "stage": 4,
+      "row": 2,
+      "width": 190
+    }
+  ],
+  "flows": [
+    {
+      "id": "tokens-to-embed",
+      "from": "input-tokens",
+      "to": "embed",
+      "label": "token ids",
+      "classification": "输入",
+      "variant": "emphasis"
+    },
+    {
+      "id": "embed-to-stack",
+      "from": "embed",
+      "to": "layer-stack",
+      "label": "hidden",
+      "classification": "主干 [B,S,6144]",
+      "variant": "emphasis",
+      "labelAt": [
+        398,
+        430
+      ]
+    },
+    {
+      "id": "stack-to-hchead",
+      "from": "layer-stack",
+      "to": "hc-head",
+      "label": "[B,S,4,6144]",
+      "classification": "4 通道残差",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        650,
+        330
+      ],
+      "via": [
+        [
+          645,
+          385
+        ],
+        [
+          645,
+          271
+        ]
+      ]
+    },
+    {
+      "id": "hchead-to-norm",
+      "from": "hc-head",
+      "to": "final-norm",
+      "label": "合并后 hidden",
+      "classification": "通道合并",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        745,
+        325
+      ]
+    },
+    {
+      "id": "norm-to-lmhead",
+      "from": "final-norm",
+      "to": "lm-head",
+      "label": "normalized",
+      "classification": "输出",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "straight",
+      "labelAt": [
+        820,
+        440
+      ]
+    },
+    {
+      "id": "stack-topk",
+      "from": "layer-stack",
+      "to": "topk-buffer",
+      "label": "top-2048 写/读",
+      "classification": "稀疏索引",
+      "variant": "default",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "route": "straight",
+      "labelAt": [
+        600,
+        240
+      ]
+    },
+    {
+      "id": "stack-kv",
+      "from": "layer-stack",
+      "to": "kv-cache",
+      "label": "压缩 KV",
+      "classification": "缓存",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        590,
+        505
+      ],
+      "route": "straight"
+    },
+    {
+      "id": "embed-to-mtp",
+      "from": "embed",
+      "to": "mtp-layer",
+      "label": "embed(t+1) · enorm",
+      "classification": "草稿输入",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          315,
+          90
+        ],
+        [
+          960,
+          90
+        ],
+        [
+          960,
+          356
+        ]
+      ],
+      "labelAt": [
+        640,
+        90
+      ]
+    },
+    {
+      "id": "stack-to-mtp",
+      "from": "layer-stack",
+      "to": "mtp-layer",
+      "label": "hidden(t) · hnorm",
+      "classification": "草稿输入",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "via": [
+        [
+          655,
+          385
+        ],
+        [
+          655,
+          700
+        ],
+        [
+          960,
+          700
+        ],
+        [
+          960,
+          414
+        ]
+      ],
+      "labelAt": [
+        800,
+        700
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "层族构成(78 层)",
+      "items": [
+        "L0:dense SwiGLU FFN(intermediate 18432)+ full indexer",
+        "L1–L77:MoE(256 路由 + 1 共享,top-8)+ 20 个 full indexer 层(含 L0 全模型共 21)",
+        "其余 57 层为 shared indexer:复用最近前驱 full 层的 top-k 索引",
+        "lm_head logits 以 FP32 累加(head_dtype),权重保持 BF16"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "iHC 四通道残差",
+      "items": [
+        "每个子块(attn / MLP)由 hc_pre 归约到单通道,输出经 hc_post 散回 4 通道",
+        "hc_post 无参数:y = post·x + residual(幅度 2.0)",
+        "78 层结束后 hc_head 合并 4 通道,再进 final norm"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "草稿与运行时状态",
+      "items": [
+        "MTP ×1:enorm/hnorm → eh_proj(12288→6144),块内无 iHC,共享 embed 与 lm_head",
+        "MLA 压缩 KV cache 每 token 512+64 维(默认 BF16;量化部署时 fp8_ds_mla);indexer 另有恒为 FP8 的 key-only cache",
+        "positions 与 attention metadata 由 vLLM runtime 提供,不经过权重"
+      ]
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { GRAPH_GEOMETRY, routeGraphEdge, routeGraphFanout } from "./routing";
+import { GRAPH_GEOMETRY, routeGraphEdge, routeGraphFanin, routeGraphFanout } from "./routing";
 import type { GraphAlignment, GraphEdge, GraphPath, EdgePort, EdgeTone } from "./types";
 
 export function GraphSurface({edges,className,children,alignments=[]}:{edges:GraphEdge[];className:string;children:ReactNode;alignments?:GraphAlignment[]}){
@@ -53,7 +53,7 @@ export function GraphSurface({edges,className,children,alignments=[]}:{edges:Gra
       });
       const mergeLanes=new Map<string,{count:number;approach:number;maxApproach:number}>();
       for(const edge of currentEdges){
-        if(edge.route||edge.fanout||edge.departure!==undefined)continue;
+        if(edge.route||edge.fanout||edge.fanin||edge.departure!==undefined)continue;
         if(!(edge.fromPort??"bottom").startsWith("bottom")||!(edge.toPort??"top").startsWith("top"))continue;
         const source=root.querySelector<HTMLElement>(`[data-graph-id="${edge.from}"]`);
         const target=root.querySelector<HTMLElement>(`[data-graph-id="${edge.to}"]`);
@@ -67,6 +67,7 @@ export function GraphSurface({edges,className,children,alignments=[]}:{edges:Gra
         mergeLanes.set(edge.to,lane);
       }
       const handledFanouts=new Set<string>();
+      const handledFanins=new Set<string>();
       const next=currentEdges.flatMap(edge=>{
         const source=root.querySelector<HTMLElement>(`[data-graph-id="${edge.from}"]`);
         const target=root.querySelector<HTMLElement>(`[data-graph-id="${edge.to}"]`);
@@ -87,6 +88,20 @@ export function GraphSurface({edges,className,children,alignments=[]}:{edges:Gra
           });
           const tone:EdgeTone=source.classList.contains("tensor-weight")?"weight":source.classList.contains("tensor-side")?"external":"data";
           return routeGraphFanout({source:{x:sx,y:sy},targets,departure:edge.departure??72}).map(route=>({d:route.path,tone,marker:route.arrow}));
+        }
+        if(edge.fanin){
+          if(handledFanins.has(edge.fanin))return [];
+          handledFanins.add(edge.fanin);
+          const grouped=currentEdges.filter(candidate=>candidate.fanin===edge.fanin);
+          const sources=grouped.flatMap(candidate=>{
+            const joinSource=root.querySelector<HTMLElement>(`[data-graph-id="${candidate.from}"]`);
+            if(!joinSource)return [];
+            const [x,y]=point(joinSource.getBoundingClientRect(),candidate.fromPort??"bottom",rootRect);
+            return [{x,y}];
+          });
+          if(sources.length===0)return [];
+          const tone:EdgeTone=source.classList.contains("tensor-weight")?"weight":source.classList.contains("tensor-side")?"external":"data";
+          return routeGraphFanin({sources,target:{x:tx,y:ty},departure:edge.departure??36}).map(route=>({d:route.path,tone,marker:route.arrow}));
         }
         const direction=edge.route??(fromPort==="right"||fromPort==="left"||toPort==="right"||toPort==="left"?"horizontal":"vertical");
         const safeClearance=direction==="side-left"||direction==="bus-left"

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { routeGraphEdge, routeGraphFanout } from "../app/graph/routing.ts";
+import { routeGraphEdge, routeGraphFanin, routeGraphFanout } from "../app/graph/routing.ts";
 
 test("side routes clear every node before turning toward the target", () => {
   const route = routeGraphEdge({
@@ -87,7 +87,7 @@ test("horizontal routes finish perpendicular to the arrowhead base", () => {
     clearance: 24,
   });
 
-  assert.equal(route.path, "M 60 120 C 98 120, 98 150, 136 150 L 150 150");
+  assert.equal(route.path, "M 60 120 L 90 120 Q 105 120, 105 135 L 105 135 Q 105 150, 120 150 L 150 150");
 });
 
 test("vertical fan-out honors one shared departure height", () => {
@@ -129,4 +129,28 @@ test("shared fan-out uses one trunk and one aligned rail", () => {
   }
   assert.ok(routes.filter(route => route.role !== "drop").every(route => route.arrow === false));
   assert.match(routes.find(route => route.role === "rail" && route.path.includes("80"))?.path ?? "", / Q /);
+});
+
+test("shared fan-in merges same-target inputs behind one arrowhead", () => {
+  const routes = routeGraphFanin({
+    sources: [
+      { x: 300, y: 40 },
+      { x: 80, y: 20 },
+      { x: 190, y: 60 },
+    ],
+    target: { x: 190, y: 180 },
+    departure: 36,
+  });
+
+  assert.equal(routes.filter(route => route.role === "rail").length, 1);
+  assert.equal(routes.filter(route => route.arrow).length, 1, "exactly one arrowhead may enter the target");
+  assert.match(routes.find(route => route.arrow)?.path ?? "", /^M 190 60 L 190 180$/, "an aligned source becomes the trunk drop");
+  const elbows = routes.filter(route => route.role === "drop" && !route.arrow);
+  assert.equal(elbows.length, 2);
+  for (const elbow of elbows) {
+    assert.match(elbow.path, / Q /, "source elbows turn onto the shared rail with rounded corners");
+    assert.match(elbow.path, / 144$/, "elbows stop at the rail instead of entering the target");
+    assert.ok(!elbow.path.includes(" 180"), "elbows never reach the target");
+  }
+  assert.match(routes.find(route => route.role === "rail")?.path ?? "", /^M 98 144 L 282 144$/, "the rail spans exactly the elbow landing points, no stub past the corners");
 });

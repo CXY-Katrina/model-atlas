@@ -867,20 +867,44 @@ button,select,a {
   }
 }
 
-@media (max-width:1280px) {
+/* base header grid overflows below ~1410px (facts cluster is unshrinkable):
+   tighten brand/select/facts so the help + theme buttons stay inside the viewport. */
+@media (max-width:1450px) {
   .app-header {
-    grid-template-columns: 155px 170px 1fr auto 34px 34px;
+    grid-template-columns: 140px 158px minmax(0,1fr) auto 34px 34px;
+  }
+  .model-select select {
+    width: 118px;
   }
   .resource-links a {
-    min-width: 94px;
-    padding: var(--space-6);
+    min-width: 100px;
+    padding: var(--space-5) var(--space-8);
+  }
+  .resource-links small {
+    font-size: 11px;
   }
   .model-facts span {
-    min-width: 72px;
+    min-width: 0;
+    padding: var(--space-6) var(--space-7);
   }
   .model-facts span:nth-child(4) {
     display: none;
   }
+  .model-facts b {
+    font-size: var(--text-sm);
+  }
+  .model-facts small {
+    font-size: 11px;
+  }
+}
+
+@media (max-width:1180px) {
+  .model-facts span:nth-child(3) {
+    display: none;
+  }
+}
+
+@media (max-width:1280px) {
   .screen-grid {
     grid-template-columns: minmax(650px,1fr) 330px;
   }

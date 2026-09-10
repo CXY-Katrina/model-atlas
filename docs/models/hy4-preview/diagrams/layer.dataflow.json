@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "HYV4DecoderLayer:iHC 包裹的注意力与 FFN 子块",
+    "locale": "zh-CN",
+    "subtitle": "4 通道残差在每个子块边界归约 / 散回;L0 与 L1–L77 仅 FFN 子块不同",
+    "output": "public/models/hy4-preview/diagrams/layer.html",
+    "viewBox": [1080, 800],
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "visual_preset": "classic",
+    "views": [
+      { "id": "ihc-boundary", "label": "iHC 边界", "focus": ["layer-input", "hc-pre-a", "hc-post-a", "hc-pre-m", "hc-post-m", "layer-out"], "note": "pre 有参数(hc_fn + σ 门),post 无参数(post·x + residual)。" },
+      { "id": "subblocks", "label": "两个子块", "focus": ["attn-sub", "ffn-sub"], "note": "注意力子块见 dsa-indexer / dsa-mla 图;FFN 子块见 moe 图。" }
+    ],
+    "legend": { "mode": "auto" }
+  },
+  "stages": [
+    { "label": "层输入" },
+    { "label": "注意力子块" },
+    { "label": "FFN 子块" },
+    { "label": "层输出" }
+  ],
+  "nodes": [
+    { "id": "layer-input", "type": "external", "label": "层输入 hidden", "sublabel": "[T,6144] → 4 通道", "stage": 0, "row": 1, "width": 150 },
+    { "id": "hc-pre-a", "type": "backend", "label": "hc_pre · attn", "sublabel": "RMS → hc_fn 24576→8 → σ 门 · 4→1", "stage": 1, "row": 0, "width": 180 },
+    { "id": "input-norm", "type": "backend", "label": "input_layernorm", "sublabel": "RMSNorm · ε=1e−5", "stage": 1, "row": 1, "width": 170 },
+    { "id": "attn-sub", "type": "backend", "label": "Attention 子块", "sublabel": "MLA + DSA · 见 dsa 两图", "stage": 1, "row": 2, "width": 180 },
+    { "id": "hc-post-a", "type": "backend", "label": "hc_post · attn", "sublabel": "post·x + residual · 无参数", "stage": 1, "row": 3, "width": 180 },
+    { "id": "hc-pre-m", "type": "backend", "label": "hc_pre · mlp", "sublabel": "RMS → hc_fn 24576→8 → σ 门 · 4→1", "stage": 2, "row": 3, "width": 180 },
+    { "id": "post-norm", "type": "backend", "label": "post_attention_layernorm", "sublabel": "RMSNorm · ε=1e−5", "stage": 2, "row": 2, "width": 170 },
+    { "id": "ffn-sub", "type": "backend", "label": "FFN 子块", "sublabel": "L0 dense 18432 · L1–77 MoE", "stage": 2, "row": 1, "width": 180 },
+    { "id": "hc-post-m", "type": "backend", "label": "hc_post · mlp", "sublabel": "post·x + residual · 无参数", "stage": 2, "row": 0, "width": 180 },
+    { "id": "layer-out", "type": "external", "label": "层输出 hidden", "sublabel": "[T,4,6144] · 4 通道", "stage": 3, "row": 0, "width": 150 }
+  ],
+  "flows": [
+    { "id": "input-to-prea", "from": "layer-input", "to": "hc-pre-a", "label": "prepare_input", "classification": "规范化为 3D", "variant": "emphasis" },
+    { "id": "prea-to-norm", "from": "hc-pre-a", "to": "input-norm", "label": "归约 · post 门", "classification": "4→1 通道", "variant": "default", "fromSide": "bottom", "toSide": "top", "route": "straight", "labelAt": [420, 200] },
+    { "id": "norm-to-attn", "from": "input-norm", "to": "attn-sub", "label": "normalized", "classification": "子块输入", "variant": "default", "fromSide": "bottom", "toSide": "top", "route": "straight", "labelAt": [420, 314] },
+    { "id": "attn-to-posta", "from": "attn-sub", "to": "hc-post-a", "label": "子块输出", "classification": "[T,6144]", "variant": "default", "fromSide": "bottom", "toSide": "top", "route": "straight", "labelAt": [420, 428] },
+    { "id": "posta-to-prem", "from": "hc-post-a", "to": "hc-pre-m", "label": "[T,4,6144]", "classification": "4 通道散回", "variant": "emphasis", "labelAt": [423, 542] },
+    { "id": "prem-to-postnorm", "from": "hc-pre-m", "to": "post-norm", "label": "归约 · post 门", "classification": "4→1 通道", "variant": "default", "fromSide": "top", "toSide": "bottom", "route": "straight", "labelAt": [840, 428] },
+    { "id": "postnorm-to-ffn", "from": "post-norm", "to": "ffn-sub", "label": "normalized", "classification": "子块输入", "variant": "default", "fromSide": "top", "toSide": "bottom", "route": "straight", "labelAt": [840, 314] },
+    { "id": "ffn-to-postm", "from": "ffn-sub", "to": "hc-post-m", "label": "子块输出", "classification": "[T,6144]", "variant": "default", "fromSide": "top", "toSide": "bottom", "route": "straight", "labelAt": [840, 200] },
+    { "id": "postm-to-out", "from": "hc-post-m", "to": "layer-out", "label": "[T,4,6144]", "classification": "层输出", "variant": "emphasis", "labelAt": [638, 200] }
+  ],
+  "cards": [
+    {
+      "dot": "violet",
+      "title": "iHC 门控(hc_pre)",
+      "items": [
+        "flatten 到 [T,24576] 后 FP32 计算:rsqrt(mean(x²)+1e−5) · hc_fn(24576→8)",
+        "pre = σ(·scale₀+base₀)+1e−6,通道加权和 y=Σ pre_i·x_i",
+        "post = 2·σ(·scale₁+base₁)+1e−6 交给 hc_post;base 初始 −log 3 / 0"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "两个子块只差 FFN",
+      "items": [
+        "所有 78 层的注意力子块同构:MLA + DSA + learnable sink + gated MLA",
+        "L0 是 dense SwiGLU FFN(intermediate 18432)",
+        "L1–L77 是 MoE:256 路由(top-8)+ 1 共享(moe 图展开)"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "残差去哪了",
+      "items": [
+        "单一大残差流不存在;残差就是 4 通道 hidden 本身",
+        "hc_post:y[n,i,d] = post[n,i]·x[n,d] + residual[n,i,d]",
+        "层间 residual=None,4 通道张量即残差载体;出口由 hc_head 合并"
+      ]
+    }
+  ]
+}
