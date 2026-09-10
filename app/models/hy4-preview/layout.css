@@ -5,6 +5,18 @@
   grid-template-rows: auto auto auto minmax(0, 1fr);
 }
 
+/* expanded zoom owns the panel: ui.css collapses it to one row, which crushes the
+   overview strip to 16px and lets it overlap the header and family cards
+   (minimax hides the same two children). archify bar stays as a thin access row. */
+.atlas-app:where([data-model="hy4-preview"]).stage-expanded .map-panel>.model-overview,
+.atlas-app:where([data-model="hy4-preview"]).stage-expanded .map-panel>.layer-type-nav {
+  display: none;
+}
+
+.atlas-app:where([data-model="hy4-preview"]).stage-expanded .map-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 /* zoomed graphs may exceed the canvas; keep the header and scroll the workbench. */
 :where([data-model="hy4-preview"]) .layer-canvas {
   grid-template-rows: auto minmax(0, 1fr);
