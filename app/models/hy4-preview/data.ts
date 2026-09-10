@@ -113,7 +113,7 @@ export function attentionNodes(mode: "full" | "shared"): Node[] {
     {
       id: "kvn", tone: "norm", kicker: "KV LORA NORM", title: "kv_a_layernorm",
       summary: "对 512 维压缩向量 k̃ 做 RMSNorm;k̃ 进 cache,k_pe 单独旋转。",
-      input: "kv_lora", inputShape: "[T,512]", output: "k̃ | k_pe", outputShape: "512 | 64",
+      input: "kv_lora 的压缩段", inputShape: "[T,512]", output: "k̃", outputShape: "[T,512]",
       formula: "k̃=kv/RMS(kv)·γ", formulaNote: "ε=1e−5;k_pe 64 维不经过本 norm。",
       runtime: "RMSNorm.forward", source: "nvidia/attention.py · forward", sourceUrl: ATTENTION_URL,
       code: "kv_c, k_pe = kv_lora.split([512, 64], dim=-1)\nkv_c_normed = self.kv_a_layernorm(kv_c)",

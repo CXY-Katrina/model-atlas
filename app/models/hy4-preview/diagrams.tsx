@@ -75,7 +75,6 @@ function AttentionZoom({ variant, g, active, onHover, onLeave, onSelect, onClose
     { from: "attn-kvn", to: "attn-kvt" },
     { from: "attn-kvt", to: "attn-cache", departure: 24 },
     { from: "attn-slots", to: "attn-cache", fromPort: "left", toPort: "right" },
-    { from: "attn-kvt", to: "attn-kpe" },
     { from: "attn-kpe", to: "attn-rope", fromPort: "left", toPort: "right" },
     { from: "attn-rope", to: "attn-cache", fromPort: "right", toPort: "left" },
     { from: "attn-cache", to: "attn-kvb", toPort: "top-left", approach: 30 },
@@ -150,7 +149,7 @@ function AttentionZoom({ variant, g, active, onHover, onLeave, onSelect, onClose
             <section>
               <header>KV PATH</header>
               <InputWeightedOp node={g.kvn} {...p} active={active === g.kvn.id} inputName="kv" inputShape="[T,512]" inputGraphId="attn-kvn-in" graphId="attn-kvn" weightGraphId="attn-wkvn" />
-              <Tensor name="k̃ | k_pe" shape="512 | 64" graphId="attn-kvt" />
+              <Tensor name="k̃(压缩)" shape="[T,512]" graphId="attn-kvt" />
               <Tensor name="k_pe(RoPE 前)" shape="[T,1,64]" role="side" graphId="attn-kpe" />
               <div className="io-row">
                 <Op node={g.cache} {...p} active={active === g.cache.id} graphId="attn-cache" />

@@ -40,7 +40,8 @@ const HC_PRE_SYMBOLS: CodeSymbol[] = [
 ];
 
 const HC_POST_SECTIONS: CodeSection[] = [
-  {stage:"1 · FORWARD",title:"HYV4HCPostLayer.forward:无参数散回",location:"nvidia/hc.py · L163–186",url:HC_POST_URL,code:`x = x.float(); residual = residual.float(); post = post.float()
+  {stage:"1 · FORWARD",title:"HYV4HCPostLayer.forward:无参数散回",location:"nvidia/hc.py · L163–186",url:HC_POST_URL,code:`dtype = x.dtype
+x = x.float(); residual = residual.float(); post = post.float()
 post_gated = post.unsqueeze(-1) * x.unsqueeze(-2)  # [num_tokens, hc, d]
 y = post_gated + residual
 return y.to(dtype)`},
@@ -317,7 +318,7 @@ export const INPUT_OVERRIDES: Record<string, IoBinding[]> = {
   "aproj":[{kind:"upstream",label:"X̂",shape:"[T,6144]",from:"input_layernorm 输出"}],
   "qan":[{kind:"upstream",label:"q_a",shape:"[T,2048]",from:"fused_qkv_a_proj shard 0"}],
   "qb":[{kind:"upstream",label:"q̃",shape:"[T,2048]",from:"q_a_layernorm 输出"}],
-  "kvn":[{kind:"upstream",label:"kv_lora",shape:"[T,576]",from:"fused_qkv_a_proj shard 1"}],
+  "kvn":[{kind:"upstream",label:"kv_lora 压缩段",shape:"[T,512]",from:"fused_qkv_a_proj shard 1(576)在 norm 前切出 512 段;k_pe 64 不经本 norm"}],
   "kvb":[{kind:"upstream",label:"k̃(cache 历史)",shape:"[T,512]",from:"MLA 压缩 KV cache"}],
   "rope":[{kind:"upstream",label:"Q rope 段 + k_pe",shape:"[T,64,64]+[T,1,64]",from:"q_b_proj 与 kv_a 切分"},{kind:"external",label:"positions",shape:"[T]",from:"vLLM runner"}],
   "cache":[{kind:"upstream",label:"k̃ + k_pe",shape:"[T,512]+[T,64]",from:"kv_a_layernorm 输出"},{kind:"external",label:"slot_mapping",shape:"[T]",from:"KV cache manager"}],

@@ -35,7 +35,7 @@ Content-Status: verified
 | N_idx | index_n_heads | 32 |
 | D_idx | index_head_dim | 128 |
 | T_idx | index_topk | 2048 |
-| g_fp8 | FP8 per-token-group 量化组大小(仅 indexer q 量化) | 128(数值与 D_idx 相同,语义无关) |
+| g_fp8 | FP8 per-token-group 量化组大小(indexer 的 q 量化与 key-only cache 的 scale 分组共用) | 128(数值与 D_idx 相同,语义无关) |
 | N_kv | num_key_value_heads(runtime MLA 的 KV 头组数) | 8 |
 | L_mtp | num_nextn_predict_layers(MTP draft 层数) | 1 |
 | ε_rms | rms_norm_eps | 1e−5 |
@@ -53,6 +53,7 @@ Content-Status: verified
 | pre_i, post_i | iHC 第 i 通道的 pre/post sigmoid 门(i=0..3) |
 | hc_fn, hc_head_fn | iHC 门投影(24576→8 / 24576→4,FP32) |
 | hc_scale, hc_base | 门仿射参数(scale[2] / base[8];head 为 scale[1] / base[4]) |
+| s_0, s_1 | hc_scale 的两个分量:pre 门 / post 门的缩放(初始 0.01) |
 | q̃ / k̃ | q_lora / kv_lora RMSNorm 输出 |
 | Q_h, K_h, V_h | 第 h 个 head 的 query(nope+rope)、key(nope)、value |
 | k_pe | MQA 共享的 64 维 rope key |
