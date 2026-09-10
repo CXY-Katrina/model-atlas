@@ -152,5 +152,5 @@ test("shared fan-in merges same-target inputs behind one arrowhead", () => {
     assert.match(elbow.path, / 144$/, "elbows stop at the rail instead of entering the target");
     assert.ok(!elbow.path.includes(" 180"), "elbows never reach the target");
   }
-  assert.match(routes.find(route => route.role === "rail")?.path ?? "", /^M 80 144 L 300 144$/, "the rail spans every join point");
+  assert.match(routes.find(route => route.role === "rail")?.path ?? "", /^M 98 144 L 282 144$/, "the rail spans exactly the elbow landing points, no stub past the corners");
 });

@@ -91,23 +91,29 @@ export function routeGraphFanin({sources,target,departure=36,radius=GRAPH_GEOMET
   const nearestGap=Math.min(...sources.map(s=>Math.abs(ty-s.y)));
   const railDistance=Math.min(Math.max(8,departure),Math.max(8,nearestGap-8));
   const railY=n(ty-direction*railDistance);
-  const xs=sources.map(s=>n(s.x));
-  const minX=Math.min(...xs,tx); const maxX=Math.max(...xs,tx);
+  // rail ends at the elbow landing points (sx±r), never at the raw source x,
+  // otherwise the rail tip pokes out past the rounded corner.
+  const joins=sources.map(s=>{
+    const sx=n(s.x); const sy=n(s.y);
+    const aligned=Math.abs(sx-tx)<GRAPH_GEOMETRY.straightTolerance;
+    const r=n(Math.min(radius,Math.abs(railY-sy),Math.abs(ty-railY)/2));
+    const h=sx<tx?1:-1;
+    return {sx,sy,aligned,r,joinX:aligned?sx:n(sx+h*r)};
+  });
+  const minX=Math.min(...joins.map(j=>j.joinX),tx);
+  const maxX=Math.max(...joins.map(j=>j.joinX),tx);
   const routes:FanoutRoute[]=[];
   if(maxX>minX){
     routes.push({path:`M ${minX} ${railY} L ${maxX} ${railY}`,arrow:false,role:"rail"});
   }
-  for(const s of sources){
-    const sx=n(s.x); const sy=n(s.y);
-    if(Math.abs(sx-tx)<GRAPH_GEOMETRY.straightTolerance){
-      routes.push({path:`M ${sx} ${sy} L ${sx} ${ty}`,arrow:true,role:"drop"});
+  for(const j of joins){
+    if(j.aligned){
+      routes.push({path:`M ${j.sx} ${j.sy} L ${j.sx} ${ty}`,arrow:true,role:"drop"});
       continue;
     }
-    const r=n(Math.min(radius,Math.abs(railY-sy),Math.abs(ty-railY)/2));
-    const h=sx<tx?1:-1;
-    routes.push({path:`M ${sx} ${sy} L ${sx} ${n(railY-direction*r)} Q ${sx} ${railY}, ${n(sx+h*r)} ${railY}`,arrow:false,role:"drop"});
+    routes.push({path:`M ${j.sx} ${j.sy} L ${j.sx} ${n(railY-direction*j.r)} Q ${j.sx} ${railY}, ${j.joinX} ${railY}`,arrow:false,role:"drop"});
   }
-  if(!xs.some(x=>Math.abs(x-tx)<GRAPH_GEOMETRY.straightTolerance)){
+  if(!joins.some(j=>j.aligned)){
     routes.push({path:`M ${tx} ${railY} L ${tx} ${ty}`,arrow:true,role:"drop"});
   }
   return routes;
