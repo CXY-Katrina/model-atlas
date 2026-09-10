@@ -93,9 +93,10 @@ Y = Y_attn · o_projᵀ ∈ ℝ^{T×6144}
 Qidx = q̃·wq_b → 32 heads × 128(其中 rope 64 维同样 interleaved 旋转;q̃ 已是 q_a RMSNorm 输出,不再二次归一化)
 [k | w] = hidden · wk_weights_projᵀ               融合 GEMM,输出 [128 | 32]
 k = LayerNorm(k; ε=1e−6)                          注意是 LayerNorm 不是 RMSNorm
-s_{t,j} = Σ_h w_{t,h} · ⟨Qidx_{t,h}, k_j⟩ / √128 / √32
-w'_{t,h} = w_{t,h} · q_scale_{t,h}                (FP8 per-token-group 128, ue8m0)
+w'_{t,h} = w_{t,h} · q_scale_{t,h} · 128^(−1/2) · 32^(−1/2)   (FP8 per-token-group 128, ue8m0)
+s_{t,j} = Σ_h w'_{t,h} · ⟨Qidx_{t,h}, k_j⟩        (量化后的 FP8 Qidx 与 q_scale 已折进 w')
 I_t = TopK_2048(s_t)                              causal 内;写入共享 buffer
+                                                  不足 2048 的槽位以 −1(no-token sentinel)填充
 ```
 FP8:q 在投影后做 per-token-group 量化(group 128,ue8m0 scale);k 以 FP8 存入独立
 indexer k-cache(插 cache 时融合量化)。shared 层不执行本节任何计算。

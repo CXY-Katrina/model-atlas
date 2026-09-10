@@ -20,8 +20,8 @@ index = 同仓 `model.safetensors.index.json`(131 shards)。
 | F-A-PROJ / attn-proj | NVIDIA·所有层 | 6144→[2048,576] | attention.py L364–371,forward L669–683 | config: q_lora_rank=2048,kv_lora_rank=512,qk_rope_head_dim=64;权重 q_a_proj、kv_a_proj_with_mqa | 已核验 |
 | F-A-UP / attn-kvb | NVIDIA·所有层 | 512→64×448 | attention.py L402–408 | config: qk_nope=192,v_head=256 | 已核验 |
 | norm1 / norm2(节点 norm1、norm2) | NVIDIA·所有层×2 | RMSNorm ε=1e−5,γ [6144] | model.py L129/L144(HYV4DecoderLayer.__init__) | config: rms_norm_eps=1e−5;权重 input_layernorm.weight、post_attention_layernorm.weight(78×2 处) | 已核验 |
-| qan / kvn(节点 qan、kvn) | NVIDIA·所有层 | q̃ [T,2048]、k̃ [T,512] RMSNorm | attention.py L167、L385/L401 | config: q_lora_rank=2048,kv_lora_rank=512;权重 self_attn.q_a_layernorm.weight、kv_a_layernorm.weight | 已核验 |
-| MLA cache(节点 cache) | NVIDIA·所有层 | 每 token 512+64 压缩布局;dtype=cache_config 决定,默认 BF16,量化请求时后端升格 fp8_ds_mla | mla_attention.py L349–362(仅 quantized 升格);flashmla_sparse.py L261(use_fp8_kv_cache 判定)、supported dtypes auto/bfloat16 | config: kv_lora_rank=512,qk_rope_head_dim=64;部署选项 --kv-cache-dtype | 已核验 |
+| qan / kvn(节点 qan、kvn) | NVIDIA·所有层 | q̃ [T,2048]、k̃ [T,512] RMSNorm | attention.py L385/L401 | config: q_lora_rank=2048,kv_lora_rank=512;权重 self_attn.q_a_layernorm.weight、kv_a_layernorm.weight | 已核验 |
+| MLA cache(节点 cache) | NVIDIA·所有层 | 每 token 512+64 压缩布局;dtype=cache_config 决定,默认 BF16,量化请求时后端升格 fp8_ds_mla | mla_attention.py L349–362(仅 quantized 升格);vllm/v1/attention/backends/mla/flashmla_sparse.py L261(use_fp8_kv_cache 判定)、L92–94(supported dtypes auto/bfloat16) | config: kv_lora_rank=512,qk_rope_head_dim=64;部署选项 --kv-cache-dtype | 已核验 |
 | F-A-ROPE / attn-rope | NVIDIA·所有层 | rope 64 维,interleaved | attention.py L416–435,forward L688–690 | config: rope_theta 1e7,max_position 1048576 | 已核验 |
 | F-IDX / idx 链 | NVIDIA·21 个 full 层 | top-2048 索引 | attention.py L125–263(compute_skip_topk_layers L54) | config: indexer_types 78 项(full@{0,1,5,…,77}),index_n_heads=32,index_head_dim=128,index_topk=2048;权重仅这 21 层有 indexer.* | 已核验 |
 | shared 复用 / idx-reuse | NVIDIA·57 层 | 读共享 buffer | attention.py L320–331,L756–757 | 权重索引:57 层无 indexer.* | 已核验 |

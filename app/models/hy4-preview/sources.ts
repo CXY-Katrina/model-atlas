@@ -25,6 +25,8 @@ export const MOE_FACTORY_URL = `${MOE_URL}#L152-L170`;
 export const DENSE_FF_URL = `${MOE_URL}#L62-L66`;
 export const MTP_FORWARD_URL = `${MTP_URL}#L369-L390`;
 export const SINK_MATH_URL = `${FLASHMLA_SPARSE_URL}#L44-L51`;
+export const MLA_ATTENTION_URL = `${VLLM}/vllm/model_executor/layers/attention/mla_attention.py#L349-L362`;
+export const V1_FLASHMLA_SPARSE_URL = `${VLLM}/vllm/v1/attention/backends/mla/flashmla_sparse.py#L261`;
 
 export const HF_CONFIG_URL = "https://huggingface.co/tencent/Hy4-preview/raw/main/config.json";
 export const WEIGHTS_URL = "https://huggingface.co/tencent/Hy4-preview";

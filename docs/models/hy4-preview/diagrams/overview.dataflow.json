@@ -4,7 +4,7 @@
   "meta": {
     "title": "Hy4-preview 模型总览",
     "locale": "zh-CN",
-    "subtitle": "HYV4ForCausalLM · 770B/49B 激活 · 78 层 iHC + DSA 稀疏 MoE(vLLM b2f6858)",
+    "subtitle": "HYV4ForCausalLM · 770B / ~49B 激活 · 78 层 iHC + DSA 稀疏 MoE(vLLM b2f6858)",
     "output": "public/models/hy4-preview/diagrams/overview.html",
     "viewBox": [
       1080,

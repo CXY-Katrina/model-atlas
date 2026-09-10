@@ -13,7 +13,8 @@ Content-Status: verified
 | 符号 | 含义 | 值 / 来源 |
 | --- | --- | --- |
 | B | batch(请求)数 | runtime |
-| S / T | 本轮 query 数 / 含历史的 KV 总长 | runtime |
+| S | 序列长度(参考记法,与 B 组成 `[B,S,·]`);页面运行时常量用 T 表示 | runtime |
+| T | 本轮 token 数(query 数与写入 cache 的 token 数;缓存/候选相关 shape 中同一 token 轴) | runtime |
 | H | hidden_size | 6144 |
 | L | num_hidden_layers | 78 |
 | V | vocab_size | 120832 |
@@ -34,6 +35,9 @@ Content-Status: verified
 | N_idx | index_n_heads | 32 |
 | D_idx | index_head_dim | 128 |
 | T_idx | index_topk | 2048 |
+| g_fp8 | FP8 per-token-group 量化组大小(仅 indexer q 量化) | 128(数值与 D_idx 相同,语义无关) |
+| N_kv | num_key_value_heads(runtime MLA 的 KV 头组数) | 8 |
+| L_mtp | num_nextn_predict_layers(MTP draft 层数) | 1 |
 | ε_rms | rms_norm_eps | 1e−5 |
 | ε_hc | hc_eps | 1e−6 |
 | θ | rope_theta | 1e7 |
@@ -52,22 +56,33 @@ Content-Status: verified
 | q̃ / k̃ | q_lora / kv_lora RMSNorm 输出 |
 | Q_h, K_h, V_h | 第 h 个 head 的 query(nope+rope)、key(nope)、value |
 | k_pe | MQA 共享的 64 维 rope key |
-| S, P, O | attention score / 概率 / 上下文 |
+| S_h, P, O | 第 h head 的 attention score / 概率 / 上下文(S_h 与序列长度 S 不同义) |
 | sink_h | 第 h head 的可学习 attention sink(FP32,checkpoint 初始 0) |
 | lse | attention 的 log-sum-exp(内核内部量) |
 | Qidx_{t,h} | indexer 第 h head 的 query |
 | k_j | indexer 第 j 个 token 的 key(LayerNorm 后,FP8 cache) |
 | w_{t,h} | indexer head 权重(wk_weights_proj 的 32 通道输出) |
 | q_scale | q 的 FP8 per-token-group 量化 scale(ue8m0) |
-| I_t | token t 的 top-2048 索引集合(写共享 buffer) |
-| r, s | router logits / sigmoid 分数 |
+| I_t | token t 的 top-2048 索引集合(写共享 buffer);候选不足时该行以 −1(no-token sentinel)填充 |
+| r^{rt}, s^{rt} | router logits(FP32） / 其 sigmoid 分数 |
+| r_hc | iHC 的 rsqrt 因子 `1/√(mean(x²)+ε)`(与 router logits 无关) |
+| s^{idx}_j | indexer 第 j 个候选的打分(与 router 分数无关) |
 | expert_bias | e_score_correction_bias,FP32[256],只影响选择 |
 | ŵ_e | expert e 的混合权重(归一化 × 2.827) |
 | E_e, E_shared | 路由 expert / shared expert 函数 |
 | g, u | expert SwiGLU 的 gate / up 分支 |
 | Û | post_attention_layernorm 输出 |
 | h_e, h_p | MTP 的 embed 分支 / 主干 hidden 分支(enorm/hnorm 后) |
-| TP | tensor parallel size(只影响分片,不改变数学) |
+| TP | tensor parallel size(只影响分片,不改变数学);页面权重 shape 为 checkpoint 全局 shape |
+
+### 同名不同义对照
+
+| 记法 | 含义 A | 含义 B |
+| --- | --- | --- |
+| S | 序列长度(`[B,S,·]`,轴表) | attention score 记作 `S_h`(带 head 下标,公式符号表) |
+| r | iHC 的 rsqrt 因子 `r_hc` | router logits `r^{rt}` |
+| s | router σ 分数 `s^{rt}` | indexer 打分 `s^{idx}_j` |
+| 128 | `D_idx`(index 头维) | `g_fp8`(FP8 量化组大小,g_fp8 仅为记法:源码为 `quant_block_size`) |
 
 ## checkpoint 权重命名约定(节选)
 

@@ -11,7 +11,7 @@ export const CONFIG_GROUPS = [
     ["use_dsa","true"],["layer_types","78 × deepseek_sparse_attention"],["indexer_types","21 full / 57 shared(full@L0,1,5,…,77)"],["index_topk","2048"],["index_n_heads","32"],["index_head_dim","128"],
   ]},
   {title:"MoE / FFN",rows:[
-    ["mlp_layer_types","[dense, 77 × sparse]"],["intermediate_size(L0)","18432"],["moe_intermediate_size","2048"],["n_routed_experts","256"],["n_shared_experts","1"],["num_experts_per_tok","8"],["scoring_func","sigmoid"],["norm_topk_prob","true"],["routed_scaling_factor","2.827"],["swiglu_limit","10.0(仅 routed)"],["hidden_act","silu"],
+    ["mlp_layer_types","[dense, 77 × sparse]"],["intermediate_size(L0)","18432"],["moe_intermediate_size","2048"],["n_routed_experts","256"],["n_shared_experts","1"],["num_experts_per_tok","8"],["scoring_func","sigmoid(vllm moe.py 硬编码,非 config 键)"],["norm_topk_prob","true"],["routed_scaling_factor","2.827"],["swiglu_limit","10.0(仅 routed)"],["hidden_act","silu"],
   ]},
   {title:"iHC",rows:[
     ["enable_ihc","true"],["hc_mult","4"],["hc_magnitude","2.0"],["hc_eps","1e−6"],

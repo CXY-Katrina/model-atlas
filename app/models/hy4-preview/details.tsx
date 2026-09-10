@@ -25,14 +25,14 @@ function symbolicShape(shape: string) {
     .replaceAll("[T,2624]", "[T,R_q+C_kv+D_rope]")
     .replaceAll("[T,4,6144]", "[T,C_hc,H]")
     .replaceAll("[T,24576]", "[T,C_hc·H]")
-    .replaceAll("[T,16384]", "[T,N_h·D_v]")
+    .replaceAll("[T,16384]", "[T,N_h·256]")
     .replaceAll("[T,36864]", "[T,2·H_ffn]")
     .replaceAll("[T,18432]", "[T,H_ffn]")
     .replaceAll("[T,2048]", "[T,R_q]")
     .replaceAll("[T,6144]", "[T,H]")
     .replaceAll("[T,512]", "[T,C_kv]")
-    .replaceAll("[T,64,256]", "[T,N_h,D_v]")
-    .replaceAll("16384", "N_h·D_v")
+    .replaceAll("[T,64,256]", "[T,N_h,256]")
+    .replaceAll("16384", "N_h·256")
     .replaceAll("24576", "C_hc·H")
     .replaceAll("36864", "2·H_ffn")
     .replaceAll("18432", "H_ffn")
@@ -99,7 +99,7 @@ function stageOverview(variant: LayerVariant, stage: Exclude<ExpandedStage, null
     kicker: "TOP-8 MOE · L1–77", title: "MoE + Shared Expert", summary: "sigmoid 路由 256 选 8,shared expert 恒在。",
     flow: "路由:Û → FP32 gate → σ+bias Top-8 → ×2.827\n专家:Û → clamped SwiGLU(10) → Σŵ·E_e\n共享:Û → SwiGLU(无 clamp)\n合并:Y_routed + Y_shared",
     formula: "ŵ=2.827·s/Σs, s=σ(r)\nY_moe=Y_routed+Y_shared",
-    formulaNote: "expert_bias 只影响选择;混合权重用未加 bias 的分数;激活参数约 49B 的来源就是 256 选 8。",
+    formulaNote: "expert_bias 只影响选择;混合权重用未加 bias 的分数;激活参数约 49B 的主要来源就是 256 选 8。",
     notes: ["routed experts 是融合 all-experts 张量,运行时切 w1/w3。", "swiglu clamp 只在 routed;L0 是 dense FFN。"],
     parameters: [["E", "256", "routed experts"], ["K", "8", "experts/token"], ["E_sh", "1", "shared expert"], ["H_exp", "2048", "moe_intermediate_size"], ["s_route", "2.827", "routed_scaling_factor"]],
   };

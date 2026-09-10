@@ -38,7 +38,7 @@
           "idx-buffer",
           "idx-reuse"
         ],
-        "note": "full 层写 buffer;shared 层与 MTP 复用,不建 indexer。"
+        "note": "full 层写 buffer;shared 层(57)不建 indexer,直接复用;MTP 层自建 full indexer(draft step 0 自算并写同一 buffer,step≥1 才复用)。"
       }
     ],
     "legend": {
@@ -148,7 +148,7 @@
       "id": "idx-topk",
       "type": "backend",
       "label": "Top-2048 token",
-      "sublabel": "causal 内选择",
+      "sublabel": "causal 内选择 · 不足 −1 填充",
       "stage": 4,
       "row": 1,
       "width": 160
@@ -165,8 +165,8 @@
     {
       "id": "idx-reuse",
       "type": "external",
-      "label": "shared 层 / MTP",
-      "sublabel": "57 层复用 · 不建 indexer",
+      "label": "shared 层(57)/ MTP",
+      "sublabel": "shared 复用;MTP 自建 indexer",
       "stage": 4,
       "row": 3,
       "width": 170
@@ -363,7 +363,7 @@
       "title": "FP8 细节",
       "items": [
         "q 在投影后按 128 元素一组做 FP8 量化,scale 为 ue8m0 幂次",
-        "k 在写入独立 key-only cache 时融合量化,不占 MLA 主 cache",
+        "k 在写入独立 key-only cache 时融合量化,不占 MLA 主 cache", "候选不足 2048 的行以 −1(no-token sentinel)填充,消费端把 −1 视为空位",
         "head 权重 w 在打分前折叠 q_scale / √128 / √32"
       ]
     },
@@ -373,7 +373,7 @@
       "items": [
         "indexer_types 共 78 项:full 恰在 L0, L1, L5, L9, …, L77(21 层)",
         "checkpoint 权重索引证实:只有这 21 层有 indexer.* 权重",
-        "shared 层跳过打分,直接读 buffer 中最近前驱 full 层的索引"
+        "shared 层跳过打分,直接读 buffer 中最近前驱 full 层的索引", "MTP 层例外:恒建自己的 full indexer,draft step 0 自算索引写入共享 buffer,step≥1 才跳过"
       ]
     }
   ]

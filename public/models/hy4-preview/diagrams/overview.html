@@ -4957,7 +4957,7 @@
         <div class="pulse-dot"></div>
         <h1>Hy4-preview 模型总览</h1>
       </div>
-      <p class="subtitle">HYV4ForCausalLM · 770B/49B 激活 · 78 层 iHC + DSA 稀疏 MoE(vLLM b2f6858)</p>
+      <p class="subtitle">HYV4ForCausalLM · 770B / ~49B 激活 · 78 层 iHC + DSA 稀疏 MoE(vLLM b2f6858)</p>
     </div>
 
     <script id="archify-guided-views-data" type="application/json">[{"id":"main-path","label":"主干路径","focus":["input-tokens","embed","layer-stack","hc-head","final-norm","lm-head"],"note":"token 从嵌入到 FP32 logits 的主干计算;残差以 4 通道携带。"},{"id":"sparse-state","label":"稀疏状态","focus":["layer-stack","topk-buffer","kv-cache"],"note":"full 层写 top-2048 索引,shared 层复用;KV 与 indexer cache 分离。"},{"id":"mtp-draft","label":"MTP 草稿","focus":["embed","mtp-layer"],"note":"单个 MTP 草稿层复用嵌入与 lm_head,块内无 iHC。"}]</script>
@@ -5007,7 +5007,7 @@
          data-preset-badge-editorial-plate="ARCHIFY / 图版 04">
       <svg viewBox="0 0 1080 800" role="img" lang="zh-CN" aria-labelledby="archify-diagram-title archify-diagram-description" data-animation="trace" data-preset="classic" data-quality-profile="showcase">
         <title id="archify-diagram-title">Hy4-preview 模型总览</title>
-        <desc id="archify-diagram-description">HYV4ForCausalLM · 770B/49B 激活 · 78 层 iHC + DSA 稀疏 MoE(vLLM b2f6858)</desc>
+        <desc id="archify-diagram-description">HYV4ForCausalLM · 770B / ~49B 激活 · 78 层 iHC + DSA 稀疏 MoE(vLLM b2f6858)</desc>
         <!-- Definitions -->
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">

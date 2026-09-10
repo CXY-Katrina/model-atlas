@@ -1,15 +1,27 @@
 import type { CodeSection, CodeSymbol, CodeDetail, IoBinding } from "../types";
-import { CODE_URL, ATTENTION_URL, MOE_URL, MTP_URL, FLASHMLA_SPARSE_URL, DECODER_IHC_FORWARD_URL, HC_PRE_URL, HC_POST_URL, HC_HEAD_URL, MOE_FACTORY_URL, DENSE_FF_URL, MTP_FORWARD_URL, MODEL_FORWARD_URL, INDEXER_PREPARE_URL, SINK_MATH_URL } from "./sources";
+import { CODE_URL, ATTENTION_URL, MOE_URL, MTP_URL, DECODER_IHC_FORWARD_URL, HC_PRE_URL, HC_POST_URL, HC_HEAD_URL, MOE_FACTORY_URL, DENSE_FF_URL, MTP_FORWARD_URL, MODEL_FORWARD_URL, INDEXER_PREPARE_URL, SINK_MATH_URL, MLA_ATTENTION_URL, V1_FLASHMLA_SPARSE_URL } from "./sources";
 
 const HC_PRE_SECTIONS: CodeSection[] = [
   {stage:"1 · FORWARD",title:"HYV4HCPreLayer.forward:归约 + post 门",location:"nvidia/hc.py · L97–139",url:HC_PRE_URL,code:`shape = x.size()  # [num_tokens, hc, d]
+hc = self.hc_mult
+hc_eps = self.hc_eps
 x_flat = x.flatten(1).float()  # [num_tokens, hc*d]
-rsqrt = torch.rsqrt(x_flat.square().mean(-1, keepdim=True) + layernorm_epsilon)
+rsqrt = torch.rsqrt(
+    x_flat.square().mean(-1, keepdim=True) + self.layernorm_epsilon
+)
 mixes = self.hc_fn(x_flat)[0] * rsqrt  # [num_tokens, 2*hc]
-pre = torch.sigmoid(pre_raw * self.hc_scale[0] + self.hc_base[:hc]) + hc_eps
-post = (self.magnitude
-        * torch.sigmoid(post_raw * self.hc_scale[1] + self.hc_base[hc:2*hc])
-        + hc_eps)
+pre_raw = mixes[..., :hc]
+post_raw = mixes[..., hc : 2 * hc]
+pre = torch.sigmoid(
+    pre_raw * self.hc_scale[0].float() + self.hc_base[:hc].float()
+) + hc_eps
+post = (
+    self.magnitude
+    * torch.sigmoid(
+        post_raw * self.hc_scale[1].float() + self.hc_base[hc : 2 * hc].float()
+    )
+    + hc_eps
+)
 y = torch.sum(pre.unsqueeze(-1) * x.reshape(shape), dim=1)
 return y.to(x.dtype), post`},
   {stage:"2 · CALL",title:"HYV4DecoderLayer._forward_ihc:两个子块各一次",location:"nvidia/model.py · L187–209",url:DECODER_IHC_FORWARD_URL,code:`hidden_states = self.hc_attn_layer.prepare_input(hidden_states)
@@ -24,7 +36,7 @@ const HC_PRE_SYMBOLS: CodeSymbol[] = [
   {symbol:"x / x_flat",resolvesTo:"4 通道输入与展平",meaning:"[T,4,6144] → [T,24576],FP32 计算。"},
   {symbol:"hc_scale / hc_base",resolvesTo:"门仿射参数",meaning:"scale[2] 初始 0.01;base[:4]=−log 3、base[4:8]=0。"},
   {symbol:"magnitude",resolvesTo:"hc_magnitude = 2.0",meaning:"post 门的幅度,乘在 σ 之后。"},
-  {symbol:"layernorm_epsilon",resolvesTo:"1e−5",meaning:"取自 rms_norm_eps,与子块内 RMSNorm 数值一致。"},
+  {symbol:"self.layernorm_epsilon",resolvesTo:"1e−5",meaning:"取自 rms_norm_eps,与子块内 RMSNorm 数值一致。"},
 ];
 
 const HC_POST_SECTIONS: CodeSection[] = [
@@ -40,10 +52,18 @@ const HC_POST_SYMBOLS: CodeSymbol[] = [
 ];
 
 const HC_HEAD_SECTIONS: CodeSection[] = [
-  {stage:"1 · FORWARD",title:"HYV4HCHeadLayer.forward:4 通道合并",location:"nvidia/hc.py · L251–277",url:HC_HEAD_URL,code:`x = x.flatten(1).float()
-rsqrt = torch.rsqrt(x.square().mean(-1, keepdim=True) + self.config.rms_norm_eps)
+  {stage:"1 · FORWARD",title:"HYV4HCHeadLayer.forward:4 通道合并",location:"nvidia/hc.py · L251–277",url:HC_HEAD_URL,code:`shape, x_dtype = x.size(), x.dtype
+x = x.flatten(1).float()  # [num_tokens, hc*d]
+rsqrt = torch.rsqrt(
+    x.square().mean(-1, keepdim=True) + self.config.rms_norm_eps
+)
 mixes = self.hc_head_fn(x)[0] * rsqrt  # [num_tokens, hc]
-pre = torch.sigmoid(mixes * self.hc_head_scale + self.hc_head_base) + self.hc_eps
+pre = (
+    torch.sigmoid(
+        mixes * self.hc_head_scale.float() + self.hc_head_base.float()
+    )
+    + self.hc_eps
+)
 y = torch.sum(pre.unsqueeze(-1) * x.reshape(shape), dim=1)
 return y.to(x_dtype)`},
   {stage:"2 · CALL",title:"HYV4Model.forward:hc_head 在 final norm 之前",location:"nvidia/model.py · L388–393",url:MODEL_FORWARD_URL,code:`if self.enable_ihc:
@@ -112,13 +132,22 @@ self.wk_weights_proj = MergedColumnParallelLinear(
     quant_config=None, disable_tp=True, ...)
 self.k_norm = LayerNorm(self.head_dim, eps=1e-6)
 self.softmax_scale = self.head_dim ** -0.5`},
-  {stage:"2 · PREPARE",title:"prepare_inputs:量化与权重折叠",location:"nvidia/attention.py · L212–263",url:INDEXER_PREPARE_URL,code:`q, _ = self.wq_b(qr)
+  {stage:"2 · PREPARE",title:"prepare_inputs:indexer RoPE + 量化与权重折叠",location:"nvidia/attention.py · L212–263(节选)",url:INDEXER_PREPARE_URL,code:`q, _ = self.wq_b(qr)
+q = q.view(-1, self.n_head, self.head_dim)
+q_nope, q_pe = torch.split(q, [self.head_dim - self.rope_dim, self.rope_dim], dim=-1)
 kw, _ = self.wk_weights_proj(hidden_states)
 k = self.k_norm(kw[:, :self.head_dim])
 weights = kw[:, self.head_dim:]
-q_fp8, q_scale = per_token_group_quant_fp8(q, 128, use_ue8m0=True)
-weights = weights.unsqueeze(-1) * q_scale * self.softmax_scale * self.n_head ** -0.5
-return hidden_states, q_fp8, k, weights`},
+k_nope, k_pe = torch.split(k, [self.head_dim - self.rope_dim, self.rope_dim], dim=-1)
+q_pe, k_pe = rotary_emb(positions, q_pe, k_pe.unsqueeze(1))  # indexer 独立 RoPE
+q = torch.cat([q_nope, q_pe.reshape(-1, self.n_head, self.rope_dim)], dim=-1)
+k = torch.cat([k_nope, k_pe.reshape(-1, 1, self.rope_dim).squeeze(-2)], dim=-1)
+q_fp8, q_scale = per_token_group_quant_fp8(
+    q.view(-1, self.head_dim), self.quant_block_size,
+    column_major_scales=False, use_ue8m0=self.scale_fmt is not None)
+weights = (weights.unsqueeze(-1) * q_scale.view(-1, self.n_head, 1)
+           * self.softmax_scale * self.n_head ** -0.5)
+return hidden_states, q_fp8, k, weights.squeeze(-1)`},
   {stage:"3 · SELECT",title:"_indexer_and_attn:full 与 shared 的分岔",location:"nvidia/attention.py · L736–765",url:ATTENTION_URL,code:`if self.indexer is not None and self.is_sparse and not self.skip_topk:
     self.indexer(hidden_states, q_c, positions, self.indexer_rope_emb)
 out.copy_(self.mla_attn(q, kv_c_normed, k_pe, output_shape=out.shape))`},
@@ -224,9 +253,15 @@ return final_hidden_states.view(orig_shape)`},
 ];
 
 const CACHE_SECTIONS: CodeSection[] = [
-  {stage:"1 · BACKEND",title:"HYV4FlashMLASparseImpl:fp8_ds_mla 压缩 cache",location:"nvidia/flashmla_sparse.py",url:FLASHMLA_SPARSE_URL,code:`# _canonicalize_sparse_mla_kv_cache_dtype promotes a quantized KV
-# cache to "fp8_ds_mla" for FLASHMLA_SPARSE ... a new name would
-# silently change KV cache behaviour.`},
+  {stage:"1 · CANONICALIZE",title:"_canonicalize_sparse_mla_kv_cache_dtype:量化请求升格 fp8_ds_mla",location:"vllm/model_executor/layers/attention/mla_attention.py · L349–362",url:MLA_ATTENTION_URL,code:`backend_name = attn_backend.get_name()
+if backend_name == "FLASHMLA_SPARSE" and is_quantized_kv_cache(kv_cache_dtype):
+    return "fp8_ds_mla"
+if backend_name == "FLASHINFER_MLA_SPARSE_SM120" and kv_cache_dtype in (
+    "auto", "fp8", "fp8_e4m3",
+):
+    return "fp8_ds_mla"
+return kv_cache_dtype`},
+  {stage:"2 · BACKEND",title:"后端据此选择 fp8 内核",location:"vllm/v1/attention/backends/mla/flashmla_sparse.py · L261",url:V1_FLASHMLA_SPARSE_URL,code:`self.use_fp8_kv_cache = cache_config.cache_dtype == "fp8_ds_mla"`},
 ];
 
 const DENSE_FF_SECTIONS: CodeSection[] = [

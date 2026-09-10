@@ -109,7 +109,7 @@
       "id": "mla-score",
       "type": "backend",
       "label": "QKᵀ / √256 + causal",
-      "sublabel": "单内核数学分解 · top-2048 候选",
+      "sublabel": "单内核数学分解 · top-2048 候选(不足 −1 填充)",
       "stage": 3,
       "row": 1,
       "width": 200
