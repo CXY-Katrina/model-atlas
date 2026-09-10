@@ -79,6 +79,40 @@ export function routeGraphFanout({source,targets,departure=48,radius=GRAPH_GEOME
   return routes;
 }
 
+export function routeGraphFanin({sources,target,departure=36,radius=GRAPH_GEOMETRY.cornerRadius}:{
+  sources:RoutePoint[];
+  target:RoutePoint;
+  departure?:number;
+  radius?:number;
+}):FanoutRoute[]{
+  if(sources.length===0)return [];
+  const tx=n(target.x); const ty=n(target.y);
+  const direction=sources.reduce((sum,s)=>sum+s.y,0)/sources.length<=ty?1:-1;
+  const nearestGap=Math.min(...sources.map(s=>Math.abs(ty-s.y)));
+  const railDistance=Math.min(Math.max(8,departure),Math.max(8,nearestGap-8));
+  const railY=n(ty-direction*railDistance);
+  const xs=sources.map(s=>n(s.x));
+  const minX=Math.min(...xs,tx); const maxX=Math.max(...xs,tx);
+  const routes:FanoutRoute[]=[];
+  if(maxX>minX){
+    routes.push({path:`M ${minX} ${railY} L ${maxX} ${railY}`,arrow:false,role:"rail"});
+  }
+  for(const s of sources){
+    const sx=n(s.x); const sy=n(s.y);
+    if(Math.abs(sx-tx)<GRAPH_GEOMETRY.straightTolerance){
+      routes.push({path:`M ${sx} ${sy} L ${sx} ${ty}`,arrow:true,role:"drop"});
+      continue;
+    }
+    const r=n(Math.min(radius,Math.abs(railY-sy),Math.abs(ty-railY)/2));
+    const h=sx<tx?1:-1;
+    routes.push({path:`M ${sx} ${sy} L ${sx} ${n(railY-direction*r)} Q ${sx} ${railY}, ${n(sx+h*r)} ${railY}`,arrow:false,role:"drop"});
+  }
+  if(!xs.some(x=>Math.abs(x-tx)<GRAPH_GEOMETRY.straightTolerance)){
+    routes.push({path:`M ${tx} ${railY} L ${tx} ${ty}`,arrow:true,role:"drop"});
+  }
+  return routes;
+}
+
 export function routeGraphEdge({source,target,direction,obstacleBounds,clearance,approach=14,departure}:RouteGraphEdgeOptions){
   const sx=n(source.x); const sy=n(source.y); const tx=n(target.x); const ty=n(target.y);
   if(direction==="vertical"){

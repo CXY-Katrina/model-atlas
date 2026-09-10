@@ -96,9 +96,9 @@ function AttentionZoom({ variant, g, active, onHover, onLeave, onSelect, onClose
           { from: "attn-buffer", to: "attn-ishared", fromPort: "right", toPort: "left" },
           { from: "attn-ishared", to: "attn-topids" },
         ] as GraphEdge[],
-    { from: "attn-qr", to: "attn-qk", toPort: "top-left", approach: 26 },
-    { from: "attn-kv", to: "attn-qk" },
-    { from: "attn-topids", to: "attn-qk", toPort: "top-right", approach: 26 },
+    { from: "attn-qr", to: "attn-qk", fanin: "attn-qk" },
+    { from: "attn-kv", to: "attn-qk", fanin: "attn-qk" },
+    { from: "attn-topids", to: "attn-qk", fanin: "attn-qk" },
     { from: "attn-qk", to: "attn-sink", fromPort: "right", toPort: "left" },
     { from: "attn-sink", to: "attn-p", fromPort: "right", toPort: "left" },
     { from: "attn-p", to: "attn-pv", fromPort: "right", toPort: "left" },
@@ -219,8 +219,8 @@ function FfnZoom({ variant, g, active, onHover, onLeave, onSelect, onClose }: Co
     { from: "moe-wexp", to: "moe-experts", fromPort: "right", toPort: "left" },
     { from: "moe-u", to: "moe-experts", toPort: "top", approach: 40 },
     { from: "moe-u", to: "moe-mshare", fromPort: "bottom-right", toPort: "top", approach: 40 },
-    { from: "moe-experts", to: "moe-msum", toPort: "top-left", approach: 24 },
-    { from: "moe-mshare", to: "moe-msum", toPort: "top-right", approach: 24 },
+    { from: "moe-experts", to: "moe-msum", fanin: "moe-msum" },
+    { from: "moe-mshare", to: "moe-msum", fanin: "moe-msum" },
     { from: "moe-msum", to: "moe-y" },
   ];
   return <section className="stage-zoom lesson-zoom">
