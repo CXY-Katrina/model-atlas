@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "MiniMax-M3.1-Flash 模型总览（60 层 · 全层稀疏注意力 · NVFP4）",
+    "locale": "zh-CN",
+    "output": ".scratch/add-minimax-m3.1-flash/artifacts/r01/archify/model-overview.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/vllm-project/vllm",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "8fae0ff58bae8bde68b52bf3e547432250763e5c"
+    }
+  },
+  "stages": [
+    {
+      "label": "输入"
+    },
+    {
+      "label": "嵌入"
+    },
+    {
+      "label": "Decoder ×60"
+    },
+    {
+      "label": "Norm"
+    },
+    {
+      "label": "输出"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "tokens",
+      "type": "external",
+      "label": "Text / Vision tokens",
+      "sublabel": "input_ids + 图像占位",
+      "stage": 0,
+      "row": 1,
+      "width": 132
+    },
+    {
+      "id": "embed",
+      "type": "backend",
+      "label": "Embedding + 多模态融合",
+      "sublabel": "V=200064 → H=6144",
+      "tag": "不量化",
+      "stage": 1,
+      "row": 1,
+      "width": 132,
+      "sources": [
+        {
+          "path": "vllm/models/minimax_m3/nvidia/model.py",
+          "line": 817,
+          "end_line": 822,
+          "label": "embed"
+        }
+      ]
+    },
+    {
+      "id": "dspark",
+      "type": "external",
+      "label": "DSpark drafter",
+      "sublabel": "外部投机解码组件",
+      "stage": 1,
+      "row": 3
+    },
+    {
+      "id": "decA",
+      "type": "backend",
+      "label": "Decoder L0–L2 ×3",
+      "sublabel": "Sparse Attn + Dense MLP",
+      "stage": 2,
+      "row": 0,
+      "sources": [
+        {
+          "path": "vllm/models/minimax_m3/nvidia/model.py",
+          "line": 99,
+          "end_line": 115,
+          "label": "层族划分"
+        }
+      ]
+    },
+    {
+      "id": "decB",
+      "type": "backend",
+      "label": "Decoder L3–L59 ×57",
+      "sublabel": "Sparse Attn + Top-4 MoE",
+      "stage": 2,
+      "row": 2,
+      "width": 140
+    },
+    {
+      "id": "finalNorm",
+      "type": "backend",
+      "label": "Final Gemma RMSNorm",
+      "sublabel": "ε=1e−6 · (1+γ)",
+      "stage": 3,
+      "row": 2,
+      "width": 140,
+      "sources": [
+        {
+          "path": "vllm/models/minimax_m3/nvidia/model.py",
+          "line": 858,
+          "end_line": 861,
+          "label": "final norm"
+        }
+      ]
+    },
+    {
+      "id": "lmHead",
+      "type": "backend",
+      "label": "LM Head",
+      "sublabel": "6144 → 200064",
+      "tag": "不量化",
+      "stage": 4,
+      "row": 1
+    },
+    {
+      "id": "logits",
+      "type": "external",
+      "label": "logits [B,S,V]",
+      "sublabel": "V=200064",
+      "stage": 4,
+      "row": 2
+    }
+  ],
+  "flows": [
+    {
+      "id": "o-in",
+      "from": "tokens",
+      "to": "embed",
+      "label": "token ids",
+      "variant": "emphasis"
+    },
+    {
+      "id": "o-embed",
+      "from": "embed",
+      "to": "decA",
+      "label": "hidden [B,S,6144]",
+      "variant": "emphasis"
+    },
+    {
+      "id": "o-dec",
+      "from": "decA",
+      "to": "decB",
+      "label": "residual stream",
+      "variant": "emphasis",
+      "labelDy": 25
+    },
+    {
+      "id": "o-out",
+      "from": "decB",
+      "to": "finalNorm",
+      "label": "X₆₀",
+      "variant": "emphasis"
+    },
+    {
+      "id": "o-norm",
+      "from": "finalNorm",
+      "to": "lmHead",
+      "label": "normed hidden"
+    },
+    {
+      "id": "o-logits",
+      "from": "lmHead",
+      "to": "logits",
+      "label": "logits",
+      "labelDy": 20
+    },
+    {
+      "id": "o-draft",
+      "from": "dspark",
+      "to": "decB",
+      "label": "draft tokens",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "层族划分（与 M3 的差异）",
+      "items": [
+        "全部 60 层使用 MiniMax Sparse Attention（M3 的 L0–L2 为 dense GQA）",
+        "FFN 分界不变：L0–L2 dense MLP（12288），L3–L59 Top-4 MoE（128 专家 + 1 共享）",
+        "无 MTP 模块；投机解码由外部 DSpark drafter 承担"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "量化与缓存",
+      "items": [
+        "KV cache 原生 NVFP4：34,560 B/token（FP8 为 61,440 B）",
+        "MoE 专家 NVFP4 packed；其余线性层 MXFP8；router/embed/LM head/vision 不量化",
+        "checkpoint ≈250.1 GB；上下文 1M token"
+      ]
+    }
+  ]
+}

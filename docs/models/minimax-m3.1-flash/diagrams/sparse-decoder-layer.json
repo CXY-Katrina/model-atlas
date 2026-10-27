@@ -1,0 +1,293 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "MiniMax-M3.1-Flash 稀疏 Decoder 层数据流（L3–L59 Attention 分支）",
+    "locale": "zh-CN",
+    "output": ".scratch/add-minimax-m3.1-flash/artifacts/r01/archify/sparse-decoder-layer.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/vllm-project/vllm",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "8fae0ff58bae8bde68b52bf3e547432250763e5c"
+    }
+  },
+  "stages": [
+    {
+      "label": "输入与投影"
+    },
+    {
+      "label": "Norm · RoPE · 写缓存"
+    },
+    {
+      "label": "Paged 缓存"
+    },
+    {
+      "label": "Indexer 选块"
+    },
+    {
+      "label": "主注意力与输出"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "xIn",
+      "type": "external",
+      "label": "X̂ [Nq,6144]",
+      "sublabel": "input Gemma RMSNorm 输出",
+      "stage": 0,
+      "row": 1
+    },
+    {
+      "id": "qkvProj",
+      "type": "backend",
+      "label": "五路投影 GEMM",
+      "sublabel": "Q/K/V + Qidx/Kidx",
+      "tag": "MXFP8",
+      "stage": 0,
+      "row": 2,
+      "sources": [
+        {
+          "path": "vllm/models/minimax_m3/nvidia/model.py",
+          "line": 444,
+          "end_line": 455,
+          "label": "qkv_proj"
+        }
+      ]
+    },
+    {
+      "id": "fusedNorm",
+      "type": "backend",
+      "label": "QK Norm+RoPE+写缓存",
+      "sublabel": "fused qknorm·rope·kv-insert",
+      "tag": "融合 kernel",
+      "stage": 1,
+      "row": 2,
+      "width": 140,
+      "sources": [
+        {
+          "path": "vllm/models/minimax_m3/nvidia/model.py",
+          "line": 625,
+          "end_line": 650,
+          "label": "fused insert"
+        }
+      ]
+    },
+    {
+      "id": "kvCache",
+      "type": "database",
+      "label": "主 KV cache",
+      "sublabel": "NVFP4 · 128 tok/页",
+      "tag": "34,560 B/tok",
+      "stage": 2,
+      "row": 0,
+      "sources": [
+        {
+          "path": "vllm/models/minimax_m3/nvidia/model.py",
+          "line": 493,
+          "end_line": 504,
+          "label": "nvfp4 kv"
+        }
+      ]
+    },
+    {
+      "id": "idxCache",
+      "type": "database",
+      "label": "Index K cache",
+      "sublabel": "key-only · bf16/fp8/nvfp4",
+      "stage": 2,
+      "row": 4,
+      "sources": [
+        {
+          "path": "vllm/models/minimax_m3/common/indexer.py",
+          "line": 102,
+          "end_line": 151,
+          "label": "side cache"
+        }
+      ]
+    },
+    {
+      "id": "indexer",
+      "type": "backend",
+      "label": "Lightning Indexer",
+      "sublabel": "score → mask → block max",
+      "stage": 3,
+      "row": 3,
+      "sources": [
+        {
+          "path": "vllm/models/minimax_m3/common/indexer.py",
+          "line": 578,
+          "end_line": 631,
+          "label": "indexer"
+        }
+      ],
+      "width": 132
+    },
+    {
+      "id": "topk",
+      "type": "backend",
+      "label": "Top-16 块选择",
+      "sublabel": "→ topk_indices_buffer",
+      "stage": 3,
+      "row": 2,
+      "width": 132
+    },
+    {
+      "id": "attend",
+      "type": "backend",
+      "label": "Sparse Attention",
+      "sublabel": "块内精确 GQA ≤2048",
+      "tag": "MSA / Triton",
+      "stage": 4,
+      "row": 1,
+      "width": 140,
+      "sources": [
+        {
+          "path": "vllm/models/minimax_m3/common/sparse_attention.py",
+          "line": 1,
+          "end_line": 30,
+          "label": "backend"
+        }
+      ]
+    },
+    {
+      "id": "oProj",
+      "type": "backend",
+      "label": "O Projection",
+      "sublabel": "RowParallel · 8192→6144",
+      "tag": "MXFP8",
+      "stage": 4,
+      "row": 2,
+      "sources": [
+        {
+          "path": "vllm/models/minimax_m3/nvidia/model.py",
+          "line": 459,
+          "end_line": 466,
+          "label": "o_proj"
+        }
+      ]
+    },
+    {
+      "id": "yAttn",
+      "type": "external",
+      "label": "Yattn [Nq,6144]",
+      "sublabel": "至 residual merge",
+      "stage": 4,
+      "row": 3,
+      "width": 132
+    }
+  ],
+  "flows": [
+    {
+      "id": "f-hidden",
+      "from": "xIn",
+      "to": "qkvProj",
+      "label": "hidden_states",
+      "variant": "emphasis",
+      "labelDy": 25
+    },
+    {
+      "id": "f-packed",
+      "from": "qkvProj",
+      "to": "fusedNorm",
+      "label": "packed [Nq,9856]",
+      "variant": "emphasis",
+      "labelDx": 1,
+      "labelDy": 54
+    },
+    {
+      "id": "f-kvwrite",
+      "from": "fusedNorm",
+      "to": "kvCache",
+      "label": "K,V 量化写入"
+    },
+    {
+      "id": "f-idxwrite",
+      "from": "fusedNorm",
+      "to": "idxCache",
+      "label": "Kidx 写入"
+    },
+    {
+      "id": "f-qidx",
+      "from": "fusedNorm",
+      "to": "indexer",
+      "label": "Qidx [Nq,4,128]"
+    },
+    {
+      "id": "f-idxread",
+      "from": "idxCache",
+      "to": "indexer",
+      "label": "历史 Index K"
+    },
+    {
+      "id": "f-scores",
+      "from": "indexer",
+      "to": "topk",
+      "label": "block scores"
+    },
+    {
+      "id": "f-topk",
+      "from": "topk",
+      "to": "attend",
+      "label": "block_indices"
+    },
+    {
+      "id": "f-kvread",
+      "from": "kvCache",
+      "to": "attend",
+      "label": "选中页 K/V"
+    },
+    {
+      "id": "f-q",
+      "from": "fusedNorm",
+      "to": "attend",
+      "label": "Q [Nq,64,128]",
+      "variant": "emphasis"
+    },
+    {
+      "id": "f-heads",
+      "from": "attend",
+      "to": "oProj",
+      "label": "heads [Nq,8192]",
+      "variant": "emphasis",
+      "labelDy": 25
+    },
+    {
+      "id": "f-y",
+      "from": "oProj",
+      "to": "yAttn",
+      "label": "Yattn",
+      "variant": "emphasis",
+      "labelDy": 25
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "主数据路径",
+      "items": [
+        "五路投影一次 GEMM 产生 Q/K/V/Qidx/Kidx（packed 9856 通道）",
+        "Q/K 与 index Q/K 的 norm、partial RoPE、cache 量化写入在同一融合 kernel 完成",
+        "主 attention 只对 Top-16 选中块内 token 做精确 causal GQA，每 query ≤2048 keys"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "两套缓存",
+      "items": [
+        "主 KV cache：NVFP4，每 128 token 一页；page size == sparse block size",
+        "Index K cache：key-only，每 token 一个 128 维向量，无 index V",
+        "indexer 写 topk_indices_buffer，attend kernel 读回，二者不同步物化 selected KV"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "与 M3 的差异",
+      "items": [
+        "M3.1-Flash 全部 60 层为 sparse attention（M3 的 L0–L2 为 dense GQA）",
+        "rope_theta = 1e7（M3 为 5e6）；NVFP4 KV 仅 SM100 MSA 后端支持"
+      ]
+    }
+  ]
+}

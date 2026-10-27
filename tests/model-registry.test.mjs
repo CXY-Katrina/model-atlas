@@ -17,6 +17,11 @@ test("model registry resolves registered models and rejects ambiguous registrati
   assert.throws(() => createModelRegistry([]), /at least one/);
   assert.throws(() => createModelRegistry([first, first]), /Duplicate/);
   assert.throws(() => createModelRegistry([model("bad id")]), /Invalid/);
+  const dotted = model("minimax-m3.1-flash");
+  assert.equal(createModelRegistry([dotted]).resolve("minimax-m3.1-flash"), dotted);
+  assert.throws(() => createModelRegistry([model("bad..id")]), /Invalid/);
+  assert.throws(() => createModelRegistry([model(".bad")]), /Invalid/);
+  assert.throws(() => createModelRegistry([model("bad.")]), /Invalid/);
 });
 
 test("shell renders independent model adapters without MiniMax assumptions", async () => {
