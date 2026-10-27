@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "MiniMax-M3.1-Flash MoE 块（L3–L59 FFN 分支）",
+    "locale": "zh-CN",
+    "output": ".scratch/add-minimax-m3.1-flash/artifacts/r01/archify/moe-block.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/vllm-project/vllm",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "8fae0ff58bae8bde68b52bf3e547432250763e5c"
+    }
+  },
+  "stages": [
+    {
+      "label": "输入与路由"
+    },
+    {
+      "label": "专家计算"
+    },
+    {
+      "label": "合并"
+    },
+    {
+      "label": "输出"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "xU",
+      "type": "external",
+      "label": "Û [Nq,6144]",
+      "sublabel": "post-attn Gemma RMSNorm 输出",
+      "stage": 0,
+      "row": 2,
+      "width": 132
+    },
+    {
+      "id": "router",
+      "type": "backend",
+      "label": "FP32 Router",
+      "sublabel": "GateLinear → router_logits",
+      "tag": "不量化",
+      "stage": 0,
+      "row": 0,
+      "sources": [
+        {
+          "path": "vllm/models/minimax_m3/nvidia/model.py",
+          "line": 232,
+          "end_line": 239,
+          "label": "GateLinear"
+        }
+      ]
+    },
+    {
+      "id": "fusedMoe",
+      "type": "backend",
+      "label": "Fused Top-4 + Experts ×128",
+      "sublabel": "σ(r)+bias → Top-4 → ×2.0",
+      "tag": "experts NVFP4",
+      "stage": 1,
+      "row": 1,
+      "width": 168,
+      "sources": [
+        {
+          "path": "vllm/models/minimax_m3/nvidia/model.py",
+          "line": 251,
+          "end_line": 272,
+          "label": "FusedMoE"
+        }
+      ]
+    },
+    {
+      "id": "shared",
+      "type": "backend",
+      "label": "Shared Expert ×1",
+      "sublabel": "SwiGLU-OAI · 宽 3072",
+      "tag": "MXFP8",
+      "stage": 1,
+      "row": 3,
+      "sources": [
+        {
+          "path": "vllm/models/minimax_m3/nvidia/model.py",
+          "line": 241,
+          "end_line": 249,
+          "label": "shared"
+        }
+      ]
+    },
+    {
+      "id": "sum",
+      "type": "backend",
+      "label": "Add routed + shared",
+      "sublabel": "逐元素相加",
+      "stage": 2,
+      "row": 2
+    },
+    {
+      "id": "yMoe",
+      "type": "external",
+      "label": "Ymoe [Nq,6144]",
+      "sublabel": "至 decoder 残差合并",
+      "stage": 3,
+      "row": 2,
+      "width": 132
+    }
+  ],
+  "flows": [
+    {
+      "id": "m-u-router",
+      "from": "xU",
+      "to": "router",
+      "label": "Û",
+      "labelDy": 1
+    },
+    {
+      "id": "m-logits",
+      "from": "router",
+      "to": "fusedMoe",
+      "label": "router_logits [Nq,128]"
+    },
+    {
+      "id": "m-u-moe",
+      "from": "xU",
+      "to": "fusedMoe",
+      "label": "Û",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m-u-shared",
+      "from": "xU",
+      "to": "shared",
+      "label": "Û",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m-routed",
+      "from": "fusedMoe",
+      "to": "sum",
+      "label": "Y_routed",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m-shared",
+      "from": "shared",
+      "to": "sum",
+      "label": "Y_shared",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m-y",
+      "from": "sum",
+      "to": "yMoe",
+      "label": "Ymoe",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "violet",
+      "title": "FusedMoE 内部（数学分解，非独立 OP）",
+      "items": [
+        "σ(r) 得路由分数 s；s+b（correction bias）只用于 Top-4 选择，不进混合权重",
+        "混合权重 ŵₑ = 2.0 · sₑ/Σ𝓔sⱼ；对 4 个专家输出加权求和",
+        "routed experts 权重为 NVFP4 packed；router/embed/LM head 不量化"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "共享专家",
+      "items": [
+        "1 个共享专家始终激活，不参与 Top-K 竞争",
+        "最终输出 Ymoe = Y_routed + Y_shared"
+      ]
+    }
+  ]
+}

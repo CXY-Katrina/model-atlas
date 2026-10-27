@@ -58,9 +58,37 @@ try{
    for(const item of textBounds)assert.ok(Math.min(item.top,item.bottom,item.left,item.right)>=7,JSON.stringify({width,item}));
    console.log(`${type} ${width}: ${groups.length} frames have equal 24px padding + 1px border`);
   }
- }
+  }
 
- // All expanded stage families and theme toggles remain available after the split.
+  // MiniMax-M3.1-Flash: registry switch, m3-style decoder workbench, reference modal, theme persistence.
+  const selected=await evaluate(`(()=>{const s=document.querySelector('.model-select select');s.value='minimax-m3.1-flash';s.dispatchEvent(new Event('change',{bubbles:true}));return s.value})()`);
+  assert.equal(selected,'minimax-m3.1-flash');
+  await pause(1200);
+  const flash=await evaluate(`(()=>{const main=document.querySelector('main');return {model:main.dataset.model,nav:!!document.querySelector('.layer-type-options'),facts:[...document.querySelectorAll('.model-facts b')].map(n=>n.textContent),title:document.title,frames:document.querySelectorAll('.archify-frame').length}})()`);
+  assert.equal(flash.model,'minimax-m3.1-flash');assert.ok(flash.nav);assert.equal(flash.frames,0);assert.deepEqual(flash.facts,['428B','23B','1M','250 GB']);assert.equal(flash.title,'Model Atlas · MiniMax-M3.1-Flash');
+  for(const type of ['sparse','dense']){
+    await evaluate(`document.querySelector('.layer-type-options .${type}').click()`);await pause(300);
+    await evaluate(`document.querySelector('.ffn-stage').click()`);await pause(500);
+    const ffn=await evaluate(`(()=>({header:document.querySelector('.stage-zoom header span')?.textContent??'',nodes:document.querySelectorAll('.graph-surface [data-graph-id]').length}))()`);
+    assert.ok(ffn.header.includes(type==='dense'?'SWIGLU-OAI MLP':'TOP-4 MOE + SHARED EXPERT'),JSON.stringify(ffn));assert.ok(ffn.nodes>5,JSON.stringify(ffn));
+    await evaluate(`document.querySelector('.stage-zoom header button').click()`);await pause(300);
+    await evaluate(`document.querySelector('.attention-stage').click()`);await pause(800);
+    const attn=await evaluate(`(()=>{const g=document.querySelector('.connected-attention-graph');return {graph:!!g,sparse:g?g.classList.contains('sparse-attention'):false,nodes:document.querySelectorAll('.graph-surface [data-graph-id]').length,indexer:!!document.querySelector('.index-ribbon')}})()`);
+    assert.ok(attn.graph&&attn.sparse&&attn.indexer&&attn.nodes>10,JSON.stringify(attn));
+    console.log(`flash ${type}: ffn "${ffn.header}" nodes=${ffn.nodes}, attention sparse nodes=${attn.nodes}`);
+    await evaluate(`document.querySelector('.stage-zoom header button').click()`);await pause(200);
+  }
+  await evaluate(`document.querySelector('.help-button').click()`);await pause(300);
+  await evaluate(`[...document.querySelectorAll('.config-tabs button')].find(b=>b.textContent==='text_config').click()`);await pause(150);
+  const refState=await evaluate(`(()=>({rows:document.querySelectorAll('.config-reference tbody tr').length,tabs:document.querySelectorAll('.config-tabs button').length,rope:[...document.querySelectorAll('.config-reference td')].filter(n=>n.textContent.includes('10000000')).length}))()`);
+  assert.ok(refState.rows>20,JSON.stringify(refState));assert.ok(refState.tabs>=5,JSON.stringify(refState));assert.ok(refState.rope>=1,JSON.stringify(refState));
+  await evaluate(`document.querySelector('.help-modal button[aria-label="关闭"]').click()`);await pause(200);
+  for(const dark of [true,false]){await evaluate(`document.querySelector('.theme-button').click()`);await pause(150);const st=await evaluate(`({dark:document.querySelector('.atlas-app').classList.contains('dark'),model:document.querySelector('main').dataset.model})`);assert.equal(st.dark,dark);assert.equal(st.model,'minimax-m3.1-flash');}
+  const flashShot=await send('Page.captureScreenshot',{format:'png'});await writeFile(join(tmpdir(),'minimax-m31-flash.png'),Buffer.from(flashShot.data,'base64'));
+  await evaluate(`(()=>{const s=document.querySelector('.model-select select');s.value='minimax-m3';s.dispatchEvent(new Event('change',{bubbles:true}))})()`);await pause(800);
+  const back=await evaluate(`(()=>({model:document.querySelector('main').dataset.model,nav:!!document.querySelector('.layer-type-options'),frames:document.querySelectorAll('.archify-frame').length}))()`);
+  assert.equal(back.model,'minimax-m3');assert.ok(back.nav);assert.equal(back.frames,0);
+  console.log('MiniMax-M3.1-Flash registry, diagrams, reference modal and theme checks passed');
  for(const type of ['dense','sparse']){
   await evaluate(`document.querySelector('.layer-type-options .'+'${type}').click()`);await pause(100);
   await evaluate(`document.querySelector('.ffn-stage').click()`);await pause(300);
