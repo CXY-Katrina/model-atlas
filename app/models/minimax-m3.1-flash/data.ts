@@ -1,0 +1,143 @@
+import type { Node } from "../types";
+
+export const MODEL = "https://github.com/vllm-project/vllm/blob/main/vllm/models/minimax_m3/nvidia/model.py";
+const INDEXER = "https://github.com/vllm-project/vllm/blob/main/vllm/models/minimax_m3/common/indexer.py";
+const SPARSE = "https://github.com/vllm-project/vllm/blob/main/vllm/models/minimax_m3/common/ops/sparse_attn.py";
+
+// MiniMax-M3.1-Flash ships a single NVFP4+MXFP8 checkpoint; per-layer shard file names are not part of the public card.
+export function layerShard(layer: number) {
+  void layer;
+  return "NVFP4+MXFP8 checkpoint";
+}
+
+function key(layer: number, suffix: string) {
+  return `language_model.model.layers.${layer}.${suffix}`;
+}
+
+export function denseNodes(layer: number): Node[] {
+  const shard = layerShard(layer);
+  return [
+    {
+      id: "dense-norm", tone: "norm", kicker: `L${layer} · PRE-NORM`, title: "Gemma RMSNorm",
+      summary: "图中 residual 沿旁路单独保留；此节点只对主分支 hidden_states 执行带 (1+γ) 缩放的 Gemma RMSNorm，并输出一个 normalized tensor。",
+      input: "hidden_states", inputShape: "[B,S,6144]", output: "normalized hidden_states", outputShape: "[B,S,6144]",
+      formula: "y = x/√(mean(x²)+ε)⊙(1+γ)", formulaNote: "图示把 residual add 与 Norm 拆开；vLLM 可在执行层融合 add + norm，但该节点的数学输出仍只有 normalized hidden_states。ε=1e−6。",
+      runtime: "MiniMAXGemmaRMSNorm.forward → FlashInfer gemma_rmsnorm / gemma_fused_add_rmsnorm", source: "nvidia/model.py · MiniMAXGemmaRMSNorm.forward · L130–142", sourceUrl: MODEL,
+      code: `if residual is None:\n    residual = hidden_states\n    hidden_states = self.input_layernorm(hidden_states)\nelse:\n    hidden_states, residual = self.input_layernorm(hidden_states, residual)`,
+      weights: [{ key: key(layer,"input_layernorm.weight"), shape:"[6144]", dtype:"BF16", shard, params:"6,144" }],
+    },
+    {
+      id: "dense-mlp", tone: "moe", kicker: "DENSE FFN · WIDTH 12288", title: "SwiGLU-OAI MLP",
+      summary: "仅 L0–L2 使用 dense FFN；gate/up 在运行时合并，down 投回 6144。Flash 中该 MLP 权重以 MXFP8 存储。",
+      input: "normalized hidden", inputShape: "[B,S,6144]", output: "Xₗ₊₁", outputShape: "[B,S,6144]",
+      formula: "Wdown[min(g,7)·σ(1.702·min(g,7))·(clip(u,−7,7)+1)]", formulaNote: "g=Wgate x，u=Wup x；self.act_fn = SiluAndMulWithClamp(limit=7.0, alpha=1.702, beta=1.0)。",
+      runtime: "MiniMaxM3MLP · gate_up_proj / down_proj", source: "nvidia/model.py · MiniMaxM3MLP", sourceUrl: MODEL,
+      code: `gate_up, _ = self.gate_up_proj(x)\nx = self.act_fn(gate_up)\nx, _ = self.down_proj(x)`,
+      weights: [
+        { key:key(layer,"mlp.gate_proj.weight"), shape:"[12288,6144]", dtype:"BF16", shard, runtime:"gate_up_proj · gate", note:"MXFP8", params:"75.50M" },
+        { key:key(layer,"mlp.up_proj.weight"), shape:"[12288,6144]", dtype:"BF16", shard, runtime:"gate_up_proj · up", note:"MXFP8", params:"75.50M" },
+        { key:key(layer,"mlp.down_proj.weight"), shape:"[6144,12288]", dtype:"BF16", shard, note:"MXFP8", params:"75.50M" },
+      ],
+    },
+  ];
+}
+
+export function sparseNodes(layer: number): Node[] {
+  const shard = layerShard(layer);
+  return [
+    {
+      id:"sparse-proj", tone:"projection", kicker:`L${layer} · FIVE-WAY PROJECTION`, title:"主分支 + Index 分支融合投影",
+      summary:"一次 GEMM 同时产生 Q/K/V 与 Qidx/Kidx；前者生成内容，后者只选 KV block。",
+      input:"GemmaRMSNorm(Xₗ)", inputShape:"[B,S,6144]", output:"Q|K|V|Qidx|Kidx", outputShape:"8192 | 512 | 512 | 512 | 128",
+      formula:"[Q,K,V,Qidx,Kidx]=X̂·Wpackedᵀ", formulaNote:"共 9856 输出通道；M3 禁用 index V/O。",
+      runtime:"MinimaxM3QKVParallelLinearWithIndexer", source:"nvidia/model.py · MiniMaxM3SparseAttention", sourceUrl:MODEL,
+      code:`self.qkv_proj = MinimaxM3QKVParallelLinearWithIndexer(\n    6144, 128, 64, 4, total_idx_heads=4, idx_head_dim=128\n)\nqkv, _ = self.qkv_proj(hidden_states)`,
+      weights:[
+        {key:key(layer,"self_attn.q_proj.weight"),shape:"[8192,6144]",dtype:"BF16",shard,runtime:"qkv_proj · q",params:"50.33M"},
+        {key:key(layer,"self_attn.k_proj.weight"),shape:"[512,6144]",dtype:"BF16",shard,runtime:"qkv_proj · k",params:"3.15M"},
+        {key:key(layer,"self_attn.v_proj.weight"),shape:"[512,6144]",dtype:"BF16",shard,runtime:"qkv_proj · v",params:"3.15M"},
+        {key:key(layer,"self_attn.index_q_proj.weight"),shape:"[512,6144]",dtype:"BF16",shard,runtime:"qkv_proj · index q",params:"3.15M"},
+        {key:key(layer,"self_attn.index_k_proj.weight"),shape:"[128,6144]",dtype:"BF16",shard,runtime:"qkv_proj · index k",params:"0.79M"},
+      ],
+    },
+    {
+      id:"indexer", tone:"index", kicker:"INDEX BRANCH · 4 HEADS", title:"Token score → block max",
+      summary:"每个 GQA group 有独立 Qidx，Kidx 跨组共享；先遮住未来 token，再对每 128 token 取 max。",
+      input:"Qidx,Kidx cache", inputShape:"[B,S,4,128] · [B,T,1,128]", output:"block scores", outputShape:"[B,4,S,⌈T/128⌉]",
+      formula:"Mᵢ,bʳ=maxⱼ∈block(b),j≤i ⟨RMS(Qidxᵢʳ),RMS(Kidxⱼ)⟩/√128", formulaNote:"未来 token 先置 −∞，所以尾块内部也不会偷看未来。",
+      runtime:"MiniMaxM3Indexer · key-only paged cache", source:"common/indexer.py · MiniMaxM3Indexer", sourceUrl:INDEXER,
+      code:`self.indexer = MiniMaxM3Indexer(\n    topk_blocks=16, sparse_block_size=128,\n    num_index_heads=4, index_head_dim=128,\n    init_blocks=0, local_blocks=1, score_type="max"\n)`,
+      weights:[
+        {key:key(layer,"self_attn.index_q_norm.weight"),shape:"[128]",dtype:"BF16",shard,params:"128"},
+        {key:key(layer,"self_attn.index_k_norm.weight"),shape:"[128]",dtype:"BF16",shard,params:"128"},
+      ],
+    },
+    {
+      id:"topk", tone:"index", kicker:"LOGICAL BLOCK ROUTING", title:"Priority-aware Top-16",
+      summary:"每个 index head 选 16 个逻辑块；local block 强制保留，首块没有 sink 优先级。",
+      input:"block scores", inputShape:"[B,4,S,Nblocks]", output:"logical block ids", outputShape:"[B,S,4,16]",
+      formula:"TopK₁₆(M+10²⁹·Ilocal+10³⁰·Iinit), init_blocks=0", formulaNote:"可见块 ≤16 时会全选；block_table 再把逻辑 id 翻译为物理 page。",
+      runtime:"index_topk → topk_indices_buffer", source:"common/indexer.py · index_topk", sourceUrl:INDEXER,
+      code:`self.indexer(index_query)\n# writes [token, index_head, topk] logical block ids\n# into the shared topk_indices_buffer`, weights:[],
+    },
+    {
+      id:"sparse-attn", tone:"attention", kicker:"MAIN BRANCH · EXACT ATTENTION", title:"Selected pages 上的精确 GQA",
+      summary:"主 Q/K 做 per-head norm 与 50% RoPE；attention 只读取 Top-16 pages，但块内仍做精确 token softmax。",
+      input:"Q + selected K/V pages", inputShape:"Q [B,64,S,128] · ≤16×128 KV/group", output:"attention heads", outputShape:"[B,S,8192]",
+      formula:"Oₕ=softmax(QₕK𝒮ᵀ/√128+Mcausal+Mpad)V𝒮", formulaNote:"稀疏的是访问块集合，不是块内数学。page size 与 sparse block size 都是 128。",
+      runtime:"MiniMaxM3SparseImpl.forward", source:"common/ops/sparse_attn.py", sourceUrl:SPARSE,
+      code:`self.indexer(index_query)\nattn_output = self.impl.forward(\n    self, query, self.kv_cache, output\n)\noutput, _ = self.o_proj(attn_output)`,
+      weights:[
+        {key:key(layer,"self_attn.q_norm.weight"),shape:"[128]",dtype:"BF16",shard,params:"128"},
+        {key:key(layer,"self_attn.k_norm.weight"),shape:"[128]",dtype:"BF16",shard,params:"128"},
+        {key:key(layer,"self_attn.o_proj.weight"),shape:"[6144,8192]",dtype:"BF16",shard,params:"50.33M"},
+      ],
+    },
+    {
+      id:"router", tone:"moe", kicker:"FP32 ROUTER · 128 LOGITS", title:"FP32 Router Logits",
+      summary:"每 token 通过 GateLinear 计算 128 个 FP32 router_logits；Top-4 选择属于下游 FusedMoE。",
+      input:"post-attn hidden", inputShape:"[B,S,6144]", output:"router_logits", outputShape:"[B,S,128]",
+      formula:"router_logits=XWrouterᵀ", formulaNote:"这是 MiniMaxM3MoE.forward 中显式产生的唯一 Router 输出。",
+      runtime:"GateLinear · FP32", source:"nvidia/model.py · MiniMaxM3MoE", sourceUrl:MODEL,
+      code:`router_logits, _ = self.gate(hidden_states)`,
+      weights:[
+        {key:key(layer,"block_sparse_moe.gate.weight"),shape:"[128,6144]",dtype:"F32",shard,params:"0.79M"},
+      ],
+    },
+    {
+      id:"experts", tone:"moe", kicker:"FUSED ROUTING · TOP-4 EXPERTS", title:"Fused Top-4 Routing + Experts",
+      summary:"FusedMoE 消费 router_logits，完成 sigmoid、correction bias、Top-4、混合权重与专家计算。",
+      input:"hidden + router_logits", inputShape:"[B,S,6144] + [B,S,128]", output:"weighted routed output", outputShape:"[B,S,6144]",
+      formula:"Eₑ(x)=W2ₑ[SwiGLU-OAI(W1ₑx,W3ₑx)]", formulaNote:"单专家 56.62M；128 个 routed experts 合计约 7.248B 参数/层。",
+      runtime:"FusedMoE · experts.w13 / experts.w2", source:"nvidia/model.py · FusedMoEFactory", sourceUrl:MODEL,
+      code:`FusedMoEFactory(\n  num_experts=128, top_k=4, hidden_size=6144,\n  intermediate_size=3072, activation="swigluoai_uninterleave"\n)`,
+      weights:[
+        {key:key(layer,"block_sparse_moe.e_score_correction_bias"),shape:"[128]",dtype:"F32",shard,params:"128"},
+        {key:key(layer,"block_sparse_moe.experts.0.w1.weight"),shape:"[3072,6144]",dtype:"BF16",shard,runtime:"experts.w13 · gate",note:"×128 · NVFP4 packed",params:"18.87M"},
+        {key:key(layer,"block_sparse_moe.experts.0.w3.weight"),shape:"[3072,6144]",dtype:"BF16",shard,runtime:"experts.w13 · up",note:"×128 · NVFP4 packed",params:"18.87M"},
+        {key:key(layer,"block_sparse_moe.experts.0.w2.weight"),shape:"[6144,3072]",dtype:"BF16",shard,runtime:"experts.w2",note:"×128 · NVFP4 packed",params:"18.87M"},
+      ],
+    },
+    {
+      id:"shared", tone:"moe", kicker:"SHARED LANE · ALWAYS ON", title:"1 个 shared expert",
+      summary:"所有 token 都执行，不参与 Top-K 竞争；形状与单个 routed expert 相同。",
+      input:"all tokens", inputShape:"[B,S,6144]", output:"shared output", outputShape:"[B,S,6144]",
+      formula:"Yshared=Wdown[SwiGLU-OAI(Wgate x,Wup x)]", formulaNote:"约 56.62M 参数/层，始终属于激活路径。",
+      runtime:"MiniMaxM3MLP · shared_experts", source:"nvidia/model.py · MiniMaxM3MoE", sourceUrl:MODEL,
+      code:`self.shared_experts = MiniMaxM3MLP(\n    intermediate_size=3072, reduce_results=False\n)`,
+      weights:[
+        {key:key(layer,"block_sparse_moe.shared_experts.gate_proj.weight"),shape:"[3072,6144]",dtype:"BF16",shard,runtime:"shared gate_up · gate",params:"18.87M"},
+        {key:key(layer,"block_sparse_moe.shared_experts.up_proj.weight"),shape:"[3072,6144]",dtype:"BF16",shard,runtime:"shared gate_up · up",params:"18.87M"},
+        {key:key(layer,"block_sparse_moe.shared_experts.down_proj.weight"),shape:"[6144,3072]",dtype:"BF16",shard,params:"18.87M"},
+      ],
+    },
+    {
+      id:"combine", tone:"output", kicker:"MOE OUTPUT", title:"Add Routed + Shared",
+      summary:"把 FusedMoE 已加权归并的 Y_routed 与 Shared Expert 的 Y_shared 逐元素相加。",
+      input:"Y_routed + Y_shared", inputShape:"2 × [B,S,6144]", output:"Y_moe", outputShape:"[B,S,6144]",
+      formula:"Y_moe=Y_routed+Y_shared", formulaNote:"Top-4 权重已经在 FusedMoE 内部应用；这里仅合并 routed 与 shared 两条分支。",
+      runtime:"MoE branch add", source:"nvidia/model.py · MiniMaxM3MoE.forward", sourceUrl:MODEL,
+      code:`return final_hidden_states.view(num_tokens, hidden_dim)`, weights:[],
+    },
+  ];
+}
